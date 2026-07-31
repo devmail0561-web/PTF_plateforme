@@ -58,14 +58,15 @@ export function buildContainer(): {
   const projectService = new ProjectService(prisma, chainRegistry);
   const creditLedger = new CreditLedgerService(prisma);
   const utxoService  = new UTXOService(prisma);
-  const punishmentService = new PunishmentService(prisma, chainRegistry, reputationService, creditLedger);
+  const punishmentService = new PunishmentService(prisma, chainRegistry, reputationService, creditLedger, utxoService);
   const taskService = new TaskService(
     prisma,
     chainRegistry,
     reputationService,
     walletService,
     redis,
-    creditLedger
+    creditLedger,
+    utxoService
   );
   const timerService = new TimerService(prisma, punishmentService, redis);
   const notificationService = new NotificationService(prisma);

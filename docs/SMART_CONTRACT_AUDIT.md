@@ -30,6 +30,56 @@ Contrat Solidity
 
 ---
 
+## Résultats audit agents IA — 2026-07-31
+
+Audit multi-agents réalisé via workflow PTF (5 dimensions × vérification adversariale).
+
+### Findings corrigés
+
+| ID | Sévérité | Fichier | Titre |
+|----|----------|---------|-------|
+| C1 | Critical | `cli/src/utils/api.ts` | `isOffline()` toujours `true` — logique inversée |
+| C2 | Critical | `wallet.resolver.ts` | `withdrawCredits` passait un cuid comme `ownerAddress` |
+| C3 | Critical | `task.service.ts` | `TaskService` sans `UTXOService` — reward jamais minté |
+| C4 | Critical | `task.service.ts` | `expire()` ne libérait pas le soft-lock (gel permanent) |
+| C5 | Critical | `punishment.service.ts` | `PunishmentService` ne consommait pas les UTXOs (double-spend potentiel) |
+| C6 | Critical | `task.resolver.ts` | `cancelTask` sans vérification d'ownership |
+| C7 | Critical | `cli/src/commands/wallet.ts` | Dépôt toujours offline — adresse simulée sans avertissement |
+| S1 | Critical | `EscrowVault.sol` | Double-spend intra-call : même utxoId deux fois dans `inputs[]` |
+| S2 | Critical | `EscrowVault.sol` | Signatures UTXO sans domain separator (struct hash brut) |
+| H1 | High | `utxo.service.ts` | TOCTOU : coin-selection hors transaction |
+| H2 | High | `utxo.service.ts` | `proofHash` incompatible on-chain vs off-chain |
+| H3 | High | `utxo.service.ts` | `verifyProof()` — digest EIP-712 incomplet |
+| H4 | High | `utxo.service.ts` | Change UTXOs acceptés sans vérification |
+| H5 | High | `wallet.ts` CLI | Retrait online sans gestion d'erreur |
+| H6 | High | `wallet.ts` CLI | Retrait offline sans garde solde insuffisant |
+| H7 | High | `wallet.ts` CLI | Commande `ptf wallet utxos` inexistante |
+| H8 | High | `wallet.ts` CLI | Chain hardcodée `'polygon'` dans la mutation withdraw |
+| H9 | High | `utxo.service.ts` | `lock()` TOCTOU avec `spend()` concurrent |
+| S3 | High | `EscrowVault.sol` | Chain hardcodée `"polygon"` dans verification UTXO |
+| S4 | High | `EscrowVault.sol` | `mintUTXOReceipt` sans idempotency — inflation possible |
+| S5 | High | `utxo.service.ts` | Domain mismatch `"PTFEscrow"` vs `"PTFEscrowVault"` |
+| R1 | High | `utxo.service.ts` | `spend()` deux `Date.now()` — txId non-déterministe sur retry |
+| R2 | High | `utxo.service.ts` | `unlock()` silencieux sur solde insuffisant |
+| M1 | Medium | `schema.prisma` | `balanceAfter` absent de `CreditEvent` |
+| M2 | Medium | `utxo.service.ts` | `computeProofHash` hachait les signatures au lieu des utxoIds |
+| M3 | Medium | `EscrowVault.sol` | `executePunishment` polluait `escrowBalance` USDC avec des unités PTF |
+| M4 | Medium | `creditLedger.service.ts` | `utxoId` absent de `CreditEventEntry` |
+| Lo1 | Low | `wallet.ts` CLI | Variable morte `sign` dans reputation-history |
+| Lo2 | Low | `wallet.ts` CLI | Référence morte vers `ptf wallet verify-utxo` |
+
+### Findings non corrigés (à planifier)
+
+| ID | Sévérité | Raison du report |
+|----|----------|-----------------|
+| N1 | Critical | Aucun listener on-chain pour les dépôts UTXO — nécessite un worker dédié |
+| N2 | High | Change UTXOs avec hash 32 bytes non-ECDSA — nécessite clé privée opérateur |
+| N3 | Medium | Pas de réconciliation DB/on-chain après crash — nécessite worker + idempotency |
+| N4 | Medium | `CreditTransaction.inputIds/outputIds` sans FK — migration à planifier |
+| N5 | Medium | Arithmétique float sur les montants — migration vers entiers micro-PTF recommandée |
+
+---
+
 ## Phase 1 — Outils automatisés (gratuit)
 
 ### Slither — Analyse statique

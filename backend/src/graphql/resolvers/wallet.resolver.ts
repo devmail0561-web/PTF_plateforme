@@ -180,8 +180,18 @@ export const walletResolvers = {
         throw new PtfError(PtfErrorCode.INVALID_ADDRESS, `Adresse de destination invalide : ${destination}`);
       }
 
+      // Resolve the user's linked wallet address on the requested chain — ctx.user.userId is a cuid, not an address
+      const wallets = await ctx.services.wallet.getLinkedChains(ctx.user.userId);
+      const walletLink = wallets.find((w) => w.chain === chain);
+      if (!walletLink) {
+        throw new PtfError(
+          PtfErrorCode.WALLET_NOT_ACTIVATED,
+          `Aucun wallet lié pour la chaîne ${chain}`
+        );
+      }
+
       const result = await ctx.services.utxo.spend({
-        ownerAddress: ctx.user.userId,
+        ownerAddress: walletLink.address,
         amount,
         type: "withdrawal",
         chain,

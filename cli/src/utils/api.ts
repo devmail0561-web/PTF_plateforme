@@ -201,7 +201,8 @@ export class PtfApiClient {
 
   constructor(config: PtfUserConfig) {
     this.apiUrl = config.ptfApiUrl ?? "https://api.ptf.dev";
-    this.offline = !config.ptfApiUrl || config.ptfApiUrl.includes("localhost") === false;
+    // Offline when no URL is configured; try to connect otherwise (network errors fall back gracefully)
+    this.offline = !config.ptfApiUrl;
   }
 
   isOffline(): boolean {

@@ -74,40 +74,39 @@ walletCommand
     }
 
     const chain = options.chain;
+    const userConfig2 = loadUserConfig();
+    const client2 = new PtfApiClient(userConfig2);
 
-    printInfo(
-      `Vérification de l'adresse officielle PTF via Merkle root réseau...`
-    );
-    await new Promise((r) => setTimeout(r, 800));
-
-    const officialAddress = "0xPTF_OFFICIAL_ADDRESS_VERIFIED_BY_MERKLE";
-
-    printWarning("Mode offline — adresse PTF simulée");
-
-    console.log(
-      "\n" +
-        chalk.bold("Instructions de dépôt (vérifiées via Merkle root PTF)\n") +
-        chalk.dim("─".repeat(60)) +
+    if (client2.isOffline()) {
+      printOfflineBanner();
+      printWarning("Mode offline — adresse PTF simulée");
+      console.log(
         "\n" +
-        `  Chaîne   : ${chalk.bold(chain)}\n` +
-        `  Token    : ${chalk.bold(token)}\n` +
-        `  Montant  : ${chalk.bold(finalAmount.toFixed(6))} ${token}\n` +
-        `  Vers     : ${chalk.green.bold(officialAddress)}\n` +
-        chalk.dim("─".repeat(60)) +
-        "\n" +
-        chalk.yellow(
-          "⚠  Envoyez UNIQUEMENT vers cette adresse vérifiée.\n" +
-            "   Ne jamais envoyer vers une adresse non vérifiée par PTF."
-        ) +
-        "\n\n" +
-        chalk.dim("Après confirmation on-chain, vos crédits PTF seront crédités automatiquement.\n") +
-        (token !== "USDC"
-          ? chalk.dim(
-              `Conversion automatique ${token} → USDC via oracle Chainlink (~0.5% de frais, taux garanti 60s)\n`
-            )
-          : "") +
-        chalk.dim("1 PTF = 1 USDC (parité garantie)")
-    );
+          chalk.bold("Instructions de dépôt (mode offline)\n") +
+          chalk.dim("─".repeat(60)) +
+          "\n" +
+          `  Chaîne   : ${chalk.bold(chain)}\n` +
+          `  Token    : ${chalk.bold(token)}\n` +
+          `  Montant  : ${chalk.bold(finalAmount.toFixed(6))} ${token}\n` +
+          `  Vers     : ${chalk.yellow.bold("0xPTF_OFFICIAL_ADDRESS_VERIFIED_BY_MERKLE (simulée)")}\n` +
+          chalk.dim("─".repeat(60)) +
+          "\n" +
+          chalk.dim("En mode réel, l'adresse officielle PTF serait vérifiée via Merkle root réseau.\n") +
+          chalk.dim("Après confirmation on-chain, vos crédits PTF seront crédités automatiquement.\n") +
+          (token !== "USDC"
+            ? chalk.dim(
+                `Conversion automatique ${token} → USDC via oracle Chainlink (~0.5% de frais, taux garanti 60s)\n`
+              )
+            : "") +
+          chalk.dim("1 PTF = 1 USDC (parité garantie)")
+      );
+    } else {
+      printInfo(
+        `Vérification de l'adresse officielle PTF via Merkle root réseau...`
+      );
+      // TODO: call depositCredits GraphQL mutation once backend deposit listener is wired
+      printWarning("Le flux de dépôt on-chain n'est pas encore disponible. Configurez votre nœud PTF.");
+    }
   });
 
 walletCommand
@@ -153,6 +152,10 @@ walletCommand
         { id: "0xutxo001…", amount: 150.0, sourceType: "task_reward", sourceId: "0xtask001…" },
         { id: "0xutxo002…", amount: 60.0,  sourceType: "task_reward", sourceId: "0xtask002…" },
       ];
+      if (amount > 210) {
+        printError(`Solde insuffisant : total disponible 210 PTF, demandé ${amount.toFixed(6)} PTF.`);
+        process.exit(1);
+      }
       const change = 210 - amount > 0 ? { id: "0xchange001…", amount: 210 - amount } : null;
 
       console.log(
@@ -179,10 +182,11 @@ walletCommand
       }
       console.log(
         "\n" + chalk.dim("Chaque UTXO porte une signature EIP-712 de PTF prouvant sa tâche source.\n") +
-        chalk.dim("Vérifiez avec : ptf wallet verify-utxo <utxoId>\n")
+        chalk.dim("Consultez vos UTXOs avec : ptf wallet utxos --address <address>\n")
       );
     } else {
-      const result = await client.query<{
+      const chain = userConfig.walletChain ?? "polygon";
+      let result: {
         withdrawCredits: {
           txId: string;
           netAmount: number;
@@ -190,16 +194,24 @@ walletCommand
           consumed: { id: string; amount: number; sourceType: string; sourceId: string | null }[];
           change: { id: string; amount: number } | null;
         };
-      }>(
-        `mutation Withdraw($input: WithdrawInput!) {
-          withdrawCredits(input: $input) {
-            txId netAmount proofHash
-            consumed { id amount sourceType sourceId }
-            change { id amount }
-          }
-        }`,
-        { input: { amount, destination: options.to, chain: "polygon" } }
-      );
+      };
+
+      try {
+        result = await client.query(
+          `mutation Withdraw($input: WithdrawInput!) {
+            withdrawCredits(input: $input) {
+              txId netAmount proofHash
+              consumed { id amount sourceType sourceId }
+              change { id amount }
+            }
+          }`,
+          { input: { amount, destination: options.to, chain } }
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        printError(`Retrait échoué : ${msg}`);
+        process.exit(1);
+      }
 
       const r = result.withdrawCredits;
       console.log(
@@ -335,6 +347,7 @@ walletCommand
       type: string;
       direction: string;
       amount: number;
+      utxoId?: string | null;
       taskId?: string | null;
       chain: string;
       txHash?: string | null;
@@ -356,7 +369,7 @@ walletCommand
       }>(
         `query($address: String!, $limit: Int, $type: String) {
           creditHistory(address: $address, limit: $limit, type: $type) {
-            type direction amount taskId chain txHash note createdAt
+            type direction amount utxoId taskId chain txHash note createdAt
           }
         }`,
         { address, limit, type: options.type ?? null }
@@ -382,9 +395,10 @@ walletCommand
       const label = e.note ?? e.type;
       const task  = e.taskId ? chalk.dim(" tâche:" + e.taskId.slice(0, 10) + "…") : "";
       const tx    = e.txHash ? chalk.dim(" tx:" + e.txHash.slice(0, 10) + "…") : "";
+      const utxo  = e.utxoId ? chalk.dim(" utxo:" + e.utxoId.slice(0, 10) + "…") : "";
 
       console.log(
-        `  ${sign} ${amount.padEnd(22)}  ${chalk.dim(date.padEnd(14))}  ${label}${task}${tx}`
+        `  ${sign} ${amount.padEnd(22)}  ${chalk.dim(date.padEnd(14))}  ${label}${task}${tx}${utxo}`
       );
     }
 
@@ -456,18 +470,16 @@ walletCommand
     );
 
     for (const e of entries) {
-      const sign   = e.delta > 0 ? chalk.green("+") : chalk.red("");
-      const pts    = e.delta > 0
+      const pts  = e.delta > 0
         ? chalk.green(`+${e.delta} pts`)
         : chalk.red(`${e.delta} pts`);
-      const date   = new Date(e.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
-      const task   = e.taskId ? chalk.dim(" tâche:" + e.taskId.slice(0, 10) + "…") : "";
-      const tx     = e.txHash ? chalk.dim(" tx:" + e.txHash.slice(0, 10) + "…") : "";
+      const date = new Date(e.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+      const task = e.taskId ? chalk.dim(" tâche:" + e.taskId.slice(0, 10) + "…") : "";
+      const tx   = e.txHash ? chalk.dim(" tx:" + e.txHash.slice(0, 10) + "…") : "";
 
       console.log(
         `  ${pts.padEnd(16)}  ${chalk.dim(date.padEnd(14))}  ${e.reason}${task}${tx}`
       );
-      void sign; // used above via template expression
     }
 
     console.log(
@@ -475,6 +487,81 @@ walletCommand
       `\n  Total gagné  : ${chalk.green("+" + totalGained + " pts")}` +
       `\n  Total perdu  : ${chalk.red(totalLost + " pts")}` +
       `\n  Net          : ${chalk.bold((totalGained + totalLost) + " pts")}\n`
+    );
+  });
+
+walletCommand
+  .command("utxos")
+  .description("Lister vos UTXOs PTF (unspent / spent / locked)")
+  .option("--address <address>", "Adresse wallet (défaut : wallet configuré)")
+  .option("--status <status>", "Filtrer par statut : unspent | spent | locked", "unspent")
+  .option("--chain <chain>", "Filtrer par chaîne")
+  .action(async (options) => {
+    const userConfig = loadUserConfig();
+    const address = options.address ?? userConfig.walletAddress;
+
+    if (!address) {
+      printError("Aucun wallet configuré. Lancez : ptf config set-wallet <address>");
+      process.exit(1);
+    }
+
+    const client = new PtfApiClient(userConfig);
+    const offline = client.isOffline();
+    if (offline) printOfflineBanner();
+
+    let utxos: Array<{
+      id: string;
+      amount: number;
+      sourceType: string;
+      sourceId: string | null;
+      chain: string;
+      status: string;
+      createdAt: string;
+    }>;
+
+    if (offline) {
+      utxos = [
+        { id: "0x" + "a1".repeat(32), amount: 150.0, sourceType: "task_reward", sourceId: "0x" + "01".repeat(32), chain: "polygon", status: "unspent", createdAt: new Date(Date.now() - 86400000 * 2).toISOString() },
+        { id: "0x" + "b2".repeat(32), amount: 60.0,  sourceType: "task_reward", sourceId: "0x" + "02".repeat(32), chain: "polygon", status: "unspent", createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
+      ].filter(u => !options.status || u.status === options.status);
+    } else {
+      try {
+        const result = await client.query<{ utxos: typeof utxos }>(
+          `query UTXOs($address: String!, $status: String, $chain: String) {
+            utxos(address: $address, status: $status, chain: $chain) {
+              id amount sourceType sourceId chain status createdAt
+            }
+          }`,
+          { address, status: options.status ?? null, chain: options.chain ?? null }
+        );
+        utxos = result.utxos;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        printError(`Erreur récupération UTXOs : ${msg}`);
+        process.exit(1);
+      }
+    }
+
+    const total = utxos.reduce((s, u) => s + u.amount, 0);
+
+    console.log(
+      `\n${chalk.bold("UTXOs PTF")} — ${chalk.dim(address.slice(0, 14) + "…")} [${options.status}]\n` +
+      chalk.dim("─".repeat(80))
+    );
+
+    for (const u of utxos) {
+      const date = new Date(u.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+      const statusColor = u.status === "unspent" ? chalk.green : u.status === "locked" ? chalk.yellow : chalk.dim;
+      console.log(
+        `  ${statusColor(u.status.padEnd(8))}  ${chalk.green.bold(u.amount.toFixed(6) + " PTF")}` +
+        chalk.dim(`  ${u.sourceType}  ${date}`) +
+        `\n            ${chalk.dim("id: " + u.id.slice(0, 18) + "…" + "  sourceId: " + (u.sourceId?.slice(0, 14) ?? "—") + "…")}`
+      );
+    }
+
+    console.log(
+      chalk.dim("─".repeat(80)) +
+      `\n  Total (${utxos.length} UTXOs) : ${chalk.bold(total.toFixed(6) + " PTF")}\n`
     );
   });
 

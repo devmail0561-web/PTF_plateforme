@@ -3,6 +3,7 @@ import type { IChainRegistry } from "../bal/chain.registry.js";
 import type { IReputationService } from "./reputation.service.js";
 import type { IWalletService } from "./wallet.service.js";
 import type { ICreditLedgerService } from "./creditLedger.service.js";
+import type { IUTXOService } from "./utxo.service.js";
 import type {
   TaskFilter,
   PublicTaskView,
@@ -90,7 +91,8 @@ export class TaskService implements ITaskService {
     private readonly reputationService: IReputationService,
     private readonly walletService: IWalletService,
     redis: AnyRedis,
-    private readonly creditLedger: ICreditLedgerService
+    private readonly creditLedger: ICreditLedgerService,
+    private readonly utxoService: IUTXOService
   ) {
     // Dynamic import pour éviter les problèmes de types avec redlock v5 beta + NodeNext
     try {
@@ -280,9 +282,10 @@ export class TaskService implements ITaskService {
         },
       });
 
-      // Soft-lock 10 PTF (projets paid)
+      // Soft-lock 10 PTF (projets paid) — UTXOService.lock() keeps UTXO state in sync
       if (project.rewardMode === "paid") {
         await this.walletService.softLock(devAddress, chain, 10);
+        await this.utxoService.lock(devAddress, 10);
         await this.creditLedger.record({
           devAddress,
           type: "soft_locked",
@@ -372,6 +375,7 @@ export class TaskService implements ITaskService {
     // Libération du soft-lock (toujours, quelle que soit la durée écoulée)
     if (project.rewardMode === "paid" && task.devAddress) {
       await this.walletService.softUnlock(task.devAddress, project.chain, 10);
+      await this.utxoService.unlock(task.devAddress, 10);
       await this.creditLedger.record({
         devAddress: task.devAddress,
         type: "soft_unlocked",
@@ -397,6 +401,28 @@ export class TaskService implements ITaskService {
   }
 
   async expire(taskId: string): Promise<void> {
+    const task = await this.findById(taskId);
+
+    if (task?.devAddress) {
+      const project = await this.prisma.project.findUnique({
+        where: { id: task.projectId },
+      });
+      if (project?.rewardMode === "paid") {
+        // Release the 10 PTF soft-lock so the dev's credits are not frozen forever
+        await this.walletService.softUnlock(task.devAddress, project.chain, 10).catch(() => {});
+        await this.utxoService.unlock(task.devAddress, 10).catch(() => {});
+        await this.creditLedger.record({
+          devAddress: task.devAddress,
+          type: "soft_unlocked",
+          amount: 10,
+          taskId,
+          projectId: task.projectId,
+          chain: project.chain,
+          note: "10 PTF guarantee released on task expiry",
+        });
+      }
+    }
+
     await this.prisma.task.update({
       where: { id: taskId },
       data: { status: "expired" },

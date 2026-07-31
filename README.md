@@ -505,6 +505,11 @@ ptf wallet chains
 # Bridge des credits PTF entre chaînes
 ptf wallet bridge --from polygon --to ethereum --amount 50
 
+# Lister ses UTXOs (unités de crédit spendables)
+ptf wallet utxos                          # UTXOs unspent (défaut)
+ptf wallet utxos --status spent           # historique des UTXOs dépensés
+ptf wallet utxos --chain polygon          # filtrer par chaîne
+
 # Recharger son compte (dépôt via adresse officielle PTF vérifiée)
 ptf wallet deposit --chain polygon --amount 50 --token USDC
 # → Vérifie l'adresse officielle PTF via Merkle root réseau

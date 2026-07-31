@@ -1,7 +1,7 @@
 # PTF — Progression du projet
 
 > Version : **V0.0.1** — Dernière mise à jour : **2026-07-31**
-> Commits : `7efdde9` (MVP initial) → `fc22203` (Smart contracts)
+> Commits : `7efdde9` (MVP initial) → `fc22203` (Smart contracts) → `c3032b5` (UTXO provenance) → audit sécurité multi-agents (corrections inline)
 
 ---
 
@@ -15,8 +15,9 @@
 |--------|--------|-------------|
 | Documentation | ✅ Terminé | 100% |
 | CLI | ✅ Terminé | 100% |
-| Backend (core) | ✅ Terminé | 70% |
+| Backend (core) | ✅ Terminé | 75% |
 | Smart contracts EVM | ✅ Terminé | 100% |
+| Audit sécurité (round 1+2) | ✅ Terminé | 100% |
 | Frontend | 🔴 À faire | 0% |
 | Infrastructure | 🔴 À faire | 0% |
 | Blockchain réelle | 🔴 À faire | 0% |
@@ -80,19 +81,21 @@ ptf contributors ptf report       ptf fix-docs     ptf sync
 
 **24 fichiers TypeScript — Apollo Server v4 + Prisma + BullMQ + Redlock**
 
-#### Services implémentés (9/14)
+#### Services implémentés (10/14)
 
 | Service | Fichier | Description |
 |---------|---------|-------------|
-| `TaskService` | `task.service.ts` | Anti-collision Redlock, assertMutable, cycle de vie complet, vue publique/privée |
+| `TaskService` | `task.service.ts` | Anti-collision Redlock, assertMutable, cycle de vie complet, vue publique/privée, soft-lock UTXO synchronisé |
 | `ProjectService` | `project.service.ts` | Création projet, ancrage Merkle, évaluation coût |
 | `ReputationService` | `reputation.service.ts` | Formule `(c+e+i)×10 + bonus_durée`, niveaux, commission |
-| `PunishmentService` | `punishment.service.ts` | Exécution punishments, adapter chain, distribution 80/20 |
+| `PunishmentService` | `punishment.service.ts` | Exécution punishments, adapter chain, distribution 80/20, UTXO spend synchronisé |
 | `WalletService` | `wallet.service.ts` | Vérification 6 critères, soft-lock, multi-chaîne |
 | `AuthService` | `auth.service.ts` | GitHub OAuth + JWT + linking wallets |
 | `TimerService` | `timer.service.ts` | BullMQ deadlines, countdown alertes 72/48/24h |
 | `NotificationService` | `notification.service.ts` | Webhooks, événements temps réel |
 | `ReportService` | `report.service.ts` | Signalements, analyse automatique, escalade PTF |
+| `UTXOService` | `utxo.service.ts` | Système UTXO Bitcoin-style : mint, spend (TOCTOU-safe), lock/unlock transactionnels, verifyProof EIP-712 complet, proofHash aligné on-chain |
+| `CreditLedgerService` | `creditLedger.service.ts` | Ledger comptable + utxoId tracé par événement |
 
 #### Services manquants (5/14)
 
@@ -115,13 +118,13 @@ ptf contributors ptf report       ptf fix-docs     ptf sync
 
 #### API GraphQL
 
-- **11 Queries** : `tasks`, `task`, `myTasks`, `projects`, `project`, `myProjects`, `walletStatus`, `walletBalance`, `projectContributors`, `reputationScore`, `health`
-- **9 Mutations** : `loginWithGithub`, `linkWallet`, `createProject`, `publishProject`, `generateTasks`, `claimTask`, `submitTask`, `cancelTask`, `reportUser`
+- **14 Queries** : `tasks`, `task`, `myTasks`, `projects`, `project`, `myProjects`, `walletStatus`, `walletBalance`, `projectContributors`, `reputationScore`, `creditHistory`, `creditBalance`, `utxos`, `utxoBalance`, `utxoProvenance`, `health`
+- **9 Mutations** : `loginWithGithub`, `linkWallet`, `createProject`, `publishProject`, `generateTasks`, `claimTask`, `submitTask`, `cancelTask`, `withdrawCredits`, `reportUser`
 - **1 Subscription** : `taskStatusChanged`
 
-#### Base de données (Prisma — 11 tables)
+#### Base de données (Prisma — 13 tables)
 
-`User`, `Project`, `Task`, `Submission`, `WalletLink`, `ContributorRecord`, `ReputationHistory`, `PunishmentRecord`, `Report`, `Notification`, `Session`
+`User`, `Project`, `Task`, `Submission`, `WalletLink`, `ContributorRecord`, `ReputationHistory`, `PunishmentRecord`, `Report`, `Notification`, `Session`, `CreditUTXO`, `CreditTransaction`, `CreditEvent`
 
 #### Tests
 
@@ -143,14 +146,19 @@ ptf contributors ptf report       ptf fix-docs     ptf sync
 | `CreditToken` | `CreditToken.sol` | ~110 | ERC-20 stable 6 décimales, EIP-712 nonces `(address, taskId)`, mint/burn minter-gated |
 | `ReputationRegistry` | `ReputationRegistry.sol` | ~100 | Score on-chain immuable, historique complet, writer-gated, 4 niveaux |
 | `ProjectRegistry` | `ProjectRegistry.sol` | ~150 | Ancre Merkle, verrou au premier claim, preuve Merkle, registrar-gated |
-| `EscrowVault` | `EscrowVault.sol` | ~250 | SafeERC20 + ReentrancyGuard + CEI, EIP-712 release, soft-lock 10 PTF, punishment **80/20 BPS** |
+| `EscrowVault` | `EscrowVault.sol` | ~270 | SafeERC20 + ReentrancyGuard + CEI, EIP-712 release et UTXO (full domain separator), soft-lock 10 PTF, punishment **80/20 BPS**, UTXO withdrawal avec guard intra-call, mintUTXOReceipt idempotent |
 
-#### Sécurité implémentée
+#### Sécurité implémentée (post-audit)
 
 - **EscrowVault** : `nonReentrant` sur toutes les fonctions fonds, pattern CEI strict, `SafeERC20` sur tous les transferts
-- **EIP-712** : nonces par `(address, taskId)` + `chainId` dynamique (domain separator) + `deadline` — anti-replay cross-chaîne
-- **Distribution punishments** : 80% trésorerie PTF + 20% fonds projet — hardcodé en BPS, non contournable
+- **EIP-712 UTXO** : `_hashTypedDataV4(structHash)` avec domain separator complet (`PTFEscrowVault`) — anti-replay cross-contrat et cross-chaîne
+- **Anti double-spend intra-call** : déduplication `seenIds[]` dans la boucle de vérification UTXO avant le guard `spentUTXOs`
+- **Chain dynamique** : `keccak256(bytes(inp.chain))` au lieu de `"polygon"` hardcodé
+- **mintUTXOReceipt idempotent** : `spentUTXOs[utxoId]` guard avant mint — empêche l'inflation par replay opérateur
+- **escrowBalance intègre** : `executePunishment` ne pollue plus le mapping USDC avec des unités PTF
+- **Distribution punishments** : 80% trésorerie PTF + 20% PTF mintés au contrat — hardcodé en BPS, non contournable
 - **Immutabilité tâches** : `ProjectRegistry.markTaskClaimed()` verrouille le Merkle root irréversiblement
+- **Gas** : `owner()` mis en cache avant la boucle de vérification UTXO
 
 #### Tests Foundry (~60 tests)
 
@@ -226,12 +234,13 @@ Vues à implémenter :
 
 | Métrique | Valeur |
 |----------|--------|
-| **Fichiers source totaux** | 95 fichiers |
-| **Lignes TypeScript** (CLI + Backend) | ~8 000 lignes |
-| **Lignes Solidity** | ~620 lignes |
+| **Fichiers source totaux** | 95+ fichiers |
+| **Lignes TypeScript** (CLI + Backend) | ~8 500 lignes |
+| **Lignes Solidity** | ~640 lignes |
 | **Tests unitaires** | 13 (Vitest) + 17 (Jest) + ~60 (Foundry) = **90 tests** |
-| **Commits** | 2 |
-| **Progression globale** | **~50%** |
+| **Commits** | 5 |
+| **Bugs sécurité corrigés** | **22** (audit multi-agents — 2 rounds) |
+| **Progression globale** | **~55%** |
 
 ---
 

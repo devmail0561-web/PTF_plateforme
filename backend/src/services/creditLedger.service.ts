@@ -19,6 +19,7 @@ export interface CreditEventEntry {
   direction: "credit" | "debit";
   amount: number;
   balanceAfter?: number | null;
+  utxoId?: string | null;
   taskId?: string | null;
   projectId?: string | null;
   chain: string;

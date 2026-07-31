@@ -270,18 +270,19 @@ model CreditTransaction {
 // Chronological ledger — kept alongside UTXOs for accounting display.
 // Written by TaskService, PunishmentService, WalletService.
 model CreditEvent {
-  id          String   @id @default(cuid())
-  devAddress  String
-  type        String   // reward_earned | punishment_deducted | soft_locked | soft_unlocked | deposit | withdrawal | bridge_out | bridge_in
-  direction   String   // credit | debit
-  amount      Float
-  utxoId      String?  // CreditUTXO.id this event created or consumed
-  taskId      String?
-  projectId   String?
-  chain       String
-  txHash      String?
-  note        String?
-  createdAt   DateTime @default(now())
+  id           String   @id @default(cuid())
+  devAddress   String
+  type         String   // reward_earned | punishment_deducted | soft_locked | soft_unlocked | deposit | withdrawal | bridge_out | bridge_in
+  direction    String   // credit | debit
+  amount       Float
+  balanceAfter Float?   // running balance snapshot after this event (optional, for display)
+  utxoId       String?  // CreditUTXO.id this event created or consumed
+  taskId       String?
+  projectId    String?
+  chain        String
+  txHash       String?
+  note         String?
+  createdAt    DateTime @default(now())
 
   @@index([devAddress])
   @@index([utxoId])

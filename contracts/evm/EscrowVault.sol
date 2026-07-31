@@ -294,8 +294,8 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         // ── Interactions ──────────────────────────────────────────────────────
         // Mint 80% to treasury
         ptfToken.mint(treasury, treasuryShare);
-        // Mint 20% to project escrow (converted to project fund credit)
-        escrowBalance[projectId] += projectShare;
+        // Mint 20% to contract — held as PTF, NOT added to USDC escrowBalance
+        // (escrowBalance is USDC-denominated; mixing PTF units would create phantom USDC)
         ptfToken.mint(address(this), projectShare);
 
         // Release soft-lock regardless
@@ -349,6 +349,7 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         uint256 amount;      // in PTF raw units (6 decimals)
         bytes32 sourceId;    // taskId for rewards, depositTxHash for deposits, etc.
         uint256 createdAt;   // unix timestamp ms
+        string  chain;       // chain name matching the UTXO at mint time (e.g. "polygon")
         bytes   ptfSignature; // PTF-issued EIP-712 signature over the UTXO fields
     }
 
@@ -405,18 +406,30 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
             if (recovered != owner) revert InvalidSignature();
         }
 
-        // Verify each UTXO: PTF signature + double-spend guard + amount sum
+        // Cache owner() to avoid repeated external calls in the hot loop
+        address ptfOwner = owner();
+
+        // Verify each UTXO: PTF signature + intra-call dedup + double-spend guard + amount sum
         uint256 verifiedTotal = 0;
         bytes32 proofHash;
         {
             bytes memory packed;
+            // Track utxoIds seen in this call to prevent intra-call double-spend
+            bytes32[] memory seenIds = new bytes32[](inputs.length);
+
             for (uint256 i = 0; i < inputs.length; i++) {
                 UTXOInput calldata inp = inputs[i];
 
-                // Double-spend guard
+                // Intra-call duplicate guard (same utxoId appearing twice in one call)
+                for (uint256 j = 0; j < i; j++) {
+                    if (seenIds[j] == inp.utxoId) revert UTXOAlreadySpent(inp.utxoId);
+                }
+                seenIds[i] = inp.utxoId;
+
+                // Cross-call double-spend guard
                 if (spentUTXOs[inp.utxoId]) revert UTXOAlreadySpent(inp.utxoId);
 
-                // Verify PTF-issued UTXO signature
+                // Verify PTF-issued UTXO signature using full EIP-712 digest (domain separator included)
                 bytes32 utxoStructHash = keccak256(
                     abi.encode(
                         UTXO_TYPEHASH,
@@ -424,12 +437,13 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
                         owner,
                         inp.amount,
                         inp.sourceId,
-                        keccak256(bytes("polygon")), // chain encoded as keccak — must match backend
+                        keccak256(bytes(inp.chain)), // use actual chain from input, not hardcoded
                         inp.createdAt
                     )
                 );
-                address signer = utxoStructHash.recover(inp.ptfSignature);
-                if (signer != this.owner()) revert InvalidSignature();
+                // _hashTypedDataV4 prepends "\x19\x01" + domainSeparator — mandatory for EIP-712
+                address signer = _hashTypedDataV4(utxoStructHash).recover(inp.ptfSignature);
+                if (signer != ptfOwner) revert InvalidSignature();
 
                 verifiedTotal += inp.amount;
                 packed = abi.encodePacked(packed, inp.utxoId);
@@ -471,6 +485,10 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         uint256 amount,
         bytes32 sourceId   // taskId
     ) external onlyOperator {
+        // Idempotency guard — prevents operator from minting the same utxoId twice
+        if (spentUTXOs[utxoId]) revert UTXOAlreadySpent(utxoId);
+        spentUTXOs[utxoId] = true;
+
         // Mint PTF tokens to dev — this is the spendable credit
         ptfToken.mint(dev, amount);
 

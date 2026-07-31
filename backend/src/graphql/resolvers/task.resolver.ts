@@ -94,6 +94,15 @@ export const taskResolvers = {
         throw new PtfError(PtfErrorCode.TASK_NOT_FOUND, "Tâche introuvable");
       }
 
+      // Verify the caller owns the task — resolve the user's wallet address and compare
+      const wallets = await ctx.services.wallet.getLinkedChains(ctx.user.userId);
+      const isOwner = wallets.some(
+        (w) => w.address.toLowerCase() === task.devAddress!.toLowerCase()
+      );
+      if (!isOwner) {
+        throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Vous ne pouvez annuler que vos propres tâches");
+      }
+
       await ctx.services.task.cancel(args.taskId, task.devAddress);
       return true;
     },

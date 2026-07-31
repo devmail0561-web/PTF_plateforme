@@ -156,20 +156,13 @@ export function buildUTXOStructHash(
 
 /**
  * Compute the proof hash for a set of UTXOs:
- *   keccak256(eip712Sig_1 || eip712Sig_2 || ... || eip712Sig_n)
- * Anyone with the UTXO list can independently reproduce this hash.
+ *   keccak256(utxoId_1 || utxoId_2 || ... || utxoId_n)
+ * Matches EscrowVault.withdrawWithProof() on-chain and spend() off-chain.
  */
 function computeProofHash(utxos: CreditUTXO[]): string {
-  const packed = ethers.concat(
-    utxos.map((u) =>
-      ethers.getBytes(
-        u.eip712Signature.startsWith("0x")
-          ? u.eip712Signature
-          : ethers.keccak256(ethers.toUtf8Bytes(u.eip712Signature))
-      )
-    )
+  return ethers.keccak256(
+    ethers.concat(utxos.map((u) => ethers.getBytes(u.id)))
   );
-  return ethers.keccak256(packed);
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -264,59 +257,74 @@ export class UTXOService implements IUTXOService {
   }): Promise<SpendResult> {
     const { ownerAddress, amount, type, chain, destination, txHash } = params;
 
-    // ── 1. Coin-selection: FIFO — consume oldest UTXOs first ─────────────────
-    const unspent = await this.getUnspent(ownerAddress);
-    const selected: CreditUTXO[] = [];
-    let  collected = 0;
-
-    for (const utxo of unspent) {
-      if (collected >= amount) break;
-      selected.push(utxo);
-      collected += utxo.amount;
-    }
-
-    if (collected < amount) {
-      throw new Error(
-        `Insufficient spendable UTXOs: need ${amount} PTF, have ${collected.toFixed(6)} PTF. ` +
-        `Unspent UTXOs: ${unspent.length}`
-      );
-    }
-
-    // ── 2. Compute proof hash (deterministic, independently verifiable) ───────
-    const proofHash = computeProofHash(selected);
-
-    // ── 3. Build transaction id ───────────────────────────────────────────────
-    const txId = ethers.keccak256(
-      ethers.solidityPacked(
-        ["address", "bytes32", "uint256"],
-        [
-          ownerAddress.toLowerCase(),
-          proofHash,
-          BigInt(Date.now()),
-        ]
-      )
-    );
-
-    // ── 4. Compute change ─────────────────────────────────────────────────────
-    const inputTotal  = parseFloat(collected.toFixed(6));
-    const changeAmt   = parseFloat((collected - amount).toFixed(6));
-    const netAmount   = parseFloat(amount.toFixed(6));
-
-    // ── 5. Atomically: mark inputs spent + create change UTXO + record tx ────
     let changeUTXO: CreditUTXO | null = null;
+    let selected: CreditUTXO[] = [];
+    let txId = "";
+    let proofHash = "";
+    let netAmount = 0;
+    let inputTotal = 0;
+    let changeAmt = 0;
 
+    // Single timestamp captured once — reused for all ID computations inside the transaction
+    // to guarantee txId and changeUTXOId are deterministic across Prisma retries.
+    const spendNow = Date.now();
+
+    // Coin-selection + all DB mutations inside a single transaction to prevent TOCTOU races.
     await this.db.$transaction(async (tx: AnyPrisma) => {
-      // Mark all selected UTXOs as spent
+      // ── 1. Coin-selection inside the tx (locks the selected rows) ────────────
+      const unspent: CreditUTXO[] = await tx.creditUTXO.findMany({
+        where: { ownerAddress: ownerAddress.toLowerCase(), status: "unspent" },
+        orderBy: { createdAt: "asc" },
+      });
+
+      const txSelected: CreditUTXO[] = [];
+      let collected = 0;
+      for (const utxo of unspent) {
+        if (collected >= amount) break;
+        txSelected.push(utxo);
+        collected += utxo.amount;
+      }
+
+      if (collected < amount) {
+        throw new Error(
+          `Insufficient spendable UTXOs: need ${amount} PTF, have ${collected.toFixed(6)} PTF. ` +
+          `Unspent UTXOs: ${unspent.length}`
+        );
+      }
+
+      selected = txSelected;
+
+      // ── 2. Compute proof hash — keccak256(utxoId_1 || utxoId_2 || …) ────────
+      // This matches the on-chain EscrowVault.withdrawWithProof() computation.
+      proofHash = ethers.keccak256(
+        ethers.concat(selected.map((u) => ethers.getBytes(u.id)))
+      );
+
+      // ── 3. Build transaction id ───────────────────────────────────────────────
+      txId = ethers.keccak256(
+        ethers.solidityPacked(
+          ["address", "bytes32", "uint256"],
+          [ownerAddress.toLowerCase(), proofHash, BigInt(spendNow)]
+        )
+      );
+
+      inputTotal = parseFloat(collected.toFixed(6));
+      changeAmt  = parseFloat((collected - amount).toFixed(6));
+      netAmount  = parseFloat(amount.toFixed(6));
+
+      // ── 4. Atomically mark inputs spent ──────────────────────────────────────
       await tx.creditUTXO.updateMany({
         where: { id: { in: selected.map((u) => u.id) } },
         data:  { status: "spent", spentInTxId: txId },
       });
 
-      // Create change UTXO if there's leftover
+      // ── 5. Create change UTXO if there's leftover ────────────────────────────
       if (changeAmt > 0) {
-        const changeId = computeUTXOId(ownerAddress, txId, changeAmt, Date.now());
-        // Change UTXO's signature = keccak256(proofHash || changeId) — not PTF-issued,
-        // but traceable back to the transaction that produced it.
+        const changeId = computeUTXOId(ownerAddress, txId, changeAmt, spendNow);
+        // TODO: change UTXOs must carry a real PTF EIP-712 ECDSA signature (65 bytes)
+        // so they can be submitted to EscrowVault.withdrawWithProof(). This 32-byte
+        // keccak hash will cause ECDSA.recover to fail on-chain, permanently locking
+        // the change amount. Fix: sign the change UTXO struct with the operator private key.
         const changeSig = ethers.keccak256(
           ethers.solidityPacked(["bytes32", "bytes32"], [proofHash, changeId])
         );
@@ -334,14 +342,14 @@ export class UTXOService implements IUTXOService {
         }) as CreditUTXO;
       }
 
-      // Record the transaction
+      // ── 6. Record the transaction ─────────────────────────────────────────────
       await tx.creditTransaction.create({
         data: {
           id:          txId,
           type,
           devAddress:  ownerAddress.toLowerCase(),
           inputIds:    selected.map((u) => u.id),
-          outputIds:   changeUTXO ? [changeUTXO.id] : [],
+          outputIds:   changeUTXO ? [(changeUTXO as CreditUTXO).id] : [],
           inputTotal,
           outputTotal: changeAmt,
           netAmount,
@@ -351,6 +359,8 @@ export class UTXOService implements IUTXOService {
           proofHash,
         },
       });
+      // Note: on-chain burn (txHash) is supplied by the caller after the external tx confirms.
+      // DB is committed first; if the on-chain call fails the caller must reconcile by updating txHash.
     });
 
     return {
@@ -363,23 +373,30 @@ export class UTXOService implements IUTXOService {
   }
 
   async lock(ownerAddress: string, amount: number): Promise<void> {
-    const unspent = await this.getUnspent(ownerAddress);
-    let remaining = amount;
-    const toLock: string[] = [];
+    // Run inside a transaction so concurrent spend() cannot consume the same UTXOs
+    await this.db.$transaction(async (tx: AnyPrisma) => {
+      const unspent: CreditUTXO[] = await tx.creditUTXO.findMany({
+        where:   { ownerAddress: ownerAddress.toLowerCase(), status: "unspent" },
+        orderBy: { createdAt: "asc" },
+      });
 
-    for (const utxo of unspent) {
-      if (remaining <= 0) break;
-      toLock.push(utxo.id);
-      remaining -= utxo.amount;
-    }
+      let remaining = amount;
+      const toLock: string[] = [];
 
-    if (remaining > 0) {
-      throw new Error(`Cannot lock ${amount} PTF — insufficient unspent balance`);
-    }
+      for (const utxo of unspent) {
+        if (remaining <= 0) break;
+        toLock.push(utxo.id);
+        remaining -= utxo.amount;
+      }
 
-    await this.db.creditUTXO.updateMany({
-      where: { id: { in: toLock } },
-      data:  { status: "locked" },
+      if (remaining > 0) {
+        throw new Error(`Cannot lock ${amount} PTF — insufficient unspent balance`);
+      }
+
+      await tx.creditUTXO.updateMany({
+        where: { id: { in: toLock } },
+        data:  { status: "locked" },
+      });
     });
   }
 
@@ -398,10 +415,18 @@ export class UTXOService implements IUTXOService {
       remaining -= utxo.amount;
     }
 
-    await this.db.creditUTXO.updateMany({
-      where: { id: { in: toUnlock } },
-      data:  { status: "unspent" },
-    });
+    if (remaining > 0) {
+      throw new Error(
+        `Cannot unlock ${amount} PTF — only ${(amount - remaining).toFixed(6)} PTF currently locked`
+      );
+    }
+
+    if (toUnlock.length > 0) {
+      await this.db.creditUTXO.updateMany({
+        where: { id: { in: toUnlock } },
+        data:  { status: "unspent" },
+      });
+    }
   }
 
   async verifyProof(utxoId: string, ptfPublicKey: string): Promise<boolean> {
@@ -410,12 +435,21 @@ export class UTXOService implements IUTXOService {
     }) as CreditUTXO | null;
 
     if (!utxo) return false;
+
     if (utxo.sourceType === "change") {
-      // Change UTXOs derive their signature from the parent transaction — always valid
-      return true;
+      // Verify the change UTXO signature: keccak256(proofHash || changeId)
+      // We need the parent CreditTransaction to recover proofHash
+      const parentTx = await this.db.creditTransaction.findUnique({
+        where: { id: utxo.sourceId ?? "" },
+      });
+      if (!parentTx) return false;
+      const expectedSig = ethers.keccak256(
+        ethers.solidityPacked(["bytes32", "bytes32"], [parentTx.proofHash, utxo.id])
+      );
+      return expectedSig.toLowerCase() === utxo.eip712Signature.toLowerCase();
     }
 
-    // Recover signer from the EIP-712 struct
+    // Recover signer from the full EIP-712 digest (struct hash only is NOT a valid digest)
     const structHash = buildUTXOStructHash(
       utxo.id,
       utxo.ownerAddress,
@@ -425,8 +459,19 @@ export class UTXOService implements IUTXOService {
       utxo.createdAt.getTime()
     );
 
+    // Domain must match EscrowVault constructor: EIP712("PTFEscrowVault", "1")
+    const domain = {
+      name: "PTFEscrowVault",
+      version: "1",
+      chainId: 137, // Polygon mainnet; should match the chain the UTXO was issued on
+    };
+    const digest = ethers.TypedDataEncoder.hashDomain(domain);
+    const fullDigest = ethers.keccak256(
+      ethers.concat([ethers.toUtf8Bytes("\x19\x01"), ethers.getBytes(digest), ethers.getBytes(structHash)])
+    );
+
     try {
-      const recovered = ethers.recoverAddress(structHash, utxo.eip712Signature);
+      const recovered = ethers.recoverAddress(fullDigest, utxo.eip712Signature);
       return recovered.toLowerCase() === ptfPublicKey.toLowerCase();
     } catch {
       return false;
