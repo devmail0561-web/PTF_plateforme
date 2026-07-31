@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PTF — Progression V0.0.1</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface2: #21262d;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --green: #3fb950;
+      --green-dim: #1a3a20;
+      --red: #f85149;
+      --red-dim: #3a1a1a;
+      --yellow: #d29922;
+      --yellow-dim: #3a2d0a;
+      --blue: #58a6ff;
+      --blue-dim: #0d2045;
+      --purple: #bc8cff;
+      --accent: #238636;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 2rem 1rem;
+    }
+
+    .container { max-width: 960px; margin: 0 auto; }
+
+    /* ── Header ── */
+    .header {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 2rem;
+      margin-bottom: 2rem;
+      background: var(--surface);
+    }
+
+    .header h1 {
+      font-size: 1.8rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.5rem;
+    }
+
+    .header h1 span { color: var(--blue); }
+
+    .meta {
+      color: var(--muted);
+      font-size: 0.875rem;
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      margin-top: 0.75rem;
+    }
+
+    .meta code {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.1rem 0.4rem;
+      font-family: "SF Mono", Consolas, monospace;
+      font-size: 0.8rem;
+      color: var(--purple);
+    }
+
+    /* ── Global progress ── */
+    .global-progress {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem 2rem;
+      margin-bottom: 2rem;
+    }
+
+    .global-progress h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 1rem;
+    }
+
+    .progress-big {
+      font-size: 3rem;
+      font-weight: 800;
+      color: var(--blue);
+      line-height: 1;
+      margin-bottom: 0.75rem;
+    }
+
+    .progress-bar-outer {
+      background: var(--surface2);
+      border-radius: 6px;
+      height: 12px;
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+
+    .progress-bar-inner {
+      height: 100%;
+      border-radius: 6px;
+      background: linear-gradient(90deg, var(--blue) 0%, var(--green) 100%);
+      transition: width 0.6s ease;
+    }
+
+    .module-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 0.75rem;
+    }
+
+    .module-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+    }
+
+    .module-card .mod-name {
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 0.4rem;
+    }
+
+    .module-card .mod-bar-outer {
+      background: var(--bg);
+      border-radius: 4px;
+      height: 6px;
+      overflow: hidden;
+      margin-bottom: 0.35rem;
+    }
+
+    .module-card .mod-bar-inner {
+      height: 100%;
+      border-radius: 4px;
+    }
+
+    .bar-done   { background: var(--green); }
+    .bar-partial { background: var(--yellow); }
+    .bar-none   { background: var(--surface2); }
+
+    .mod-pct {
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    /* ── Sections ── */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem 2rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-header h2 { font-size: 1.15rem; font-weight: 700; }
+
+    .badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 0.2rem 0.55rem;
+      border-radius: 20px;
+    }
+
+    .badge-done    { background: var(--green-dim);  color: var(--green);  border: 1px solid var(--green); }
+    .badge-partial { background: var(--yellow-dim); color: var(--yellow); border: 1px solid var(--yellow); }
+    .badge-todo    { background: var(--red-dim);    color: var(--red);    border: 1px solid var(--red); }
+    .badge-pct     { background: var(--blue-dim);   color: var(--blue);   border: 1px solid var(--blue); margin-left: auto; }
+
+    /* ── Tables ── */
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th { text-align: left; color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); }
+    td { padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--surface2); }
+
+    .tag { display: inline-block; background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 0.1rem 0.4rem; font-family: "SF Mono", Consolas, monospace; font-size: 0.75rem; color: var(--blue); white-space: nowrap; }
+    .tag-green { color: var(--green); }
+    .tag-yellow { color: var(--yellow); }
+    .tag-red { color: var(--red); }
+
+    /* ── Stats strip ── */
+    .stats-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 1.75rem;
+      font-weight: 800;
+      color: var(--blue);
+      line-height: 1.1;
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.25rem;
+    }
+
+    /* ── Roadmap ── */
+    .roadmap { display: flex; flex-direction: column; gap: 0; }
+
+    .roadmap-item {
+      display: flex;
+      gap: 1rem;
+      position: relative;
+    }
+
+    .roadmap-item:not(:last-child)::before {
+      content: '';
+      position: absolute;
+      left: 11px;
+      top: 28px;
+      bottom: -8px;
+      width: 2px;
+      background: var(--border);
+    }
+
+    .roadmap-dot {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border: 2px solid;
+      flex-shrink: 0;
+      margin-top: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.65rem;
+    }
+
+    .dot-done   { border-color: var(--green); background: var(--green-dim); color: var(--green); }
+    .dot-todo   { border-color: var(--border); background: var(--surface2); color: var(--muted); }
+
+    .roadmap-content { padding-bottom: 1.5rem; flex: 1; }
+
+    .roadmap-version {
+      font-weight: 700;
+      font-size: 0.95rem;
+      font-family: "SF Mono", Consolas, monospace;
+      color: var(--blue);
+      margin-bottom: 0.5rem;
+    }
+
+    .roadmap-current .roadmap-version { color: var(--green); }
+
+    .roadmap-items {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+
+    .roadmap-items li {
+      font-size: 0.85rem;
+      color: var(--muted);
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+    }
+
+    .roadmap-items li::before { content: '—'; color: var(--border); }
+    .roadmap-items li.done    { color: var(--text); }
+    .roadmap-items li.done::before { content: '✓'; color: var(--green); }
+
+    /* ── Priority chips ── */
+    .prio-high   { color: var(--red); }
+    .prio-med    { color: var(--yellow); }
+    .prio-low    { color: var(--muted); }
+
+    /* ── Code block ── */
+    pre {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1rem;
+      font-family: "SF Mono", Consolas, monospace;
+      font-size: 0.8rem;
+      color: var(--muted);
+      overflow-x: auto;
+      margin-top: 0.75rem;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-top: 3rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ── Header ── -->
+  <div class="header">
+    <h1>PTF — <span>Pay-Task Framework</span></h1>
+    <p style="color: var(--muted); font-size: 0.9rem; margin-top: 0.5rem;">
+      Écosystème cryptographique décentralisé de contribution au code avec tâches chainées, récompenses et punishments on-chain.
+    </p>
+    <div class="meta">
+      <span>Version <strong style="color: var(--text);">V0.0.1</strong></span>
+      <span>Mise à jour <strong style="color: var(--text);">2026-07-31</strong></span>
+      <span>Commits <code>7efdde9</code> → <code>fc22203</code></span>
+      <span>Repo <code>devmail0561-web/PTF</code></span>
+    </div>
+  </div>
+
+  <!-- ── Stats strip ── -->
+  <div class="stats-strip">
+    <div class="stat-card">
+      <div class="stat-value">95</div>
+      <div class="stat-label">Fichiers source</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">~8k</div>
+      <div class="stat-label">Lignes TypeScript</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">~620</div>
+      <div class="stat-label">Lignes Solidity</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">90</div>
+      <div class="stat-label">Tests (Vitest + Jest + Foundry)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">4</div>
+      <div class="stat-label">Smart contracts EVM</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">~50%</div>
+      <div class="stat-label">Progression globale</div>
+    </div>
+  </div>
+
+  <!-- ── Global progress ── -->
+  <div class="global-progress">
+    <h2>Avancement global</h2>
+    <div class="progress-big">50%</div>
+    <div class="progress-bar-outer">
+      <div class="progress-bar-inner" style="width: 50%;"></div>
+    </div>
+    <div class="module-grid">
+      <div class="module-card">
+        <div class="mod-name">Documentation</div>
+        <div class="mod-bar-outer"><div class="mod-bar-inner bar-done" style="width:100%"></div></div>
+        <div class="mod-pct">100%</div>
+      </div>
+      <div class="module-card">
+        <div class="mod-name">CLI</div>
+        <div class="mod-bar-outer"><div class="mod-bar-inner bar-done" style="width:100%"></div></div>
+        <div class="mod-pct">100%</div>
+      </div>
+      <div class="module-card">
+        <div class="mod-name">Backend</div>
+        <div class="mod-bar-outer"><div class="mod-bar-inner bar-partial" style="width:70%"></div></div>
+        <div class="mod-pct">70%</div>
+      </div>
+      <div class="module-card">
+        <div class="mod-name">Smart contracts EVM</div>
+        <div class="mod-bar-outer"><div class="mod-bar-inner bar-done" style="width:100%"></div></div>
+        <div class="mod-pct">100%</div>
+      </div>
+      <div class="module-card">
+        <div class="mod-name">Frontend</div>
+        <div class="mod-bar-outer"><div class="mod-bar-inner bar-none" style="width:0%"></div></div>
+        <div class="mod-pct">0%</div>
+      </div>
+      <div class="module-card">
+        <div class="mod-name">Infrastructure</div>
+        <div class="mod-bar-outer"><div class="mod-bar-inner bar-none" style="width:0%"></div></div>
+        <div class="mod-pct">0%</div>
+      </div>
+      <div class="module-card">
+        <div class="mod-name">Blockchain réelle</div>
+        <div class="mod-bar-outer"><div class="mod-bar-inner bar-none" style="width:0%"></div></div>
+        <div class="mod-pct">0%</div>
+      </div>
+      <div class="module-card">
+        <div class="mod-name">Solana / Anchor</div>
+        <div class="mod-bar-outer"><div class="mod-bar-inner bar-none" style="width:0%"></div></div>
+        <div class="mod-pct">0%</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Documentation ── -->
+  <div class="section">
+    <div class="section-header">
+      <h2>Documentation</h2>
+      <span class="badge badge-done">Terminé</span>
+      <span class="badge badge-pct">100%</span>
+    </div>
+    <table>
+      <thead><tr><th>Fichier</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag">docs/ARCHITECTURE.md</span></td><td>Architecture technique complète (~5 000 lignes)</td></tr>
+        <tr><td><span class="tag">docs/BUSINESS_PLAN.md</span></td><td>Modèle économique, tokenomics, grille de commissions</td></tr>
+        <tr><td><span class="tag">docs/SMART_CONTRACT_AUDIT.md</span></td><td>Stratégie audit : Slither, Mythril, Foundry, agents IA indépendants</td></tr>
+        <tr><td><span class="tag">README.md</span></td><td>Présentation générale du projet</td></tr>
+        <tr><td><span class="tag">SUMMARY.md</span></td><td>Vision condensée de l'écosystème PTF</td></tr>
+        <tr><td><span class="tag">templates/markdown/</span></td><td>Templates ARCHITECTURE, PLAN_ACTION, CONTRIBUTING</td></tr>
+        <tr><td><span class="tag">templates/github/</span></td><td>CI, code-review, PR template, issue templates</td></tr>
+        <tr><td><span class="tag">.claude/commands/ptf-architect.md</span></td><td>Skill IA Mode 3 — génération MD conforme PTF (Claude Code, Cursor, Copilot)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── CLI ── -->
+  <div class="section">
+    <div class="section-header">
+      <h2>CLI</h2>
+      <span class="badge badge-done">Terminé</span>
+      <span class="badge badge-pct">100% — 21 fichiers TS</span>
+    </div>
+    <table>
+      <thead><tr><th>Catégorie</th><th>Fichiers</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Commandes (13)</td>
+          <td>
+            <span class="tag">init</span> <span class="tag">scaffold</span> <span class="tag">generate</span>
+            <span class="tag">tasks</span> <span class="tag">task</span> <span class="tag">validate-docs</span>
+            <span class="tag">auth</span> <span class="tag">wallet</span> <span class="tag">submit</span>
+            <span class="tag">projects</span> <span class="tag">report</span> <span class="tag">contributors</span>
+            <span class="tag">config</span>
+          </td>
+          <td>Cycle complet créateur + développeur, mode offline complet</td>
+        </tr>
+        <tr><td>Crypto</td><td><span class="tag">crypto.ts</span></td><td><code style="font-size:0.75rem;color:var(--purple)">generateProjectId</code> (keccak256), <code style="font-size:0.75rem;color:var(--purple)">computeMerkleRoot</code>, <code style="font-size:0.75rem;color:var(--purple)">hashConditions</code> EIP-712</td></tr>
+        <tr><td>Config</td><td><span class="tag">config.ts</span></td><td>Walk-up <code style="font-size:0.75rem;color:var(--purple)">.ptf/config.json</code> (comme git), <code style="font-size:0.75rem;color:var(--purple)">requireProjectConfig</code></td></tr>
+        <tr><td>Validateur</td><td><span class="tag">docs-validator.ts</span></td><td>Sections requises, placeholders, termes vagues, YAML tâches</td></tr>
+        <tr><td>API</td><td><span class="tag">api.ts</span></td><td>Client GraphQL + fallback offline avec mocks annotés <code style="font-size:0.75rem;color:var(--yellow)">[MODE OFFLINE]</code></td></tr>
+        <tr><td>Tests</td><td><span class="tag tag-green">docs-validator.test.ts</span></td><td><strong style="color:var(--green)">13 tests Vitest</strong> — sections, placeholders, Phase N regex, YAML</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── Backend ── -->
+  <div class="section">
+    <div class="section-header">
+      <h2>Backend</h2>
+      <span class="badge badge-partial">Partiel</span>
+      <span class="badge badge-pct">70% — 24 fichiers TS</span>
+    </div>
+
+    <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem;">
+      Apollo Server v4 · Prisma/PostgreSQL · BullMQ · Redlock · GraphQL · TypeScript strict
+    </p>
+
+    <table>
+      <thead><tr><th>Service</th><th>Statut</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag tag-green">TaskService</span></td><td><span class="badge badge-done">✓</span></td><td>Anti-collision Redlock (10s TTL), <code style="font-size:0.75rem">assertMutable</code>, cycle de vie, vue publique/privée</td></tr>
+        <tr><td><span class="tag tag-green">ProjectService</span></td><td><span class="badge badge-done">✓</span></td><td>Création projet, ancrage Merkle, évaluation coût</td></tr>
+        <tr><td><span class="tag tag-green">ReputationService</span></td><td><span class="badge badge-done">✓</span></td><td>Formule <code style="font-size:0.75rem">(c+e+i)×10 + bonus_durée</code>, niveaux, grille commission</td></tr>
+        <tr><td><span class="tag tag-green">PunishmentService</span></td><td><span class="badge badge-done">✓</span></td><td>Exécution punishments, distribution 80/20 via adapter chain</td></tr>
+        <tr><td><span class="tag tag-green">WalletService</span></td><td><span class="badge badge-done">✓</span></td><td>6 critères de vérification, soft-lock, multi-chaîne</td></tr>
+        <tr><td><span class="tag tag-green">AuthService</span></td><td><span class="badge badge-done">✓</span></td><td>GitHub OAuth + JWT + linking wallets</td></tr>
+        <tr><td><span class="tag tag-green">TimerService</span></td><td><span class="badge badge-done">✓</span></td><td>BullMQ deadlines, alertes countdown 72/48/24h</td></tr>
+        <tr><td><span class="tag tag-green">NotificationService</span></td><td><span class="badge badge-done">✓</span></td><td>Webhooks, événements temps réel</td></tr>
+        <tr><td><span class="tag tag-green">ReportService</span></td><td><span class="badge badge-done">✓</span></td><td>Signalements, analyse automatique, escalade PTF</td></tr>
+        <tr><td><span class="tag tag-red">EscrowService</span></td><td><span class="badge badge-todo">À faire</span></td><td class="prio-high">⬆ Lien backend ↔ EscrowVault on-chain (release reward, soft-lock)</td></tr>
+        <tr><td><span class="tag tag-red">ValidationService</span></td><td><span class="badge badge-todo">À faire</span></td><td class="prio-high">⬆ Tests automatiques + sandbox gVisor (projets privés)</td></tr>
+        <tr><td><span class="tag tag-red">SyncService</span></td><td><span class="badge badge-todo">À faire</span></td><td class="prio-med">Repo temporaire PTF (Cas 3), reconnexion, sync auto</td></tr>
+        <tr><td><span class="tag tag-red">CurrencyConverter</span></td><td><span class="badge badge-todo">À faire</span></td><td class="prio-med">EUR/ETH/BTC → USDC via oracle Chainlink (frais 0.5%)</td></tr>
+        <tr><td><span class="tag tag-red">ReputationAggregator</span></td><td><span class="badge badge-todo">À faire</span></td><td class="prio-med">Score cross-chaîne (agrégation multi-wallets)</td></tr>
+      </tbody>
+    </table>
+
+    <div style="margin-top:1rem;">
+      <table>
+        <thead><tr><th>GraphQL</th><th>Détail</th></tr></thead>
+        <tbody>
+          <tr><td>11 Queries</td><td><code style="font-size:0.75rem;color:var(--muted)">tasks · task · myTasks · projects · project · myProjects · walletStatus · walletBalance · projectContributors · reputationScore · health</code></td></tr>
+          <tr><td>9 Mutations</td><td><code style="font-size:0.75rem;color:var(--muted)">loginWithGithub · linkWallet · createProject · publishProject · generateTasks · claimTask · submitTask · cancelTask · reportUser</code></td></tr>
+          <tr><td>1 Subscription</td><td><code style="font-size:0.75rem;color:var(--muted)">taskStatusChanged</code></td></tr>
+          <tr><td>11 tables Prisma</td><td><code style="font-size:0.75rem;color:var(--muted)">User · Project · Task · Submission · WalletLink · ContributorRecord · ReputationHistory · PunishmentRecord · Report · Notification · Session</code></td></tr>
+          <tr><td>Tests</td><td><strong style="color:var(--green)">17 tests Jest</strong> — reputation.service.test.ts : formule, niveaux, commission</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Smart contracts ── -->
+  <div class="section">
+    <div class="section-header">
+      <h2>Smart contracts EVM</h2>
+      <span class="badge badge-done">Terminé</span>
+      <span class="badge badge-pct">100% — Solidity 0.8.20 · Foundry · OZ v5</span>
+    </div>
+
+    <table>
+      <thead><tr><th>Contrat</th><th>Lignes</th><th>Points clés de sécurité</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="tag tag-green">CreditToken.sol</span></td>
+          <td>~110</td>
+          <td>ERC-20 6 décimales · EIP-712 nonces <code style="font-size:0.75rem">(address, taskId)</code> · mint/burn minter-gated · anti-replay cross-chaîne</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-green">ReputationRegistry.sol</span></td>
+          <td>~100</td>
+          <td>Historique immuable on-chain · floor à 0 · writer-gated · 4 niveaux (Unranked/Junior/Senior/Expert)</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-green">ProjectRegistry.sol</span></td>
+          <td>~150</td>
+          <td>Ancre Merkle · verrou irréversible au premier claim · preuve Merkle · registrar-gated · invariant immutabilité tâches</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-green">EscrowVault.sol</span></td>
+          <td>~250</td>
+          <td>
+            <strong>SafeERC20</strong> · <strong>nonReentrant</strong> · <strong>CEI strict</strong> · EIP-712 release vouchers ·
+            soft-lock 10 PTF · punishment <strong>80% trésorerie / 20% projet (BPS hardcodé)</strong>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div style="margin-top:1rem;">
+      <table>
+        <thead><tr><th>Tests Foundry (~60 tests)</th><th>Couverture</th></tr></thead>
+        <tbody>
+          <tr><td><span class="tag">CreditToken.t.sol</span> — 10 tests + 1 fuzz</td><td>Mint, burn, claim EIP-712, replay, expiration, mauvais signer</td></tr>
+          <tr><td><span class="tag">ReputationRegistry.t.sol</span> — 12 tests + 1 fuzz</td><td>Score, historique, niveaux aux bornes, floor à 0</td></tr>
+          <tr><td><span class="tag">ProjectRegistry.t.sol</span> — 10 tests</td><td>Registration, Merkle root, lock au claim, Merkle proof</td></tr>
+          <tr><td><span class="tag">EscrowVault.t.sol</span> — 15 tests</td><td>Funding, soft-lock, release EIP-712, replay, distribution 80/20</td></tr>
+          <tr><td><span class="tag tag-green">EscrowVaultInvariant.t.sol</span> — 3 invariants</td><td><strong style="color:var(--green)">Solvabilité · cohérence soft-lock · intégrité BPS</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <pre>forge install OpenZeppelin/openzeppelin-contracts --no-commit
+forge install foundry-rs/forge-std --no-commit
+forge test -vvv</pre>
+  </div>
+
+  <!-- ── À faire ── -->
+  <div class="section">
+    <div class="section-header">
+      <h2>Reste à faire</h2>
+      <span class="badge badge-todo">50% restant</span>
+    </div>
+    <table>
+      <thead><tr><th>Module</th><th>Priorité</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>Services backend manquants</td><td class="prio-high">🔴 Haute</td><td>EscrowService, ValidationService (sandbox gVisor)</td></tr>
+        <tr><td>Docker compose</td><td class="prio-high">🔴 Haute</td><td>PostgreSQL + Redis + backend en local</td></tr>
+        <tr><td>CI/CD GitHub Actions</td><td class="prio-high">🔴 Haute</td><td>Build, test, lint sur chaque PR</td></tr>
+        <tr><td>Frontend MVP</td><td class="prio-high">🔴 Haute</td><td>Next.js 14 + wagmi : marketplace tâches, dashboard dev, profil</td></tr>
+        <tr><td>Adapters blockchain réels</td><td class="prio-high">🔴 Haute</td><td>Connecter PolygonAdapter aux contrats déployés (remplace MockChainAdapter)</td></tr>
+        <tr><td>Déploiement testnet</td><td class="prio-med">🟡 Moyenne</td><td>Polygon Amoy — 3 mois minimum avant mainnet</td></tr>
+        <tr><td>SyncService</td><td class="prio-med">🟡 Moyenne</td><td>Repo temporaire PTF (Cas 3), reconnexion créateur, sync auto</td></tr>
+        <tr><td>CurrencyConverter</td><td class="prio-med">🟡 Moyenne</td><td>Oracle Chainlink — EUR/ETH/BTC → USDC</td></tr>
+        <tr><td>ReputationAggregator</td><td class="prio-med">🟡 Moyenne</td><td>Score cross-chaîne (multi-wallets)</td></tr>
+        <tr><td>Solana / Anchor</td><td class="prio-low">🟠 Basse</td><td>4 équivalents Rust des contrats EVM (SPL token, escrow, registry)</td></tr>
+        <tr><td>The Graph subgraph</td><td class="prio-low">🟠 Basse</td><td>Indexation on-chain multi-chaîne</td></tr>
+        <tr><td>Arweave / IPFS</td><td class="prio-low">🟠 Basse</td><td>Stockage permanent ARCHITECTURE.md + PLAN_ACTION.md</td></tr>
+        <tr><td>LayerZero bridge</td><td class="prio-low">🟠 Basse</td><td><code style="font-size:0.75rem">ptf wallet bridge --from polygon --to ethereum</code></td></tr>
+        <tr><td>NetworkBroadcast</td><td class="prio-low">🟠 Basse</td><td>Merkle roots + adresses officielles PTF signées dans le réseau</td></tr>
+        <tr><td>Audit smart contracts</td><td class="prio-low">🟠 Basse</td><td>Slither + Mythril + 3 agents IA indépendants — avant mainnet</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── Roadmap ── -->
+  <div class="section">
+    <div class="section-header">
+      <h2>Roadmap</h2>
+    </div>
+    <div class="roadmap">
+
+      <div class="roadmap-item roadmap-current">
+        <div class="roadmap-dot dot-done">✓</div>
+        <div class="roadmap-content">
+          <div class="roadmap-version">V0.0.1 — actuel</div>
+          <ul class="roadmap-items">
+            <li class="done">Documentation complète</li>
+            <li class="done">CLI — 13 commandes, mode offline, 13 tests</li>
+            <li class="done">Backend — 9 services, GraphQL Apollo, Prisma 11 tables, 17 tests</li>
+            <li class="done">Smart contracts EVM — 4 contrats, ~60 tests Foundry, 3 invariants</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="roadmap-item">
+        <div class="roadmap-dot dot-todo"></div>
+        <div class="roadmap-content">
+          <div class="roadmap-version">V0.0.2</div>
+          <ul class="roadmap-items">
+            <li>Services backend manquants (EscrowService, ValidationService, SyncService)</li>
+            <li>Docker compose — dev local complet</li>
+            <li>CI/CD GitHub Actions</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="roadmap-item">
+        <div class="roadmap-dot dot-todo"></div>
+        <div class="roadmap-content">
+          <div class="roadmap-version">V0.1.0</div>
+          <ul class="roadmap-items">
+            <li>Frontend MVP (marketplace + dashboard dev + profil)</li>
+            <li>Adapters blockchain réels (Polygon testnet)</li>
+            <li>Déploiement testnet Polygon Amoy</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="roadmap-item">
+        <div class="roadmap-dot dot-todo"></div>
+        <div class="roadmap-content">
+          <div class="roadmap-version">V0.5.0 — Beta fermée</div>
+          <ul class="roadmap-items">
+            <li>Frontend complet (toutes les vues)</li>
+            <li>Audit smart contracts (Slither + Mythril + agents IA)</li>
+            <li>Infrastructure VPS Hetzner</li>
+            <li>Solana / Anchor</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="roadmap-item">
+        <div class="roadmap-dot dot-todo"></div>
+        <div class="roadmap-content">
+          <div class="roadmap-version">V1.0.0 — Mainnet</div>
+          <ul class="roadmap-items">
+            <li>Testnet 3 mois sans incident critique</li>
+            <li>Audit externe (Certik / Trail of Bits)</li>
+            <li>LayerZero bridge cross-chaîne</li>
+            <li>The Graph indexer multi-chaîne</li>
+            <li>Programme bug bounty actif</li>
+          </ul>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="footer">
+    PTF V0.0.1 · 2026-07-31 · <code style="font-size:0.75rem">devmail0561-web/PTF</code>
+  </div>
+
+</div>
+</body>
+</html>

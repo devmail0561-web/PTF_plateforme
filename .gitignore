@@ -62,6 +62,7 @@ temp/
 # Generated HTML (built from MD)
 *.html
 !index.html
+!docs/PROGRESSION.html
 
 # Prisma
 backend/prisma/migrations/
