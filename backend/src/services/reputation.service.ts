@@ -3,6 +3,16 @@ import type { IChainRegistry } from "../bal/chain.registry.js";
 import type { TaskScoring, ReputationLevel } from "../types/index.js";
 import { REPUTATION_LEVELS } from "../types/index.js";
 
+export interface ReputationHistoryEntry {
+  id: string;
+  delta: number;
+  reason: string;
+  taskId?: string | null;
+  chain?: string | null;
+  txHash?: string | null;
+  createdAt: Date;
+}
+
 export interface IReputationService {
   calculatePoints(scoring: TaskScoring, durationDays?: number): number;
   applyDelta(
@@ -14,6 +24,7 @@ export interface IReputationService {
   ): Promise<void>;
   getLevel(points: number): ReputationLevel;
   getScore(devAddress: string): Promise<{ total: number; level: ReputationLevel; completedTasks: number }>;
+  getHistory(devAddress: string, limit?: number, offset?: number): Promise<ReputationHistoryEntry[]>;
   isEligibleReviewer(devAddress: string): Promise<boolean>;
 }
 
@@ -113,6 +124,33 @@ export class ReputationService implements IReputationService {
       level: this.getLevel(total),
       completedTasks: walletLink.user.reputation.completedTasks,
     };
+  }
+
+  async getHistory(
+    devAddress: string,
+    limit = 50,
+    offset = 0
+  ): Promise<ReputationHistoryEntry[]> {
+    const walletLink = await this.prisma.walletLink.findFirst({
+      where: { address: devAddress.toLowerCase() },
+      include: {
+        user: {
+          include: {
+            reputation: {
+              include: {
+                history: {
+                  orderBy: { createdAt: "desc" },
+                  take: limit,
+                  skip: offset,
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return walletLink?.user.reputation?.history ?? [];
   }
 
   async isEligibleReviewer(devAddress: string): Promise<boolean> {

@@ -53,6 +53,47 @@ export const walletResolvers = {
       const score = await ctx.services.reputation.getScore(args.address);
       return { address: args.address, ...score };
     },
+
+    reputationHistory: async (
+      _: unknown,
+      args: { address: string; limit?: number; offset?: number },
+      ctx: GraphQLContext
+    ) => {
+      const entries = await ctx.services.reputation.getHistory(
+        args.address,
+        args.limit ?? 50,
+        args.offset ?? 0
+      );
+      return entries.map((e) => ({
+        ...e,
+        createdAt: e.createdAt.toISOString(),
+      }));
+    },
+
+    creditHistory: async (
+      _: unknown,
+      args: { address: string; limit?: number; offset?: number; type?: string },
+      ctx: GraphQLContext
+    ) => {
+      const entries = await ctx.services.creditLedger.getHistory(args.address, {
+        limit: args.limit ?? 50,
+        offset: args.offset ?? 0,
+        type: args.type as never,
+      });
+      return entries.map((e) => ({
+        ...e,
+        createdAt: e.createdAt.toISOString(),
+      }));
+    },
+
+    creditBalance: async (
+      _: unknown,
+      args: { address: string },
+      ctx: GraphQLContext
+    ) => {
+      const bal = await ctx.services.creditLedger.getBalance(args.address);
+      return { address: args.address, ...bal };
+    },
   },
 
   Mutation: {

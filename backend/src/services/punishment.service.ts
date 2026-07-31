@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import type { IChainRegistry } from "../bal/chain.registry.js";
 import type { IReputationService } from "./reputation.service.js";
+import type { ICreditLedgerService } from "./creditLedger.service.js";
 import type { PunishmentType, Punishments } from "../types/index.js";
 
 export interface IPunishmentService {
@@ -28,7 +29,8 @@ export class PunishmentService implements IPunishmentService {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly chainRegistry: IChainRegistry,
-    private readonly reputationService: IReputationService
+    private readonly reputationService: IReputationService,
+    private readonly creditLedger: ICreditLedgerService
   ) {}
 
   async execute(
@@ -56,6 +58,18 @@ export class PunishmentService implements IPunishmentService {
       const adapter = this.chainRegistry.get(chain);
       // EscrowVault distribue : 80% trésorerie PTF / 20% fonds projet
       txHash = await adapter.deductPenalty(devAddress, amountRaw, type, projectId);
+
+      // Journalisation traçabilité crédits
+      await this.creditLedger.record({
+        devAddress,
+        type: "punishment_deducted",
+        amount: rule.credits,
+        taskId,
+        projectId,
+        chain,
+        txHash,
+        note: `punishment:${type}`,
+      });
     }
 
     // Pénalité réputation (tous projets)

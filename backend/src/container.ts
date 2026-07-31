@@ -15,6 +15,7 @@ import {
 } from "./services/taskGenerator.service.js";
 import { NotificationService } from "./services/notification.service.js";
 import { ReportService } from "./services/report.service.js";
+import { CreditLedgerService } from "./services/creditLedger.service.js";
 import type { IServiceContainer } from "./graphql/context.js";
 
 export function buildContainer(): {
@@ -54,13 +55,15 @@ export function buildContainer(): {
   const authService = new AuthService(prisma, chainRegistry);
   const walletService = new WalletService(prisma, chainRegistry, authService);
   const projectService = new ProjectService(prisma, chainRegistry);
-  const punishmentService = new PunishmentService(prisma, chainRegistry, reputationService);
+  const creditLedger = new CreditLedgerService(prisma);
+  const punishmentService = new PunishmentService(prisma, chainRegistry, reputationService, creditLedger);
   const taskService = new TaskService(
     prisma,
     chainRegistry,
     reputationService,
     walletService,
-    redis
+    redis,
+    creditLedger
   );
   const timerService = new TimerService(prisma, punishmentService, redis);
   const notificationService = new NotificationService(prisma);
@@ -79,6 +82,7 @@ export function buildContainer(): {
     punishment: punishmentService,
     taskGenerator: taskGeneratorService,
     report: reportService,
+    creditLedger,
   };
 
   return { services, prisma, redis, timerService };

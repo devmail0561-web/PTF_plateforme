@@ -18,6 +18,11 @@ type Query {
 
   # Reputation
   reputationScore(address: String!): ReputationScore!
+  reputationHistory(address: String!, limit: Int, offset: Int): [ReputationEvent!]!
+
+  # Credit ledger
+  creditHistory(address: String!, limit: Int, offset: Int, type: String): [CreditEvent!]!
+  creditBalance(address: String!): CreditLedgerBalance!
 
   # Health
   health: String!
@@ -224,6 +229,40 @@ type ReputationScore {
   total: Int!
   level: String!
   completedTasks: Int!
+}
+
+type ReputationEvent {
+  id: ID!
+  delta: Int!
+  reason: String!
+  taskId: String
+  chain: String
+  txHash: String
+  createdAt: String!
+}
+
+# ─── Credit ledger ────────────────────────────────────────────────────────────
+
+type CreditEvent {
+  id: ID!
+  devAddress: String!
+  type: String!
+  direction: String!
+  amount: Float!
+  balanceAfter: Float
+  taskId: String
+  projectId: String
+  chain: String!
+  txHash: String
+  note: String
+  createdAt: String!
+}
+
+type CreditLedgerBalance {
+  address: String!
+  totalCredits: Float!
+  totalDebits: Float!
+  net: Float!
 }
 
 # ─── Contributors ────────────────────────────────────────────────────────────

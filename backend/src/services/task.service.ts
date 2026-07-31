@@ -2,6 +2,7 @@ import type { PrismaClient, Task } from "@prisma/client";
 import type { IChainRegistry } from "../bal/chain.registry.js";
 import type { IReputationService } from "./reputation.service.js";
 import type { IWalletService } from "./wallet.service.js";
+import type { ICreditLedgerService } from "./creditLedger.service.js";
 import type {
   TaskFilter,
   PublicTaskView,
@@ -88,7 +89,8 @@ export class TaskService implements ITaskService {
     private readonly chainRegistry: IChainRegistry,
     private readonly reputationService: IReputationService,
     private readonly walletService: IWalletService,
-    redis: AnyRedis
+    redis: AnyRedis,
+    private readonly creditLedger: ICreditLedgerService
   ) {
     // Dynamic import pour éviter les problèmes de types avec redlock v5 beta + NodeNext
     try {
@@ -281,6 +283,15 @@ export class TaskService implements ITaskService {
       // Soft-lock 10 PTF (projets paid)
       if (project.rewardMode === "paid") {
         await this.walletService.softLock(devAddress, chain, 10);
+        await this.creditLedger.record({
+          devAddress,
+          type: "soft_locked",
+          amount: 10,
+          taskId,
+          projectId: task.projectId,
+          chain,
+          note: "10 PTF guarantee locked on task claim",
+        });
       }
 
       // Enregistrement on-chain
@@ -361,6 +372,15 @@ export class TaskService implements ITaskService {
     // Libération du soft-lock (toujours, quelle que soit la durée écoulée)
     if (project.rewardMode === "paid" && task.devAddress) {
       await this.walletService.softUnlock(task.devAddress, project.chain, 10);
+      await this.creditLedger.record({
+        devAddress: task.devAddress,
+        type: "soft_unlocked",
+        amount: 10,
+        taskId,
+        projectId: task.projectId,
+        chain: project.chain,
+        note: "10 PTF guarantee released on task cancel",
+      });
     }
 
     await this.prisma.task.update({

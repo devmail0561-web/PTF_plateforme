@@ -204,8 +204,24 @@ export class PtfApiClient {
     this.offline = !config.ptfApiUrl || config.ptfApiUrl.includes("localhost") === false;
   }
 
-  private isOffline(): boolean {
+  isOffline(): boolean {
     return this.offline || process.env["PTF_OFFLINE"] === "true";
+  }
+
+  /**
+   * Generic GraphQL query helper. Throws on HTTP errors or GraphQL errors.
+   */
+  async query<T>(queryString: string, variables?: Record<string, unknown>): Promise<T> {
+    const res = await fetch(this.apiUrl + "/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: queryString, variables: variables ?? {} }),
+    });
+    const json = (await res.json()) as { data?: T; errors?: { message: string }[] };
+    if (json.errors?.length) {
+      throw new Error(json.errors.map((e) => e.message).join(", "));
+    }
+    return json.data as T;
   }
 
   async getTasks(filters?: TaskFilters): Promise<{ tasks: PtfTask[]; offline: boolean }> {

@@ -233,6 +233,173 @@ walletCommand
   });
 
 walletCommand
+  .command("history")
+  .description("Afficher l'historique des mouvements de crédits PTF")
+  .option("--address <address>", "Adresse wallet (défaut : wallet configuré)")
+  .option("--limit <n>", "Nombre d'entrées à afficher", "20")
+  .option("--type <type>", "Filtrer par type : reward_earned | punishment_deducted | soft_locked | soft_unlocked | deposit | withdrawal | bridge_out | bridge_in")
+  .action(async (options) => {
+    const userConfig = loadUserConfig();
+    const address = options.address ?? userConfig.walletAddress;
+
+    if (!address) {
+      printError("Aucun wallet configuré. Lancez : ptf config set-wallet <address>");
+      process.exit(1);
+    }
+
+    const client = new PtfApiClient(userConfig);
+    const limit = parseInt(options.limit, 10);
+    const offline = client.isOffline();
+    if (offline) printOfflineBanner();
+
+    let entries: Array<{
+      type: string;
+      direction: string;
+      amount: number;
+      taskId?: string | null;
+      chain: string;
+      txHash?: string | null;
+      note?: string | null;
+      createdAt: string;
+    }>;
+
+    if (offline) {
+      entries = [
+        { type: "reward_earned",       direction: "credit", amount: 150.0,  taskId: "0xabc…", chain: "polygon", txHash: "0x001…", note: null,                         createdAt: new Date(Date.now() - 86400000 * 2).toISOString() },
+        { type: "soft_locked",         direction: "debit",  amount: 10.0,   taskId: "0xdef…", chain: "polygon", txHash: null,      note: "10 PTF guarantee locked on task claim",   createdAt: new Date(Date.now() - 86400000 * 3).toISOString() },
+        { type: "punishment_deducted", direction: "debit",  amount: 20.0,   taskId: "0xghi…", chain: "polygon", txHash: "0x002…", note: "punishment:lateDelivery",    createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
+        { type: "soft_unlocked",       direction: "credit", amount: 10.0,   taskId: "0xghi…", chain: "polygon", txHash: null,      note: "10 PTF guarantee released on task cancel", createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
+        { type: "deposit",             direction: "credit", amount: 50.0,   taskId: null,     chain: "polygon", txHash: "0x003…", note: "50 USDC deposit",             createdAt: new Date(Date.now() - 86400000 * 10).toISOString() },
+      ].slice(0, limit);
+    } else {
+      const result = await client.query<{
+        creditHistory: typeof entries;
+      }>(
+        `query($address: String!, $limit: Int, $type: String) {
+          creditHistory(address: $address, limit: $limit, type: $type) {
+            type direction amount taskId chain txHash note createdAt
+          }
+        }`,
+        { address, limit, type: options.type ?? null }
+      );
+      entries = result.creditHistory;
+    }
+
+    // Totaux
+    const totalIn  = entries.filter(e => e.direction === "credit").reduce((s, e) => s + e.amount, 0);
+    const totalOut = entries.filter(e => e.direction === "debit").reduce((s, e) => s + e.amount, 0);
+
+    console.log(
+      `\n${chalk.bold("Historique crédits PTF")} — ${chalk.dim(address.slice(0, 14) + "…")}\n` +
+      chalk.dim("─".repeat(72))
+    );
+
+    for (const e of entries) {
+      const sign   = e.direction === "credit" ? chalk.green("+") : chalk.red("−");
+      const amount = e.direction === "credit"
+        ? chalk.green(e.amount.toFixed(6) + " PTF")
+        : chalk.red(e.amount.toFixed(6) + " PTF");
+      const date  = new Date(e.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+      const label = e.note ?? e.type;
+      const task  = e.taskId ? chalk.dim(" tâche:" + e.taskId.slice(0, 10) + "…") : "";
+      const tx    = e.txHash ? chalk.dim(" tx:" + e.txHash.slice(0, 10) + "…") : "";
+
+      console.log(
+        `  ${sign} ${amount.padEnd(22)}  ${chalk.dim(date.padEnd(14))}  ${label}${task}${tx}`
+      );
+    }
+
+    console.log(
+      chalk.dim("─".repeat(72)) +
+      `\n  Total crédités  : ${chalk.green("+" + totalIn.toFixed(6) + " PTF")}` +
+      `\n  Total débités   : ${chalk.red("−" + totalOut.toFixed(6) + " PTF")}` +
+      `\n  Net             : ${chalk.bold((totalIn - totalOut).toFixed(6) + " PTF")}\n`
+    );
+  });
+
+walletCommand
+  .command("reputation-history")
+  .alias("rep-history")
+  .description("Afficher l'historique des points de réputation")
+  .option("--address <address>", "Adresse wallet (défaut : wallet configuré)")
+  .option("--limit <n>", "Nombre d'entrées à afficher", "20")
+  .action(async (options) => {
+    const userConfig = loadUserConfig();
+    const address = options.address ?? userConfig.walletAddress;
+
+    if (!address) {
+      printError("Aucun wallet configuré. Lancez : ptf config set-wallet <address>");
+      process.exit(1);
+    }
+
+    const client = new PtfApiClient(userConfig);
+    const limit = parseInt(options.limit, 10);
+    const offline = client.isOffline();
+    if (offline) printOfflineBanner();
+
+    let entries: Array<{
+      delta: number;
+      reason: string;
+      taskId?: string | null;
+      chain?: string | null;
+      txHash?: string | null;
+      createdAt: string;
+    }>;
+
+    if (offline) {
+      entries = [
+        { delta: 100, reason: "task_validated",           taskId: "0xabc…", chain: "polygon", txHash: "0x001…", createdAt: new Date(Date.now() - 86400000 * 2).toISOString() },
+        { delta: -10, reason: "punishment:lateDelivery",  taskId: "0xdef…", chain: "polygon", txHash: "0x002…", createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
+        { delta: 110, reason: "task_validated",           taskId: "0xghi…", chain: "polygon", txHash: "0x003…", createdAt: new Date(Date.now() - 86400000 * 15).toISOString() },
+        { delta: -30, reason: "punishment:criticalBug",   taskId: "0xjkl…", chain: "polygon", txHash: "0x004…", createdAt: new Date(Date.now() - 86400000 * 20).toISOString() },
+        { delta: 180, reason: "task_validated",           taskId: "0xmno…", chain: "polygon", txHash: "0x005…", createdAt: new Date(Date.now() - 86400000 * 30).toISOString() },
+      ].slice(0, limit);
+    } else {
+      const result = await client.query<{
+        reputationHistory: typeof entries;
+      }>(
+        `query($address: String!, $limit: Int) {
+          reputationHistory(address: $address, limit: $limit) {
+            delta reason taskId chain txHash createdAt
+          }
+        }`,
+        { address, limit }
+      );
+      entries = result.reputationHistory;
+    }
+
+    const totalGained = entries.filter(e => e.delta > 0).reduce((s, e) => s + e.delta, 0);
+    const totalLost   = entries.filter(e => e.delta < 0).reduce((s, e) => s + e.delta, 0);
+
+    console.log(
+      `\n${chalk.bold("Historique réputation")} — ${chalk.dim(address.slice(0, 14) + "…")}\n` +
+      chalk.dim("─".repeat(72))
+    );
+
+    for (const e of entries) {
+      const sign   = e.delta > 0 ? chalk.green("+") : chalk.red("");
+      const pts    = e.delta > 0
+        ? chalk.green(`+${e.delta} pts`)
+        : chalk.red(`${e.delta} pts`);
+      const date   = new Date(e.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+      const task   = e.taskId ? chalk.dim(" tâche:" + e.taskId.slice(0, 10) + "…") : "";
+      const tx     = e.txHash ? chalk.dim(" tx:" + e.txHash.slice(0, 10) + "…") : "";
+
+      console.log(
+        `  ${pts.padEnd(16)}  ${chalk.dim(date.padEnd(14))}  ${e.reason}${task}${tx}`
+      );
+      void sign; // used above via template expression
+    }
+
+    console.log(
+      chalk.dim("─".repeat(72)) +
+      `\n  Total gagné  : ${chalk.green("+" + totalGained + " pts")}` +
+      `\n  Total perdu  : ${chalk.red(totalLost + " pts")}` +
+      `\n  Net          : ${chalk.bold((totalGained + totalLost) + " pts")}\n`
+    );
+  });
+
+walletCommand
   .command("convert")
   .description("Convertir une devise en PTF credits")
   .requiredOption("--from <currency>", "Devise source (EUR, ETH, BTC, USDT...)")

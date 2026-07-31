@@ -223,6 +223,29 @@ model Session {
   @@index([token])
 }
 
+// Trace every credit movement for a developer — positive and negative.
+// Written by TaskService (claim, cancel, reward), PunishmentService (penalty), WalletService (deposit, withdraw, bridge).
+model CreditEvent {
+  id          String   @id @default(cuid())
+  devAddress  String
+  type        String   // reward_earned | punishment_deducted | soft_locked | soft_unlocked | deposit | withdrawal | bridge_out | bridge_in
+  direction   String   // credit | debit
+  amount      Float    // in PTF (6 decimals precision)
+  balanceAfter Float?  // snapshot of available balance after the event
+  taskId      String?
+  projectId   String?
+  chain       String
+  txHash      String?  // on-chain tx hash when available
+  note        String?  // human-readable detail (e.g. "lateDelivery punishment")
+  createdAt   DateTime @default(now())
+
+  @@index([devAddress])
+  @@index([taskId])
+  @@index([projectId])
+  @@index([type])
+  @@index([createdAt])
+}
+
 model NetworkBroadcast {
   id          String   @id @default(cuid())
   type        String
