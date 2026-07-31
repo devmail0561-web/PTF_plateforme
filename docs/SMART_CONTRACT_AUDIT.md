@@ -32,51 +32,55 @@ Contrat Solidity
 
 ## Résultats audit agents IA — 2026-07-31
 
-Audit multi-agents réalisé via workflow PTF (5 dimensions × vérification adversariale).
+Audit multi-agents réalisé via workflow PTF (5 dimensions × vérification adversariale), suivi de 4 rounds de corrections.
 
-### Findings corrigés
+**Document de référence complet :** [`docs/SECURITY_AUDIT.md`](SECURITY_AUDIT.md) — scénarios d'attaque, corrections détaillées, invariants, guide pour futurs audits.
 
-| ID | Sévérité | Fichier | Titre |
-|----|----------|---------|-------|
-| C1 | Critical | `cli/src/utils/api.ts` | `isOffline()` toujours `true` — logique inversée |
-| C2 | Critical | `wallet.resolver.ts` | `withdrawCredits` passait un cuid comme `ownerAddress` |
-| C3 | Critical | `task.service.ts` | `TaskService` sans `UTXOService` — reward jamais minté |
-| C4 | Critical | `task.service.ts` | `expire()` ne libérait pas le soft-lock (gel permanent) |
-| C5 | Critical | `punishment.service.ts` | `PunishmentService` ne consommait pas les UTXOs (double-spend potentiel) |
-| C6 | Critical | `task.resolver.ts` | `cancelTask` sans vérification d'ownership |
-| C7 | Critical | `cli/src/commands/wallet.ts` | Dépôt toujours offline — adresse simulée sans avertissement |
-| S1 | Critical | `EscrowVault.sol` | Double-spend intra-call : même utxoId deux fois dans `inputs[]` |
-| S2 | Critical | `EscrowVault.sol` | Signatures UTXO sans domain separator (struct hash brut) |
-| H1 | High | `utxo.service.ts` | TOCTOU : coin-selection hors transaction |
-| H2 | High | `utxo.service.ts` | `proofHash` incompatible on-chain vs off-chain |
-| H3 | High | `utxo.service.ts` | `verifyProof()` — digest EIP-712 incomplet |
-| H4 | High | `utxo.service.ts` | Change UTXOs acceptés sans vérification |
-| H5 | High | `wallet.ts` CLI | Retrait online sans gestion d'erreur |
-| H6 | High | `wallet.ts` CLI | Retrait offline sans garde solde insuffisant |
-| H7 | High | `wallet.ts` CLI | Commande `ptf wallet utxos` inexistante |
-| H8 | High | `wallet.ts` CLI | Chain hardcodée `'polygon'` dans la mutation withdraw |
-| H9 | High | `utxo.service.ts` | `lock()` TOCTOU avec `spend()` concurrent |
-| S3 | High | `EscrowVault.sol` | Chain hardcodée `"polygon"` dans verification UTXO |
-| S4 | High | `EscrowVault.sol` | `mintUTXOReceipt` sans idempotency — inflation possible |
-| S5 | High | `utxo.service.ts` | Domain mismatch `"PTFEscrow"` vs `"PTFEscrowVault"` |
-| R1 | High | `utxo.service.ts` | `spend()` deux `Date.now()` — txId non-déterministe sur retry |
-| R2 | High | `utxo.service.ts` | `unlock()` silencieux sur solde insuffisant |
-| M1 | Medium | `schema.prisma` | `balanceAfter` absent de `CreditEvent` |
-| M2 | Medium | `utxo.service.ts` | `computeProofHash` hachait les signatures au lieu des utxoIds |
-| M3 | Medium | `EscrowVault.sol` | `executePunishment` polluait `escrowBalance` USDC avec des unités PTF |
-| M4 | Medium | `creditLedger.service.ts` | `utxoId` absent de `CreditEventEntry` |
-| Lo1 | Low | `wallet.ts` CLI | Variable morte `sign` dans reputation-history |
-| Lo2 | Low | `wallet.ts` CLI | Référence morte vers `ptf wallet verify-utxo` |
+### Findings corrigés (32/36)
 
-### Findings non corrigés (à planifier)
+| ID | Sévérité | Couche | Titre | Commit |
+|----|----------|--------|-------|--------|
+| S1 | Critical | Contract | Double-spend intra-call via `inputs[]` dupliqués | `03fe287` |
+| S2 | Critical | Contract | Signatures UTXO sans domain separator EIP-712 | `03fe287` |
+| C1 | Critical | CLI | `isOffline()` toujours `true` — logique inversée | `03fe287` |
+| C2 | Critical | Backend | `withdrawCredits` passait un cuid comme `ownerAddress` | `03fe287` |
+| C3 | Critical | Backend | `TaskService` sans `UTXOService` — reward jamais minté | `03fe287` |
+| C4 | Critical | Backend | `expire()` ne libérait pas le soft-lock (gel permanent) | `03fe287` |
+| C5 | Critical | Backend | `PunishmentService` ne consommait pas les UTXOs | `03fe287` |
+| C6 | Critical | Backend | `cancelTask` sans vérification d'ownership | `03fe287` |
+| C7 | Critical | CLI | Dépôt toujours offline — adresse simulée sans avertissement | `03fe287` |
+| S3 | High | Contract | Chain hardcodée `"polygon"` dans vérification UTXO | `03fe287` |
+| S4 | High | Contract | `mintUTXOReceipt` sans idempotency — inflation possible | `03fe287` |
+| H1 | High | Backend | TOCTOU : coin-selection hors transaction | `03fe287` |
+| H2 | High | Backend | `proofHash` incompatible on-chain vs off-chain | `03fe287` |
+| H3 | High | Backend | `verifyProof()` — digest EIP-712 incomplet | `03fe287` |
+| H4 | High | Backend | Change UTXOs acceptés sans vérification | `03fe287` |
+| H5 | High | CLI | Retrait online sans gestion d'erreur | `03fe287` |
+| H6 | High | CLI | Retrait offline sans garde solde insuffisant | `03fe287` |
+| H7 | High | CLI | Commande `ptf wallet utxos` inexistante | `03fe287` |
+| H8 | High | CLI | Chain hardcodée `'polygon'` dans la mutation withdraw | `03fe287` |
+| S6 | High | Backend | `lock()` TOCTOU avec `spend()` concurrent | `03fe287` |
+| S7 | High | Backend | Domain mismatch `"PTFEscrow"` vs `"PTFEscrowVault"` | `03fe287` |
+| S8 | High | Backend | `computeProofHash` hachait les signatures au lieu des utxoIds | `03fe287` |
+| R1 | High | Backend | `spend()` deux `Date.now()` — txId non-déterministe sur retry | `03fe287` |
+| R2 | High | Backend | `unlock()` silencieux sur solde insuffisant | `03fe287` |
+| S5 | Medium | Contract | `executePunishment` polluait `escrowBalance` USDC avec des unités PTF | `03fe287` |
+| M1 | Medium | Backend | `balanceAfter` absent de `CreditEvent` (Prisma) | `03fe287` |
+| M2 | Medium | Backend | `utxoId` absent de `CreditEventEntry` | `03fe287` |
+| M3 | Medium | Backend | `unlock()` partiel silencieux sans erreur | `03fe287` |
+| N4 | Medium | Backend | `CreditTransaction.inputIds/outputIds` sans FK Prisma | `6a06212` |
+| Lo1 | Low | CLI | Variable morte `sign` dans reputation-history | `03fe287` |
+| Lo2 | Low | CLI | Référence morte vers `ptf wallet verify-utxo` | `03fe287` |
+| N5 | Low | CLI | Mock UTXO IDs tronqués en mode offline | `6a06212` |
+
+### Findings ouverts (4/36)
 
 | ID | Sévérité | Raison du report |
 |----|----------|-----------------|
-| N1 | Critical | Aucun listener on-chain pour les dépôts UTXO — nécessite un worker dédié |
-| N2 | High | Change UTXOs avec hash 32 bytes non-ECDSA — nécessite clé privée opérateur |
-| N3 | Medium | Pas de réconciliation DB/on-chain après crash — nécessite worker + idempotency |
-| N4 | Medium | `CreditTransaction.inputIds/outputIds` sans FK — migration à planifier |
-| N5 | Medium | Arithmétique float sur les montants — migration vers entiers micro-PTF recommandée |
+| S9 | High | Change UTXOs avec keccak32 non-ECDSA — nécessite clé privée opérateur |
+| N1 | Critical | Aucun listener on-chain pour les dépôts UTXO — worker dédié requis |
+| N3 | Medium | Pas de réconciliation DB/on-chain après crash — worker + idempotency requis |
+| — | Info | Arithmétique float sur les montants — migration vers entiers micro-PTF recommandée |
 
 ---
 
