@@ -146,17 +146,17 @@ walletCommand
 
     if (client.isOffline()) {
       printOfflineBanner();
-      // Simulate UTXO-based withdrawal output
-      const mockProofHash = "0x" + "a1b2c3d4e5f6".repeat(5).slice(0, 64);
+      // Simulate UTXO-based withdrawal output (offline demo data)
+      const mockProofHash = "0xa1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
       const mockUTXOs = [
-        { id: "0xutxo001…", amount: 150.0, sourceType: "task_reward", sourceId: "0xtask001…" },
-        { id: "0xutxo002…", amount: 60.0,  sourceType: "task_reward", sourceId: "0xtask002…" },
+        { id: "0xc001a1b2c3d4e5f6c001a1b2c3d4e5f6c001a1b2c3d4e5f6c001a1b2c3d4e5f6", amount: 150.0, sourceType: "task_reward", sourceId: "0xd001e5f6a1b2c3d4d001e5f6a1b2c3d4d001e5f6a1b2c3d4d001e5f6a1b2c3d4" },
+        { id: "0xc002a1b2c3d4e5f6c002a1b2c3d4e5f6c002a1b2c3d4e5f6c002a1b2c3d4e5f6", amount: 60.0,  sourceType: "task_reward", sourceId: "0xd002e5f6a1b2c3d4d002e5f6a1b2c3d4d002e5f6a1b2c3d4d002e5f6a1b2c3d4" },
       ];
       if (amount > 210) {
         printError(`Solde insuffisant : total disponible 210 PTF, demandé ${amount.toFixed(6)} PTF.`);
         process.exit(1);
       }
-      const change = 210 - amount > 0 ? { id: "0xchange001…", amount: 210 - amount } : null;
+      const change = 210 - amount > 0 ? { id: "0xc0c0a1b2c3d4e5f6c0c0a1b2c3d4e5f6c0c0a1b2c3d4e5f6c0c0a1b2c3d4e5f6", amount: 210 - amount } : null;
 
       console.log(
         `\n${chalk.bold("Retrait PTF — Preuve de provenance")}\n` +

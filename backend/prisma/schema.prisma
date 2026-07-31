@@ -237,31 +237,37 @@ model CreditUTXO {
   eip712Signature String                  // PTF-signed: (utxoId, owner, amount, sourceId, chain) — proves origin
   txHash          String?                 // on-chain tx that created this UTXO (if applicable)
   status          String   @default("unspent")  // unspent | spent | locked
-  spentInTxId     String?                 // CreditTransaction.id that consumed this UTXO
+  spentInTxId     String?                 // FK → CreditTransaction that consumed this UTXO
+  createdInTxId   String?                 // FK → CreditTransaction that produced this UTXO (change outputs)
   createdAt       DateTime @default(now())
+
+  spendingTx      CreditTransaction? @relation("inputs",  fields: [spentInTxId],   references: [id])
+  creationTx      CreditTransaction? @relation("outputs", fields: [createdInTxId], references: [id])
 
   @@index([ownerAddress, status])
   @@index([sourceId])
   @@index([spentInTxId])
+  @@index([createdInTxId])
   @@index([createdAt])
 }
 
 // A PTF credit transaction: consumes N input UTXOs, produces M output UTXOs (change).
-// The proofHash = keccak256 of all input EIP-712 signatures — independently verifiable.
+// The proofHash = keccak256(utxoId_1 || utxoId_2 || …) — independently verifiable, matches on-chain.
 model CreditTransaction {
   id          String   @id            // keccak256(devAddress + inputIds[] + createdAt_ms)
   type        String                  // withdrawal | punishment | bridge_out
   devAddress  String
-  inputIds    String[]                // CreditUTXO.id[] consumed (inputs)
-  outputIds   String[]                // CreditUTXO.id[] created (change outputs)
   inputTotal  Float                   // sum of all inputs
   outputTotal Float                   // sum of change outputs
   netAmount   Float                   // inputTotal - outputTotal (what actually left)
   chain       String
   destination String?                 // target wallet for withdrawal
   txHash      String?                 // on-chain burn tx
-  proofHash   String                  // keccak256(all input UTXO eip712Signatures) — auditable
+  proofHash   String                  // keccak256(utxoId_1 || … || utxoId_n) — matches EscrowVault
   createdAt   DateTime @default(now())
+
+  inputs      CreditUTXO[] @relation("inputs")   // UTXOs consumed by this tx
+  outputs     CreditUTXO[] @relation("outputs")  // change UTXOs created by this tx
 
   @@index([devAddress])
   @@index([createdAt])

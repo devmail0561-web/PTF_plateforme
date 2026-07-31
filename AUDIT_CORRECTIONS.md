@@ -229,12 +229,37 @@ Résumé des corrections appliquées suite à l'audit multi-agents du système U
 
 ---
 
+## ROUND 4 — Corrections des bugs reportés
+
+### [N2-corrigé] Hardcode `'polygon'` dans EscrowVault.sol
+**Statut :** Déjà corrigé dans la correction S3 du Round 3.
+`keccak256(bytes("polygon"))` remplacé par `keccak256(bytes(inp.chain))` — champ `chain` ajouté dans `UTXOInput`. Non déployé (hors scope v0.1.0), mais le code source est correct.
+
+---
+
+### [N4] CreditTransaction.inputIds/outputIds sans FK
+**Fichier :** `backend/prisma/schema.prisma`
+**Problème :** `inputIds String[]` et `outputIds String[]` sont des tableaux de strings sans contrainte FK — un `CreditUTXO` supprimé ne déclenche aucune erreur sur la transaction qui le référence.
+**Correction :**
+- Suppression des champs `inputIds`/`outputIds` de `CreditTransaction`
+- Ajout de `createdInTxId String?` sur `CreditUTXO` — FK vers la transaction qui a créé cet UTXO (change outputs)
+- Ajout des relations Prisma `spendingTx @relation("inputs")` et `creationTx @relation("outputs")` sur `CreditUTXO`
+- `utxo.service.ts` : `createdInTxId: txId` ajouté dans le `create()` du change UTXO ; `inputIds`/`outputIds` retirés du `creditTransaction.create()`
+- La traversabilité est désormais garantie par FK : `tx.inputs[]` et `tx.outputs[]` via Prisma inclusions
+
+---
+
+### [N5] Mock UTXO IDs tronqués dans offline mode
+**Fichier :** `cli/src/commands/wallet.ts:150-159`
+**Problème :** IDs mock `"0xutxo001…"` / `"0xtask001…"` / `"0xchange001…"` — chaînes tronquées avec `…`, pas des hashes hex valides. Toute logique qui vérifie le format 32-bytes (`0x` + 64 hex chars) rejetait ces valeurs.
+**Correction :** Remplacement par de vrais hashes 32-bytes en hex complet (`"0xc001a1b2…"`, 66 chars).
+
+---
+
 ## NON CORRIGÉS (à traiter séparément)
 
 | # | Sévérité | Raison du report |
 |---|----------|-----------------|
 | N1 | critical | **Aucun listener on-chain pour les dépôts** — nécessite un worker/webhook + infrastructure (hors scope correction rapide) |
-| N2 | medium | **Hardcode `'polygon'` dans EscrowVault.sol** — changement de contrat, nécessite un déploiement |
 | N3 | medium | **Pas de mécanisme de réconciliation DB/on-chain** — nécessite un worker de réconciliation |
-| N4 | medium | **CreditTransaction.inputIds/outputIds sans FK** — migration avec vérification d'intégrité à planifier |
-| N5 | low | **Mock UTXO IDs tronqués dans offline mode** — cosmétique, non critique |
+| S9 | high | **Change UTXOs : keccak32 au lieu de signature ECDSA 65-bytes** — nécessite la clé privée opérateur |
