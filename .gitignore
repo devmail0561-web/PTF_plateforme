@@ -1,0 +1,71 @@
+# Binaries
+/cli/ptf
+/cli/ptf-*
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+*.test
+*.out
+go.work
+vendor/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv
+
+# Node
+node_modules/
+dist/
+.next/
+.nuxt/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PTF
+ptf.yaml
+!ptf.yaml.example
+.ptf/
+*.ptf.log
+
+# Secrets
+.env
+.env.local
+*.pem
+*.key
+!*.key.example
+
+# Temporary
+tmp/
+temp/
+*.tmp
+*.log
+
+# Generated HTML (built from MD)
+*.html
+!index.html
+
+# Prisma
+backend/prisma/migrations/
+
+# Coverage
+coverage/
+*.lcov

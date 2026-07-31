@@ -1,0 +1,123 @@
+PTF Project — Complete File List
+Generated: 2026-07-28
+
+═══════════════════════════════════════════════════════════
+ROOT FILES
+═══════════════════════════════════════════════════════════
+✓ index.html               Landing page with navigation
+✓ README.md + .html        Marketing page (269 lines)
+✓ SUMMARY.md + .html       Complete project summary
+✓ STRUCTURE.txt            Visual tree diagram
+✓ LICENSE                  MIT License
+✓ .gitignore               Git exclusions
+✓ ptf.yaml.example         Full config example (50+ options)
+
+═══════════════════════════════════════════════════════════
+DOCUMENTATION (docs/)
+═══════════════════════════════════════════════════════════
+✓ ARCHITECTURE.md + .html  Technical architecture (504 lines)
+                           - CLI commands
+                           - Parser (Markdown → DAG)
+                           - Validator (architecture/security/perf)
+                           - Dashboard (graph, kanban, timeline)
+                           - GitHub Actions integration
+
+✓ BUSINESS_PLAN.md + .html Business plan (381 lines)
+                           - Market: TAM $16.2B, SAM $3B, SOM $30M
+                           - Pricing: Free / $49 / $299
+                           - Revenue projection: $9M ARR year 3
+                           - Funding ask: €200k seed
+
+═══════════════════════════════════════════════════════════
+TEMPLATES (templates/)
+═══════════════════════════════════════════════════════════
+
+Markdown Templates (templates/markdown/)
+----------------------------------------
+✓ PLAN_ACTION.template.md + .html
+  Variables: {{PROJECT_NAME}}, {{PHASE_*}}, {{TASK_*}}
+  
+✓ CONTRIBUTING.template.md + .html
+  Variables: {{PROJECT_DESCRIPTION}}, {{SETUP_COMMANDS}}, {{COVERAGE_THRESHOLD}}
+
+GitHub Templates (templates/github/)
+------------------------------------
+✓ PULL_REQUEST_TEMPLATE.template.md
+  9 sections: task link, changes, tests, architecture, breaking, checklist
+  
+✓ ISSUE_TASK.template.yml
+  Form: task code, dependencies, expertise, estimate, plan
+  
+✓ ISSUE_BUG.template.yml
+  Form: component, severity, reproduction steps, logs, environment
+  
+✓ CODEOWNERS.template
+  Auto-assign reviewers by file path
+  
+✓ ci.template.yml
+  Multi-language: Go, Python, TypeScript
+  Jobs: lint, test (multi-OS), build, audit (security/coverage/complexity)
+  
+✓ code-review.template.yml
+  6 dimensions: PR checklist, plan validation, architecture, security, perf, tests
+  Auto-comment with ✅/❌ summary
+
+═══════════════════════════════════════════════════════════
+EXAMPLES (examples/)
+═══════════════════════════════════════════════════════════
+✓ oseye-example/README.md + .html
+  Case study: 188 tasks, 8 months, 6 devs
+  Results: -56% duration, +300% parallelism, -93% merge time
+
+═══════════════════════════════════════════════════════════
+CLI (cli/) — TO IMPLEMENT
+═══════════════════════════════════════════════════════════
+Empty directory, ready for Go code:
+
+Planned structure:
+├── main.go
+├── commands/
+│   ├── init.go          ptf init
+│   ├── status.go        ptf status
+│   ├── assign.go        ptf assign
+│   ├── validate.go      ptf validate
+│   ├── graph.go         ptf graph
+│   └── parallelize.go   ptf parallelize
+├── parser/
+│   ├── plan.go          Parse PLAN_ACTION.md → DAG
+│   └── dependency.go    Compute transitive dependencies
+└── validator/
+    ├── architecture.go  Check architecture rules
+    ├── security.go      Detect security patterns
+    └── tests.go         Verify coverage
+
+═══════════════════════════════════════════════════════════
+STATISTICS
+═══════════════════════════════════════════════════════════
+Markdown files:    8 (1 154 lines + SUMMARY)
+HTML files:        8 (all generated from MD)
+Templates:         8 (2 MD + 6 GitHub)
+Total size:        396 KB
+Status:            ✅ Ready for development
+
+═══════════════════════════════════════════════════════════
+NAVIGATION
+═══════════════════════════════════════════════════════════
+Start here:  file:///home/virus-one/Documents/PTF_project/index.html
+
+Or via HTTP:
+  cd /home/virus-one/Documents/PTF_project
+  python3 -m http.server 8000
+  Open: http://localhost:8000
+
+═══════════════════════════════════════════════════════════
+NEXT STEPS
+═══════════════════════════════════════════════════════════
+[ ] Implement MVP CLI (2-4 weeks)
+[ ] Create GitHub repo github.com/ptf/ptf
+[ ] Register domain ptf.dev
+[ ] Launch on Hacker News + Product Hunt
+[ ] Test on OSEye for 1 month (proof of concept)
+
+═══════════════════════════════════════════════════════════
+

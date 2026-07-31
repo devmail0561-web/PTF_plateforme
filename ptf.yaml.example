@@ -1,0 +1,165 @@
+# PTF Configuration Example
+
+project:
+  name: MyProject
+  version: 1.0
+  plan_file: docs/PLAN_ACTION.md
+  architecture_file: docs/ARCHITECTURE.md
+
+validation:
+  # Seuil de couverture des tests (%)
+  coverage_threshold: 80
+
+  # Format du code de tâche dans le plan
+  task_code_format: 'P\d+\.\d+'
+
+  # Format du titre de PR
+  pr_title_format: '\[P\d+\.\d+\] .+'
+
+  # Règles d'architecture — violations bloquent le merge
+  architecture_rules:
+    - name: no-direct-backend-import
+      description: Ne jamais importer directement un backend
+      pattern: 'from \.storage\.backends'
+      exclude:
+        - 'storage/router.py'
+        - 'storage/backends/__init__.py'
+      severity: blocker
+      message: "Utiliser StorageRouter au lieu d'importer directement un backend"
+
+    - name: interface-implemented-go
+      description: Vérifier satisfaction d'interfaces Go
+      check: go_interface_satisfaction
+      interfaces:
+        - 'collector.Collector'
+        - 'platform.PlatformDriver'
+        - 'bus.EventBus'
+      severity: blocker
+
+    - name: protocol-implemented-python
+      description: Vérifier implémentation des Protocols Python
+      check: python_protocol_satisfaction
+      protocols:
+        - 'EventBus'
+        - 'EventRepository'
+        - 'AlertRepository'
+      severity: blocker
+
+  # Règles de sécurité
+  security_rules:
+    - name: no-hardcoded-secrets
+      description: Pas de secrets en dur dans le code
+      pattern: '(api_key|password|secret|token)\s*=\s*["\x27][a-zA-Z0-9]{16,}'
+      severity: critical
+      message: "Utiliser des variables d'environnement pour les secrets"
+
+    - name: no-sql-injection
+      description: Pas de f-strings dans les queries SQL
+      pattern: 'execute\(f["\x27]'
+      severity: critical
+      languages: [python]
+
+    - name: no-command-injection
+      description: Pas de shell=True dans subprocess
+      pattern: 'subprocess\.(call|run|Popen).*shell=True'
+      severity: critical
+      languages: [python]
+
+  # Règles de performance
+  performance_rules:
+    - name: no-infinite-loop
+      description: Boucles infinies sans condition de sortie
+      pattern: 'for\s*\{'
+      exclude_pattern: 'select'
+      severity: major
+      languages: [go]
+
+    - name: goroutine-cleanup
+      description: Goroutines sans mécanisme d'arrêt
+      check: go_goroutine_has_context
+      severity: major
+
+  # Règles de tests
+  test_rules:
+    - name: test-file-exists
+      description: Fichier de tests associé existe
+      check: test_file_exists_for_source
+      severity: critical
+
+    - name: no-skipped-tests
+      description: Pas de tests skippés
+      pattern: '@pytest\.mark\.skip|t\.Skip\('
+      severity: major
+
+phases:
+  - id: 1
+    name: Foundation
+    timeline: S1-S3
+    sequential: true  # Phase 1 est séquentielle
+
+  - id: 2
+    name: Full Collection
+    timeline: S4-S6
+    depends_on: [1]
+
+  - id: 3
+    name: Detection
+    timeline: S7-S9
+    depends_on: [2]
+
+# Tags d'expertise pour assignation automatique
+expertise_tags:
+  - go/ebpf
+  - go/system-programming
+  - python/fastapi
+  - python/asyncio
+  - typescript/react
+  - ml/data-science
+  - devops/kubernetes
+  - security/pentest
+
+# Reviewers automatiques selon expertise
+reviewers:
+  'go/ebpf': ['@senior-go-dev', '@ebpf-expert']
+  'python/fastapi': ['@senior-python-dev']
+  'typescript/react': ['@senior-frontend-dev']
+  'ml/data-science': ['@senior-ml-dev']
+  'devops/kubernetes': ['@senior-devops']
+  'security/pentest': ['@senior-security']
+
+# Intégrations
+integrations:
+  github:
+    enabled: true
+    org: your-org
+    repo: your-repo
+
+  slack:
+    enabled: true
+    webhook_url: ${SLACK_WEBHOOK_URL}
+    channels:
+      daily_status: '#dev'
+      pr_notifications: '#prs'
+      critical_alerts: '#alerts'
+
+  linear:
+    enabled: false
+    api_key: ${LINEAR_API_KEY}
+    team_id: YOUR_TEAM_ID
+
+# Options CLI
+cli:
+  # Couleurs dans les outputs
+  color: true
+
+  # Verbosité par défaut
+  verbose: false
+
+  # Format de sortie par défaut (text, json, yaml)
+  output_format: text
+
+# Dashboard web (SaaS Premium uniquement)
+dashboard:
+  enabled: false
+  url: https://dashboard.ptf.dev
+  api_key: ${PTF_DASHBOARD_API_KEY}

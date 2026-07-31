@@ -1,0 +1,239 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  githubId     String?  @unique
+  githubHandle String?
+  isBanned     Boolean  @default(false)
+  banReason    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  wallets      WalletLink[]
+  projects     Project[]
+  submissions  Submission[]
+  reputation   Reputation?
+  reports      Report[]     @relation("ReportedUser")
+  reportsFiled Report[]     @relation("ReporterUser")
+  sessions     Session[]
+}
+
+model WalletLink {
+  id        String   @id @default(cuid())
+  userId    String
+  chain     String
+  address   String
+  isPrimary Boolean  @default(false)
+  linkedAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chain, address])
+  @@index([userId])
+}
+
+model Project {
+  id           String   @id
+  networkId    String?  @unique
+  name         String
+  type         String
+  rewardMode   String
+  chain        String
+  token        String?
+  repoType     String
+  repoUrl      String?
+  tempRepoUrl  String?
+  syncStatus   String   @default("synced")
+  lastSyncAt   DateTime?
+  escrowBalance Float   @default(0)
+  merkleRoot   String?
+  status       String   @default("draft")
+  language     String?
+  stack        String[]
+  description  String?
+  ownerAddress String
+  ownerId      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  owner        User?              @relation(fields: [ownerId], references: [id])
+  tasks        Task[]
+  contributors ContributorRecord[]
+
+  @@index([ownerAddress])
+  @@index([status])
+  @@index([rewardMode])
+}
+
+model Task {
+  id                String    @id
+  projectId         String
+  parentId          String?
+  networkId         String?
+  title             String
+  type              String
+  priority          String
+  status            String    @default("open")
+  context           String    @db.Text
+  objective         String    @db.Text
+  deliverable       String    @db.Text
+  outOfScope        String[]
+  constraints       Json
+  verificationSteps Json
+  claimCriteria     Json
+  punishments       Json
+  scoring           Json
+  reputationPoints  Int       @default(0)
+  dependencies      String[]
+  blockedBy         String[]
+  unlocks           String[]
+  duration          String    @default("30d")
+  claimedAt         DateTime?
+  deadline          DateTime?
+  devAddress        String?
+  conditionsHash    String?
+  eip712Signature   String?
+  rewardAmount      Float?
+  rewardToken       String?
+  commitHash        String?
+  branchRef         String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  submissions Submission[]
+
+  @@index([projectId])
+  @@index([status])
+  @@index([devAddress])
+  @@index([deadline])
+}
+
+model Submission {
+  id              String    @id @default(cuid())
+  taskId          String
+  devAddress      String
+  userId          String?
+  commitHash      String
+  branchRef       String
+  status          String    @default("pending")
+  testResults     Json?
+  validationJobId String?
+  submittedAt     DateTime  @default(now())
+  completedAt     DateTime?
+
+  task Task  @relation(fields: [taskId], references: [id])
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([taskId])
+  @@index([devAddress])
+}
+
+model Reputation {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  totalPoints    Int      @default(0)
+  level          String   @default("Unranked")
+  completedTasks Int      @default(0)
+  updatedAt      DateTime @updatedAt
+
+  user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  history ReputationEvent[]
+}
+
+model ReputationEvent {
+  id           String   @id @default(cuid())
+  reputationId String
+  delta        Int
+  reason       String
+  taskId       String?
+  chain        String?
+  txHash       String?
+  createdAt    DateTime @default(now())
+
+  reputation Reputation @relation(fields: [reputationId], references: [id])
+
+  @@index([reputationId])
+}
+
+model PunishmentRecord {
+  id                String   @id @default(cuid())
+  devAddress        String
+  taskId            String
+  type              String
+  creditsPenalty    Float?
+  reputationPenalty Int
+  txHash            String?
+  executedAt        DateTime @default(now())
+
+  @@index([devAddress])
+  @@index([taskId])
+}
+
+model ContributorRecord {
+  id             String    @id @default(cuid())
+  projectId      String
+  devAddress     String
+  githubHandle   String?
+  tasksCompleted Int       @default(0)
+  totalEarned    Float     @default(0)
+  joinedAt       DateTime  @default(now())
+  lastActivity   DateTime?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, devAddress])
+  @@index([projectId])
+}
+
+model Report {
+  id             String   @id @default(cuid())
+  reporterId     String
+  reportedUserId String
+  taskId         String?
+  reason         String
+  evidence       String   @db.Text
+  status         String   @default("pending")
+  resolution     String?
+  createdAt      DateTime @default(now())
+
+  reporter     User @relation("ReporterUser", fields: [reporterId], references: [id])
+  reportedUser User @relation("ReportedUser", fields: [reportedUserId], references: [id])
+
+  @@index([reportedUserId])
+  @@index([status])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+}
+
+model NetworkBroadcast {
+  id          String   @id @default(cuid())
+  type        String
+  projectId   String?
+  taskId      String?
+  payload     Json
+  signature   String
+  chain       String
+  txHash      String?
+  broadcastAt DateTime @default(now())
+
+  @@index([type])
+  @@index([projectId])
+}

@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PTF — Documentation Hub</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, #0f1117 0%, #1a2035 50%, #0d1520 100%);
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    .container {
+      max-width: 900px;
+      width: 100%;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 60px;
+    }
+
+    .logo {
+      font-size: 48px;
+      font-weight: 800;
+      letter-spacing: -2px;
+      background: linear-gradient(135deg, #fff 30%, #06b6d4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 16px;
+    }
+
+    .tagline {
+      font-size: 20px;
+      color: #94a3b8;
+      font-weight: 300;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 24px;
+      margin-bottom: 60px;
+    }
+
+    .card {
+      background: rgba(24, 28, 36, 0.6);
+      border: 1px solid #2a3040;
+      border-radius: 12px;
+      padding: 28px;
+      transition: all 0.2s;
+      text-decoration: none;
+      display: block;
+    }
+
+    .card:hover {
+      background: rgba(30, 35, 48, 0.8);
+      border-color: #3b82f6;
+      transform: translateY(-4px);
+      box-shadow: 0 12px 32px rgba(59, 130, 246, 0.2);
+    }
+
+    .card-icon {
+      font-size: 36px;
+      margin-bottom: 16px;
+    }
+
+    .card-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+
+    .card-desc {
+      font-size: 14px;
+      color: #94a3b8;
+      line-height: 1.6;
+    }
+
+    .section-title {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #64748b;
+      font-weight: 600;
+      margin-bottom: 16px;
+      margin-top: 40px;
+    }
+
+    footer {
+      text-align: center;
+      padding-top: 40px;
+      border-top: 1px solid #2a3040;
+      color: #64748b;
+      font-size: 14px;
+    }
+
+    footer a {
+      color: #3b82f6;
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">PTF</div>
+      <div class="tagline">L'écosystème cryptographique qui monétise vos compétences</div>
+    </header>
+
+    <div class="section-title">Core Documentation</div>
+    <div class="grid">
+      <a href="SUMMARY.html" class="card">
+        <div class="card-icon">⭐</div>
+        <div class="card-title">Project Summary</div>
+        <div class="card-desc">Architecture décentralisée, phases de développement, checklist technique</div>
+      </a>
+
+      <a href="README.html" class="card">
+        <div class="card-icon">📖</div>
+        <div class="card-title">README</div>
+        <div class="card-desc">Vision produit, quick start PTF CLI, tokenomics et système de punitions</div>
+      </a>
+
+      <a href="docs/ARCHITECTURE.html" class="card">
+        <div class="card-icon">🏗️</div>
+        <div class="card-title">Technical Architecture</div>
+        <div class="card-desc">8 services backend, 4 smart contracts Polygon, réseau PTF décentralisé</div>
+      </a>
+
+      <a href="docs/BUSINESS_PLAN.html" class="card">
+        <div class="card-icon">💼</div>
+        <div class="card-title">Business Plan</div>
+        <div class="card-desc">Modèle à commission upfront, TAM/SAM/SOM, roadmap €175k–250k seed</div>
+      </a>
+
+      <a href="docs/SMART_CONTRACT_AUDIT.html" class="card">
+        <div class="card-icon">🔒</div>
+        <div class="card-title">Audit Smart Contracts</div>
+        <div class="card-desc">Stratégie audit 0€ — Slither + Mythril + Foundry + agents IA comparatifs</div>
+      </a>
+    </div>
+
+    <div class="section-title">Templates</div>
+    <div class="grid">
+      <a href="templates/markdown/ARCHITECTURE.template.html" class="card">
+        <div class="card-icon">🏛️</div>
+        <div class="card-title">ARCHITECTURE Template</div>
+        <div class="card-desc">Format standard PTF — requis pour ptf generate, sections obligatoires validées par ptf validate-docs</div>
+      </a>
+
+      <a href="templates/markdown/PLAN_ACTION.template.html" class="card">
+        <div class="card-icon">📋</div>
+        <div class="card-title">PLAN_ACTION Template</div>
+        <div class="card-desc">Format standard PTF — tâches avec context, verificationSteps, acceptation et punitions</div>
+      </a>
+
+      <a href="templates/markdown/CONTRIBUTING.template.html" class="card">
+        <div class="card-icon">🤝</div>
+        <div class="card-title">CONTRIBUTING Template</div>
+        <div class="card-desc">Guide dev : garantie 10 crédits, punitions, critères de réclamation</div>
+      </a>
+
+      <a href="templates/github/" class="card">
+        <div class="card-icon">⚙️</div>
+        <div class="card-title">GitHub Templates</div>
+        <div class="card-desc">PR template, issue templates, CI/CD workflows PTF</div>
+      </a>
+    </div>
+
+    <div class="section-title">Examples</div>
+    <div class="grid">
+      <a href="examples/oseye-example/README.html" class="card">
+        <div class="card-icon">🔍</div>
+        <div class="card-title">OSEye Case Study</div>
+        <div class="card-desc">Entreprise cliente PTF — escrow upfront, 0 litige grâce aux punitions</div>
+      </a>
+    </div>
+
+    <footer>
+      <p>PTF — L'écosystème cryptographique du freelance décentralisé</p>
+      <p style="margin-top: 8px;">
+        <a href="https://github.com/ptf/ptf">GitHub</a> ·
+        <a href="https://ptf.dev">Website</a> ·
+        <a href="https://discord.gg/ptf">Discord</a>
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

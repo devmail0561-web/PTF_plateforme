@@ -1,0 +1,50 @@
+PTF_project/
+├── README.md                          # Landing page marketing du framework
+├── LICENSE                            # MIT License
+├── .gitignore                         # Fichiers à exclure du repo
+├── ptf.yaml.example                   # Config exemple avec toutes les options
+│
+├── docs/
+│   ├── ARCHITECTURE.md                # Architecture technique complète du framework
+│   └── BUSINESS_PLAN.md               # Business plan (marché, pricing, roadmap)
+│
+├── cli/                               # CLI Go (à implémenter)
+│   ├── main.go
+│   ├── commands/
+│   │   ├── init.go                    # ptf init
+│   │   ├── assign.go                  # ptf assign
+│   │   ├── validate.go                # ptf validate
+│   │   ├── graph.go                   # ptf graph
+│   │   ├── parallelize.go             # ptf parallelize
+│   │   └── status.go                  # ptf status
+│   ├── parser/
+│   │   ├── plan.go                    # Parse PLAN_ACTION.md → DAG
+│   │   └── dependency.go              # Calcule dépendances transitives
+│   └── validator/
+│       ├── architecture.go            # Valide règles architecture
+│       ├── security.go                # Détecte patterns sécurité
+│       └── tests.go                   # Vérifie couverture tests
+│
+├── templates/
+│   ├── markdown/
+│   │   ├── PLAN_ACTION.template.md    # Template du plan d'action
+│   │   └── CONTRIBUTING.template.md   # Template guide contributeur
+│   └── github/
+│       ├── PULL_REQUEST_TEMPLATE.template.md
+│       ├── ISSUE_TASK.template.yml
+│       ├── ISSUE_BUG.template.yml
+│       ├── CODEOWNERS.template
+│       ├── ci.template.yml            # CI multi-langage
+│       └── code-review.template.yml   # Review automatique
+│
+├── examples/
+│   └── oseye-example/                 # Exemple d'utilisation sur OSEye
+│       └── README.md                  # Case study complet
+│
+└── .github/                           # GitHub Actions du framework lui-même
+    ├── workflows/
+    │   ├── ci.yml
+    │   └── release.yml
+    └── ISSUE_TEMPLATE/
+        ├── bug.yml
+        └── feature.yml

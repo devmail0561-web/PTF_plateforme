@@ -1,0 +1,41 @@
+{
+  "name": "@ptf/cli",
+  "version": "0.1.0",
+  "description": "PTF — Pay-Task Framework CLI",
+  "type": "module",
+  "bin": {
+    "ptf": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "conf": "^12.0.0",
+    "ethers": "^6.13.2",
+    "gray-matter": "^4.0.3",
+    "graphql-request": "^6.1.0",
+    "inquirer": "^9.3.7",
+    "js-yaml": "^4.1.0",
+    "open": "^10.1.0",
+    "ora": "^8.1.1"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.7",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.16.1",
+    "tsx": "^4.19.1",
+    "tsup": "^8.3.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

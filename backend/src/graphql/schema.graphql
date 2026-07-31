@@ -1,0 +1,298 @@
+type Query {
+  # Tasks
+  tasks(filter: TaskFilterInput): [Task!]!
+  task(id: ID!): Task
+  myTasks(status: String): [Task!]!
+
+  # Projects
+  projects(filter: ProjectFilterInput): [Project!]!
+  project(id: ID!): Project
+  myProjects: [Project!]!
+
+  # Wallet
+  walletStatus(address: String!, chain: String!): WalletStatus!
+  walletBalance(address: String!, chain: String!): CreditBalance!
+
+  # Contributors (projets publics uniquement)
+  projectContributors(projectId: ID!): [Contributor!]!
+
+  # Reputation
+  reputationScore(address: String!): ReputationScore!
+
+  # Health
+  health: String!
+}
+
+type Mutation {
+  # Auth
+  loginWithGithub(code: String!): AuthResult!
+  linkWallet(chain: String!, address: String!, signature: String!): WalletLink!
+
+  # Projects
+  createProject(input: CreateProjectInput!): Project!
+  publishProject(projectId: ID!): Project!
+
+  # Tasks
+  generateTasks(
+    projectId: ID!
+    architectureMd: String!
+    planActionMd: String!
+  ): GenerationResult!
+  claimTask(taskId: ID!, chain: String!, signedNonce: String): ClaimResult!
+  submitTask(taskId: ID!, commitHash: String!, branchRef: String!): SubmitResult!
+  cancelTask(taskId: ID!): Boolean!
+
+  # Reports
+  reportUser(input: ReportInput!): Report!
+}
+
+type Subscription {
+  taskStatusChanged(taskId: ID!): Task!
+}
+
+# ─── Task ───────────────────────────────────────────────────────────────────
+
+type Task {
+  id: ID!
+  projectId: String!
+  parentId: String
+  title: String!
+  type: String!
+  priority: String!
+  status: String!
+  context: String!
+  objective: String!
+  deliverable: String!
+  outOfScope: [String!]!
+  rewardAmount: Float
+  rewardToken: String
+  rewardMode: String!
+  duration: String!
+  deadline: String
+  claimedAt: String
+  devAddress: String
+  dependencies: [String!]!
+  scoring: TaskScoring!
+  reputationPoints: Int!
+  claimCriteria: ClaimCriteria!
+  punishments: Punishments!
+  verificationSteps: [VerificationStep!]!
+  constraints: TaskConstraints!
+  createdAt: String!
+}
+
+type TaskScoring {
+  complexity: Int!
+  effort: Int!
+  impact: Int!
+}
+
+type ClaimCriteria {
+  minReputation: Int
+  minCompletedTasks: Int
+  requiredSkills: [String!]
+  maxActiveTasks: Int
+}
+
+type PunishmentRule {
+  credits: Float
+  reputation: Int!
+}
+
+type Punishments {
+  lateDelivery: PunishmentRule!
+  maliciousCode: PunishmentRule!
+  criticalBug: PunishmentRule!
+  nonCriticalBug: PunishmentRule!
+}
+
+type VerificationStep {
+  type: String!
+  command: String!
+  expectedOutput: String
+  threshold: Float
+}
+
+type TaskConstraints {
+  maxFiles: Int!
+  maxLinesPerFile: Int!
+  maxTotalLines: Int!
+  requiredTests: Boolean!
+  minTestCoverage: Int!
+  languages: [String!]!
+  forbiddenPatterns: [String!]!
+}
+
+input TaskFilterInput {
+  status: String
+  projectId: String
+  rewardMode: String
+  minReward: Float
+  maxReward: Float
+  skills: [String!]
+  priority: String
+  devAddress: String
+}
+
+# ─── Project ────────────────────────────────────────────────────────────────
+
+type Project {
+  id: ID!
+  name: String!
+  type: String!
+  rewardMode: String!
+  chain: String!
+  status: String!
+  owner: String!
+  repository: String
+  stack: [String!]!
+  taskCount: Int!
+  openTaskCount: Int!
+  totalRewardPool: String!
+  escrowBalance: Float!
+  createdAt: String!
+}
+
+input CreateProjectInput {
+  name: String!
+  type: String!
+  rewardMode: String!
+  chain: String!
+  token: String
+  repoType: String!
+  repoUrl: String
+  language: String
+  stack: [String!]
+  description: String
+}
+
+input ProjectFilterInput {
+  type: String
+  mine: Boolean
+  status: String
+}
+
+# ─── Wallet ─────────────────────────────────────────────────────────────────
+
+type WalletStatus {
+  address: String!
+  ptfBalance: Float!
+  softLocked: Float!
+  available: Float!
+  reputationScore: Int!
+  reputationLevel: String!
+  linkedChains: [String!]!
+  isValidAddress: Boolean!
+  isActivated: Boolean!
+  hasGasFees: Boolean!
+  isNotBanned: Boolean!
+  ownershipProven: Boolean!
+  meetsMinBalance: Boolean!
+}
+
+type CreditBalance {
+  address: String!
+  balance: Float!
+  softLocked: Float!
+  available: Float!
+}
+
+type WalletLink {
+  id: ID!
+  chain: String!
+  address: String!
+  isPrimary: Boolean!
+}
+
+# ─── Auth ────────────────────────────────────────────────────────────────────
+
+type AuthResult {
+  token: String!
+  user: UserProfile!
+}
+
+type UserProfile {
+  id: ID!
+  githubHandle: String
+  wallets: [WalletLink!]!
+}
+
+# ─── Reputation ──────────────────────────────────────────────────────────────
+
+type ReputationScore {
+  address: String!
+  total: Int!
+  level: String!
+  completedTasks: Int!
+}
+
+# ─── Contributors ────────────────────────────────────────────────────────────
+
+type Contributor {
+  devAddress: String!
+  githubHandle: String
+  tasksCompleted: Int!
+  totalEarned: Float!
+  reputationScore: Int!
+  joinedAt: String!
+}
+
+# ─── Claim / Submit ──────────────────────────────────────────────────────────
+
+type ClaimResult {
+  taskId: String!
+  devAddress: String!
+  claimedAt: String!
+  deadline: String!
+  conditionsHash: String!
+  signature: String!
+}
+
+type SubmitResult {
+  taskId: String!
+  commitHash: String!
+  branchRef: String!
+  submittedAt: String!
+  validationJobId: String!
+}
+
+# ─── Generation ──────────────────────────────────────────────────────────────
+
+type GenerationResult {
+  tasks: [GeneratedTask!]!
+  estimation: ProjectEstimation!
+}
+
+type GeneratedTask {
+  title: String!
+  type: String!
+  priority: String!
+  rewardAmount: Float
+  duration: String
+  scoring: TaskScoring!
+}
+
+type ProjectEstimation {
+  taskCount: Int!
+  totalEffortHours: Int!
+  rewardPoolSuggested: Float!
+  commissionRate: Float!
+  commissionAmount: Float!
+  totalDeposit: Float!
+}
+
+# ─── Reports ─────────────────────────────────────────────────────────────────
+
+type Report {
+  id: ID!
+  reason: String!
+  status: String!
+  createdAt: String!
+}
+
+input ReportInput {
+  reportedAddress: String!
+  taskId: String
+  reason: String!
+  evidence: String!
+}

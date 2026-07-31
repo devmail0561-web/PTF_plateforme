@@ -1,0 +1,83 @@
+import type { GraphQLContext } from "../context.js";
+import type { ProjectFilter } from "../../types/index.js";
+import { PtfError, PtfErrorCode } from "../../types/errors.js";
+
+export const projectResolvers = {
+  Query: {
+    projects: async (
+      _: unknown,
+      args: { filter?: ProjectFilter },
+      ctx: GraphQLContext
+    ) => {
+      return ctx.services.project.list(args.filter ?? {});
+    },
+
+    project: async (
+      _: unknown,
+      args: { id: string },
+      ctx: GraphQLContext
+    ) => {
+      const p = await ctx.services.project.findById(args.id);
+      if (!p) return null;
+      return ctx.services.project.getPublicView(p);
+    },
+
+    myProjects: async (_: unknown, __: unknown, ctx: GraphQLContext) => {
+      if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
+      return ctx.services.project.list({ mine: true, ownerAddress: ctx.user.userId });
+    },
+
+    projectContributors: async (
+      _: unknown,
+      args: { projectId: string },
+      ctx: GraphQLContext
+    ) => {
+      const project = await ctx.services.project.findById(args.projectId);
+      if (!project) return [];
+      if (project.type === "private") {
+        throw new PtfError(
+          PtfErrorCode.PRIVATE_PROJECT_CONTRIBUTORS_HIDDEN,
+          "Les contributeurs des projets privés ne sont pas visibles publiquement"
+        );
+      }
+      return [];
+    },
+  },
+
+  Mutation: {
+    createProject: async (
+      _: unknown,
+      args: { input: Record<string, unknown> },
+      ctx: GraphQLContext
+    ) => {
+      if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
+
+      const project = await ctx.services.project.create({
+        name: args.input["name"] as string,
+        type: args.input["type"] as "public" | "private",
+        rewardMode: args.input["rewardMode"] as "free" | "paid",
+        chain: args.input["chain"] as string,
+        token: args.input["token"] as string | undefined,
+        repoType: args.input["repoType"] as "github" | "self-hosted" | "ptf-temp",
+        repoUrl: args.input["repoUrl"] as string | undefined,
+        language: args.input["language"] as string | undefined,
+        stack: args.input["stack"] as string[] | undefined,
+        description: args.input["description"] as string | undefined,
+        ownerAddress: ctx.user.userId,
+        ownerId: ctx.user.userId,
+      });
+
+      return ctx.services.project.getPublicView(project);
+    },
+
+    publishProject: async (
+      _: unknown,
+      args: { projectId: string },
+      ctx: GraphQLContext
+    ) => {
+      if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
+      const project = await ctx.services.project.activate(args.projectId);
+      return ctx.services.project.getPublicView(project);
+    },
+  },
+};
