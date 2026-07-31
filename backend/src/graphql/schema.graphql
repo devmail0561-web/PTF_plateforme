@@ -24,6 +24,11 @@ type Query {
   creditHistory(address: String!, limit: Int, offset: Int, type: String): [CreditEvent!]!
   creditBalance(address: String!): CreditLedgerBalance!
 
+  # UTXO provenance
+  utxos(address: String!, status: String, chain: String): [CreditUTXO!]!
+  utxoBalance(address: String!): UTXOBalance!
+  utxoProvenance(address: String!): [CreditUTXO!]!
+
   # Health
   health: String!
 }
@@ -46,6 +51,9 @@ type Mutation {
   claimTask(taskId: ID!, chain: String!, signedNonce: String): ClaimResult!
   submitTask(taskId: ID!, commitHash: String!, branchRef: String!): SubmitResult!
   cancelTask(taskId: ID!): Boolean!
+
+  # UTXO withdrawal
+  withdrawCredits(input: WithdrawInput!): WithdrawResult!
 
   # Reports
   reportUser(input: ReportInput!): Report!
@@ -263,6 +271,44 @@ type CreditLedgerBalance {
   totalCredits: Float!
   totalDebits: Float!
   net: Float!
+}
+
+# ─── UTXO provenance ─────────────────────────────────────────────────────────
+
+type CreditUTXO {
+  id:              ID!
+  ownerAddress:    String!
+  amount:          Float!
+  sourceType:      String!   # task_reward | deposit | bridge_in | change
+  sourceId:        String    # taskId for rewards, deposit txHash for deposits
+  projectId:       String
+  chain:           String!
+  eip712Signature: String!   # PTF-signed proof of origin
+  txHash:          String
+  status:          String!   # unspent | spent | locked
+  spentInTxId:     String
+  createdAt:       String!
+}
+
+type UTXOBalance {
+  address:   String!
+  available: Float!
+  locked:    Float!
+  total:     Float!
+}
+
+input WithdrawInput {
+  amount:      Float!
+  destination: String!   # target wallet address
+  chain:       String!
+}
+
+type WithdrawResult {
+  txId:        String!
+  netAmount:   Float!
+  proofHash:   String!   # keccak256 of all input UTXO signatures — independently verifiable
+  consumed:    [CreditUTXO!]!
+  change:      CreditUTXO
 }
 
 # ─── Contributors ────────────────────────────────────────────────────────────

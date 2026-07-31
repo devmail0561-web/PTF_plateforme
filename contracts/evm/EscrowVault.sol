@@ -38,6 +38,17 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         "TaskRelease(bytes32 projectId,bytes32 taskId,address dev,uint256 amount,uint256 nonce,uint256 deadline)"
     );
 
+    // keccak256("PTFCreditUTXO(bytes32 utxoId,address owner,uint256 amount,bytes32 sourceId,string chain,uint256 createdAt)")
+    // Must match UTXOService.UTXO_TYPEHASH in the backend.
+    bytes32 public constant UTXO_TYPEHASH = keccak256(
+        "PTFCreditUTXO(bytes32 utxoId,address owner,uint256 amount,bytes32 sourceId,string chain,uint256 createdAt)"
+    );
+
+    // keccak256("WithdrawWithProof(address owner,bytes32[] utxoIds,uint256 totalAmount,address destination,uint256 nonce,uint256 deadline)")
+    bytes32 public constant WITHDRAW_PROOF_TYPEHASH = keccak256(
+        "WithdrawWithProof(address owner,bytes32[] utxoIds,uint256 totalAmount,address destination,uint256 nonce,uint256 deadline)"
+    );
+
     // ── State ────────────────────────────────────────────────────────────────
 
     IERC20 public immutable usdc;
@@ -59,6 +70,12 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
     // EIP-712 release nonces per (dev, taskId)
     mapping(address => mapping(bytes32 => uint256)) public releaseNonces;
 
+    // Withdrawal nonces per address — prevents replay of proof-based withdrawals
+    mapping(address => uint256) public withdrawNonces;
+
+    // Spent UTXO ids — prevents double-spending a UTXO on-chain
+    mapping(bytes32 => bool) public spentUTXOs;
+
     // Addresses authorized to call admin functions (PTF backend operator)
     mapping(address => bool) public operators;
 
@@ -70,6 +87,8 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
     event SoftLocked(address indexed dev, uint256 amount);
     event SoftUnlocked(address indexed dev, uint256 amount);
     event RefundIssued(bytes32 indexed projectId, address indexed to, uint256 amount);
+    event WithdrawalExecuted(address indexed owner, uint256 amount, address indexed destination, bytes32 proofHash);
+    event UTXOSpent(bytes32 indexed utxoId, address indexed owner);
 
     // ── Errors ───────────────────────────────────────────────────────────────
 
@@ -82,6 +101,10 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
     error NonceConsumed();
     error ZeroAmount();
     error InvalidDistribution();
+    error UTXOAlreadySpent(bytes32 utxoId);
+    error UTXONotOwnedByCaller(bytes32 utxoId);
+    error UTXOAmountMismatch();
+    error InsufficientUTXOTotal(uint256 provided, uint256 required);
 
     // ── Modifiers ────────────────────────────────────────────────────────────
 
@@ -316,6 +339,147 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         emit RefundIssued(projectId, to, amount);
     }
 
+    // ── UTXO-based withdrawal ─────────────────────────────────────────────────
+
+    /**
+     * UTXO struct passed by the withdrawer to prove ownership of each credit unit.
+     */
+    struct UTXOInput {
+        bytes32 utxoId;
+        uint256 amount;      // in PTF raw units (6 decimals)
+        bytes32 sourceId;    // taskId for rewards, depositTxHash for deposits, etc.
+        uint256 createdAt;   // unix timestamp ms
+        bytes   ptfSignature; // PTF-issued EIP-712 signature over the UTXO fields
+    }
+
+    /**
+     * Withdraw PTF credits to a destination wallet by presenting UTXO proofs.
+     *
+     * Each UTXO must carry a valid PTF-issued EIP-712 signature. The on-chain contract
+     * verifies every signature, marks each UTXO as spent (double-spend prevention),
+     * then burns the PTF tokens and emits a withdrawal event with a proofHash.
+     *
+     * The proofHash = keccak256(utxoId_0 || utxoId_1 || ... || utxoId_n) is stored
+     * on-chain and lets anyone reconstruct and verify the full provenance of the withdrawal.
+     *
+     * @param inputs        Array of UTXOs proving ownership of the credits
+     * @param totalAmount   Expected sum of all UTXO amounts (sanity check)
+     * @param destination   Target wallet to receive the USDC equivalent
+     * @param deadline      EIP-712 deadline — prevents stale withdrawals
+     * @param ownerSignature  dev's EIP-712 signature over (utxoIds[], totalAmount, destination, nonce, deadline)
+     */
+    function withdrawWithProof(
+        UTXOInput[] calldata inputs,
+        uint256 totalAmount,
+        address destination,
+        uint256 deadline,
+        bytes calldata ownerSignature
+    ) external nonReentrant {
+        // ── Checks ────────────────────────────────────────────────────────────
+        if (block.timestamp > deadline) revert DeadlineExpired();
+        if (totalAmount == 0) revert ZeroAmount();
+
+        address owner = msg.sender;
+        uint256 nonce = withdrawNonces[owner];
+
+        // Verify owner's intent signature
+        {
+            bytes32[] memory ids = new bytes32[](inputs.length);
+            for (uint256 i = 0; i < inputs.length; i++) {
+                ids[i] = inputs[i].utxoId;
+            }
+            bytes32 idsHash = keccak256(abi.encodePacked(ids));
+            bytes32 structHash = keccak256(
+                abi.encode(
+                    WITHDRAW_PROOF_TYPEHASH,
+                    owner,
+                    idsHash,
+                    totalAmount,
+                    destination,
+                    nonce,
+                    deadline
+                )
+            );
+            bytes32 digest = _hashTypedDataV4(structHash);
+            address recovered = digest.recover(ownerSignature);
+            if (recovered != owner) revert InvalidSignature();
+        }
+
+        // Verify each UTXO: PTF signature + double-spend guard + amount sum
+        uint256 verifiedTotal = 0;
+        bytes32 proofHash;
+        {
+            bytes memory packed;
+            for (uint256 i = 0; i < inputs.length; i++) {
+                UTXOInput calldata inp = inputs[i];
+
+                // Double-spend guard
+                if (spentUTXOs[inp.utxoId]) revert UTXOAlreadySpent(inp.utxoId);
+
+                // Verify PTF-issued UTXO signature
+                bytes32 utxoStructHash = keccak256(
+                    abi.encode(
+                        UTXO_TYPEHASH,
+                        inp.utxoId,
+                        owner,
+                        inp.amount,
+                        inp.sourceId,
+                        keccak256(bytes("polygon")), // chain encoded as keccak — must match backend
+                        inp.createdAt
+                    )
+                );
+                address signer = utxoStructHash.recover(inp.ptfSignature);
+                if (signer != this.owner()) revert InvalidSignature();
+
+                verifiedTotal += inp.amount;
+                packed = abi.encodePacked(packed, inp.utxoId);
+            }
+            proofHash = keccak256(packed);
+        }
+
+        if (verifiedTotal < totalAmount) revert InsufficientUTXOTotal(verifiedTotal, totalAmount);
+
+        // ── Effects ───────────────────────────────────────────────────────────
+        withdrawNonces[owner]++;
+
+        for (uint256 i = 0; i < inputs.length; i++) {
+            spentUTXOs[inputs[i].utxoId] = true;
+            emit UTXOSpent(inputs[i].utxoId, owner);
+        }
+
+        // ── Interactions ──────────────────────────────────────────────────────
+        // Burn PTF tokens (totalAmount raw units)
+        ptfToken.burn(owner, totalAmount);
+
+        // Transfer USDC equivalent (1 PTF = 1 USDC, same decimals)
+        usdc.safeTransfer(destination, totalAmount);
+
+        emit WithdrawalExecuted(owner, totalAmount, destination, proofHash);
+    }
+
+    /**
+     * Mint a UTXO receipt on-chain when a task reward is released.
+     * Emits a CreditClaimed event in CreditToken that anchors the UTXO to the chain state.
+     * Called by the operator after task validation.
+     *
+     * The PTF backend signs the UTXO off-chain as well — the on-chain record is the
+     * canonical source of truth for the proofHash.
+     */
+    function mintUTXOReceipt(
+        bytes32 utxoId,
+        address dev,
+        uint256 amount,
+        bytes32 sourceId   // taskId
+    ) external onlyOperator {
+        // Mint PTF tokens to dev — this is the spendable credit
+        ptfToken.mint(dev, amount);
+
+        // Emit on-chain anchor — indexed by utxoId so The Graph can index it
+        emit UTXOSpent(utxoId, address(0)); // address(0) = creation, not spend
+        // Re-use WithdrawalExecuted pattern in reverse: log the mint with sourceId as proofHash
+        emit WithdrawalExecuted(dev, amount, dev, sourceId);
+    }
+
     // ── View ─────────────────────────────────────────────────────────────────
 
     function getEscrowBalance(bytes32 projectId) external view returns (uint256) {
@@ -324,6 +488,14 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
 
     function getSoftLocked(address dev) external view returns (uint256) {
         return softLocked[dev];
+    }
+
+    function isUTXOSpent(bytes32 utxoId) external view returns (bool) {
+        return spentUTXOs[utxoId];
+    }
+
+    function getWithdrawNonce(address owner) external view returns (uint256) {
+        return withdrawNonces[owner];
     }
 
     function domainSeparator() external view returns (bytes32) {

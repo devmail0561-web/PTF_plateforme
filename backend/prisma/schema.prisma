@@ -223,26 +223,69 @@ model Session {
   @@index([token])
 }
 
-// Trace every credit movement for a developer — positive and negative.
-// Written by TaskService (claim, cancel, reward), PunishmentService (penalty), WalletService (deposit, withdraw, bridge).
+// UTXO model — each PTF credit is a discrete, cryptographically-signed spendable unit.
+// Inspired by Bitcoin UTXO: spending 200 PTF = selecting unspent outputs that sum to >=200,
+// each carrying an EIP-712 signature from PTF proving its origin (task, project, chain).
+model CreditUTXO {
+  id              String   @id            // keccak256(owner + sourceId + amount_hex + createdAt_ms)
+  ownerAddress    String
+  amount          Float                   // PTF amount (6 decimal precision, e.g. 150.000000)
+  sourceType      String                  // task_reward | deposit | bridge_in | change
+  sourceId        String?                 // taskId for rewards; deposit txHash for deposits
+  projectId       String?
+  chain           String
+  eip712Signature String                  // PTF-signed: (utxoId, owner, amount, sourceId, chain) — proves origin
+  txHash          String?                 // on-chain tx that created this UTXO (if applicable)
+  status          String   @default("unspent")  // unspent | spent | locked
+  spentInTxId     String?                 // CreditTransaction.id that consumed this UTXO
+  createdAt       DateTime @default(now())
+
+  @@index([ownerAddress, status])
+  @@index([sourceId])
+  @@index([spentInTxId])
+  @@index([createdAt])
+}
+
+// A PTF credit transaction: consumes N input UTXOs, produces M output UTXOs (change).
+// The proofHash = keccak256 of all input EIP-712 signatures — independently verifiable.
+model CreditTransaction {
+  id          String   @id            // keccak256(devAddress + inputIds[] + createdAt_ms)
+  type        String                  // withdrawal | punishment | bridge_out
+  devAddress  String
+  inputIds    String[]                // CreditUTXO.id[] consumed (inputs)
+  outputIds   String[]                // CreditUTXO.id[] created (change outputs)
+  inputTotal  Float                   // sum of all inputs
+  outputTotal Float                   // sum of change outputs
+  netAmount   Float                   // inputTotal - outputTotal (what actually left)
+  chain       String
+  destination String?                 // target wallet for withdrawal
+  txHash      String?                 // on-chain burn tx
+  proofHash   String                  // keccak256(all input UTXO eip712Signatures) — auditable
+  createdAt   DateTime @default(now())
+
+  @@index([devAddress])
+  @@index([createdAt])
+}
+
+// Chronological ledger — kept alongside UTXOs for accounting display.
+// Written by TaskService, PunishmentService, WalletService.
 model CreditEvent {
   id          String   @id @default(cuid())
   devAddress  String
   type        String   // reward_earned | punishment_deducted | soft_locked | soft_unlocked | deposit | withdrawal | bridge_out | bridge_in
   direction   String   // credit | debit
-  amount      Float    // in PTF (6 decimals precision)
-  balanceAfter Float?  // snapshot of available balance after the event
+  amount      Float
+  utxoId      String?  // CreditUTXO.id this event created or consumed
   taskId      String?
   projectId   String?
   chain       String
-  txHash      String?  // on-chain tx hash when available
-  note        String?  // human-readable detail (e.g. "lateDelivery punishment")
+  txHash      String?
+  note        String?
   createdAt   DateTime @default(now())
 
   @@index([devAddress])
+  @@index([utxoId])
   @@index([taskId])
-  @@index([projectId])
-  @@index([type])
   @@index([createdAt])
 }
 

@@ -1,5 +1,10 @@
 import type { GraphQLContext } from "../context.js";
 import { PtfError, PtfErrorCode } from "../../types/errors.js";
+import { ethers } from "ethers";
+
+function isValidAddress(addr: string): boolean {
+  try { return ethers.isAddress(addr); } catch { return false; }
+}
 
 export const walletResolvers = {
   Query: {
@@ -15,10 +20,7 @@ export const walletResolvers = {
       ]);
 
       const meetsMinBalance = await ctx.services.wallet.meetsMinBalance(args.address, args.chain);
-
-      const chains = await ctx.services.wallet.getLinkedChains(
-        args.address
-      ).catch(() => []);
+      const chains = await ctx.services.wallet.getLinkedChains(args.address).catch(() => []);
 
       return {
         address: args.address,
@@ -41,9 +43,7 @@ export const walletResolvers = {
       _: unknown,
       args: { address: string; chain: string },
       ctx: GraphQLContext
-    ) => {
-      return ctx.services.wallet.getBalance(args.address, args.chain);
-    },
+    ) => ctx.services.wallet.getBalance(args.address, args.chain),
 
     reputationScore: async (
       _: unknown,
@@ -64,10 +64,7 @@ export const walletResolvers = {
         args.limit ?? 50,
         args.offset ?? 0
       );
-      return entries.map((e) => ({
-        ...e,
-        createdAt: e.createdAt.toISOString(),
-      }));
+      return entries.map((e) => ({ ...e, createdAt: e.createdAt.toISOString() }));
     },
 
     creditHistory: async (
@@ -80,10 +77,7 @@ export const walletResolvers = {
         offset: args.offset ?? 0,
         type: args.type as never,
       });
-      return entries.map((e) => ({
-        ...e,
-        createdAt: e.createdAt.toISOString(),
-      }));
+      return entries.map((e) => ({ ...e, createdAt: e.createdAt.toISOString() }));
     },
 
     creditBalance: async (
@@ -93,6 +87,41 @@ export const walletResolvers = {
     ) => {
       const bal = await ctx.services.creditLedger.getBalance(args.address);
       return { address: args.address, ...bal };
+    },
+
+    // ── UTXO provenance ──────────────────────────────────────────────────────
+
+    utxos: async (
+      _: unknown,
+      args: { address: string; status?: string; chain?: string },
+      ctx: GraphQLContext
+    ) => {
+      if (!args.status || args.status === "unspent") {
+        const list = await ctx.services.utxo.getUnspent(args.address, args.chain);
+        return list.map((u) => ({ ...u, createdAt: u.createdAt.toISOString() }));
+      }
+      const all = await ctx.services.utxo.getProvenance(args.address);
+      return all
+        .filter((u) => u.status === args.status)
+        .map((u) => ({ ...u, createdAt: u.createdAt.toISOString() }));
+    },
+
+    utxoBalance: async (
+      _: unknown,
+      args: { address: string },
+      ctx: GraphQLContext
+    ) => {
+      const bal = await ctx.services.utxo.getBalance(args.address);
+      return { address: args.address, ...bal };
+    },
+
+    utxoProvenance: async (
+      _: unknown,
+      args: { address: string },
+      ctx: GraphQLContext
+    ) => {
+      const all = await ctx.services.utxo.getProvenance(args.address);
+      return all.map((u) => ({ ...u, createdAt: u.createdAt.toISOString() }));
     },
   },
 
@@ -131,6 +160,43 @@ export const walletResolvers = {
         args.address,
         args.signature
       );
+    },
+
+    // ── UTXO withdrawal ──────────────────────────────────────────────────────
+
+    withdrawCredits: async (
+      _: unknown,
+      args: { input: { amount: number; destination: string; chain: string } },
+      ctx: GraphQLContext
+    ) => {
+      if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
+
+      const { amount, destination, chain } = args.input;
+
+      if (amount < 1.0) {
+        throw new PtfError(PtfErrorCode.INSUFFICIENT_PTF_BALANCE, "Le montant minimum de retrait est 1.0 PTF");
+      }
+      if (!isValidAddress(destination)) {
+        throw new PtfError(PtfErrorCode.INVALID_ADDRESS, `Adresse de destination invalide : ${destination}`);
+      }
+
+      const result = await ctx.services.utxo.spend({
+        ownerAddress: ctx.user.userId,
+        amount,
+        type: "withdrawal",
+        chain,
+        destination,
+      });
+
+      return {
+        txId:      result.txId,
+        netAmount: result.netAmount,
+        proofHash: result.proofHash,
+        consumed:  result.consumed.map((u) => ({ ...u, createdAt: u.createdAt.toISOString() })),
+        change:    result.change
+          ? { ...result.change, createdAt: result.change.createdAt.toISOString() }
+          : null,
+      };
     },
 
     reportUser: async (

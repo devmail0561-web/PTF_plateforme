@@ -142,9 +142,88 @@ walletCommand
       return;
     }
 
-    printWarning("Mode offline — retrait simulé");
-    printSuccess(`Retrait de ${amount.toFixed(6)} PTF initié vers ${options.to}`);
-    printInfo("Confirmation on-chain attendue dans ~1-2 minutes.");
+    const userConfig = loadUserConfig();
+    const client = new PtfApiClient(userConfig);
+
+    if (client.isOffline()) {
+      printOfflineBanner();
+      // Simulate UTXO-based withdrawal output
+      const mockProofHash = "0x" + "a1b2c3d4e5f6".repeat(5).slice(0, 64);
+      const mockUTXOs = [
+        { id: "0xutxo001…", amount: 150.0, sourceType: "task_reward", sourceId: "0xtask001…" },
+        { id: "0xutxo002…", amount: 60.0,  sourceType: "task_reward", sourceId: "0xtask002…" },
+      ];
+      const change = 210 - amount > 0 ? { id: "0xchange001…", amount: 210 - amount } : null;
+
+      console.log(
+        `\n${chalk.bold("Retrait PTF — Preuve de provenance")}\n` +
+        chalk.dim("─".repeat(64)) + "\n" +
+        `  Montant retiré   : ${chalk.green.bold(amount.toFixed(6) + " PTF")}\n` +
+        `  Destination      : ${chalk.bold(options.to)}\n` +
+        `  Proof hash       : ${chalk.dim(mockProofHash)}\n` +
+        chalk.dim("  (keccak256 de toutes les signatures EIP-712 des UTXOs sources)\n") +
+        chalk.dim("─".repeat(64)) + "\n" +
+        chalk.bold("  UTXOs consommés :\n")
+      );
+      for (const u of mockUTXOs) {
+        console.log(
+          `    ${chalk.green("●")} ${u.amount.toFixed(6)} PTF` +
+          chalk.dim(`  source: ${u.sourceType}  id: ${u.id}  tâche: ${u.sourceId}`)
+        );
+      }
+      if (change) {
+        console.log(
+          `\n  ${chalk.yellow("◑")} Monnaie rendue : ${chalk.yellow(change.amount.toFixed(6) + " PTF")}` +
+          chalk.dim(`  id: ${change.id}`)
+        );
+      }
+      console.log(
+        "\n" + chalk.dim("Chaque UTXO porte une signature EIP-712 de PTF prouvant sa tâche source.\n") +
+        chalk.dim("Vérifiez avec : ptf wallet verify-utxo <utxoId>\n")
+      );
+    } else {
+      const result = await client.query<{
+        withdrawCredits: {
+          txId: string;
+          netAmount: number;
+          proofHash: string;
+          consumed: { id: string; amount: number; sourceType: string; sourceId: string | null }[];
+          change: { id: string; amount: number } | null;
+        };
+      }>(
+        `mutation Withdraw($input: WithdrawInput!) {
+          withdrawCredits(input: $input) {
+            txId netAmount proofHash
+            consumed { id amount sourceType sourceId }
+            change { id amount }
+          }
+        }`,
+        { input: { amount, destination: options.to, chain: "polygon" } }
+      );
+
+      const r = result.withdrawCredits;
+      console.log(
+        `\n${chalk.bold("Retrait PTF — Preuve de provenance")}\n` +
+        chalk.dim("─".repeat(64)) + "\n" +
+        `  Montant retiré   : ${chalk.green.bold(r.netAmount.toFixed(6) + " PTF")}\n` +
+        `  Destination      : ${chalk.bold(options.to)}\n` +
+        `  Proof hash       : ${chalk.dim(r.proofHash)}\n` +
+        chalk.dim("─".repeat(64)) + "\n" +
+        chalk.bold("  UTXOs consommés :\n")
+      );
+      for (const u of r.consumed) {
+        console.log(
+          `    ${chalk.green("●")} ${u.amount.toFixed(6)} PTF` +
+          chalk.dim(`  ${u.sourceType}  id: ${u.id.slice(0, 14)}…`)
+        );
+      }
+      if (r.change) {
+        console.log(
+          `\n  ${chalk.yellow("◑")} Monnaie rendue : ${chalk.yellow(r.change.amount.toFixed(6) + " PTF")}`
+        );
+      }
+      printSuccess(`\nRetrait exécuté — TX: ${r.txId.slice(0, 18)}…`);
+    }
   });
 
 walletCommand

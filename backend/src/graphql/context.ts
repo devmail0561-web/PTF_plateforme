@@ -7,6 +7,7 @@ import type { IPunishmentService } from "../services/punishment.service.js";
 import type { ITaskGeneratorService } from "../services/taskGenerator.service.js";
 import type { IReportService } from "../services/report.service.js";
 import type { ICreditLedgerService } from "../services/creditLedger.service.js";
+import type { IUTXOService } from "../services/utxo.service.js";
 
 export interface IServiceContainer {
   auth: IAuthService;
@@ -18,6 +19,7 @@ export interface IServiceContainer {
   taskGenerator: ITaskGeneratorService;
   report: IReportService;
   creditLedger: ICreditLedgerService;
+  utxo: IUTXOService;
 }
 
 export interface GraphQLContext {
