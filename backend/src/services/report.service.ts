@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import type { IChainRegistry } from "../bal/chain.registry.js";
+import { PtfError, PtfErrorCode } from "../types/errors.js";
 
 export const REPORT_REASONS = [
   "malicious_code",
@@ -41,17 +42,12 @@ export class ReportService implements IReportService {
     });
 
     if (!reportedUser) {
-      // Créer un user ghost si inconnu
-      const ghost = await this.prisma.user.create({
-        data: {},
-      });
-      await this.prisma.walletLink.create({
-        data: {
-          userId: ghost.id,
-          chain: "polygon",
-          address: input.reportedAddress.toLowerCase(),
-        },
-      });
+      // Do not auto-create ghost users — this opens an unbounded DB inflation vector.
+      // Reports against unknown addresses are dropped with a clear error.
+      throw new PtfError(
+        PtfErrorCode.INVALID_ADDRESS,
+        `L'adresse signalée n'est pas enregistrée sur la plateforme : ${input.reportedAddress}`
+      );
     }
 
     const reportedWallet = await this.prisma.walletLink.findFirstOrThrow({

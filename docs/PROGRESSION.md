@@ -1,7 +1,7 @@
 # PTF — Progression du projet
 
 > Version : **V0.0.1** — Dernière mise à jour : **2026-07-31**
-> Commits : `7efdde9` (MVP initial) → `fc22203` (Smart contracts) → `c3032b5` (UTXO provenance) → audit sécurité multi-agents (corrections inline)
+> Commits : `7efdde9` (MVP initial) → `fc22203` (Smart contracts) → `c3032b5` (UTXO provenance) → `03fe287` (audit sécurité multi-agents) → rounds CIA 5–10 (auth refonte, licences, réputation OSS) → round 11 (7 findings ouverts corrigés)
 
 ---
 
@@ -13,11 +13,14 @@
 
 | Module | Statut | Progression |
 |--------|--------|-------------|
-| Documentation | ✅ Terminé | 100% |
+| Documentation | ✅ Mise à jour | 100% |
 | CLI | ✅ Terminé | 100% |
-| Backend (core) | ✅ Terminé | 75% |
+| Backend (core) | ✅ En cours | 85% |
 | Smart contracts EVM | ✅ Terminé | 100% |
-| Audit sécurité (round 1+2) | ✅ Terminé | 100% |
+| Audit sécurité (rounds 1–11) | ✅ Terminé | 100% |
+| Authentification (refonte complète) | ✅ Terminé | 100% |
+| Licences OSS (catalogue + auto-création) | ✅ Terminé | 100% |
+| Worker on-chain (dépôts N1) | ✅ Terminé | 100% |
 | Frontend | 🔴 À faire | 0% |
 | Infrastructure | 🔴 À faire | 0% |
 | Blockchain réelle | 🔴 À faire | 0% |
@@ -77,35 +80,37 @@ ptf contributors ptf report       ptf fix-docs     ptf sync
 
 ---
 
-### ✅ Backend — 70%
+### ✅ Backend — 85%
 
-**24 fichiers TypeScript — Apollo Server v4 + Prisma + BullMQ + Redlock**
+**30 fichiers TypeScript — Apollo Server v4 + Prisma + BullMQ + Redlock + Nodemailer + express-rate-limit**
 
-#### Services implémentés (10/14)
+#### Services implémentés (14/17)
 
 | Service | Fichier | Description |
 |---------|---------|-------------|
-| `TaskService` | `task.service.ts` | Anti-collision Redlock, assertMutable, cycle de vie complet, vue publique/privée, soft-lock UTXO synchronisé |
-| `ProjectService` | `project.service.ts` | Création projet, ancrage Merkle, évaluation coût |
-| `ReputationService` | `reputation.service.ts` | Formule `(c+e+i)×10 + bonus_durée`, niveaux, commission |
-| `PunishmentService` | `punishment.service.ts` | Exécution punishments, adapter chain, distribution 80/20, UTXO spend synchronisé |
+| `AuthService` | `auth.service.ts` | Email + password (scrypt) + clé PTF secp256k1 générée serveur + OTP email nouvel appareil + gestion appareils |
+| `EmailService` | `email.service.ts` | SMTP Nodemailer — envoi OTP email nouvel appareil |
+| `GithubService` | `github.service.ts` | Vérification licence repo (public + OSI/FSF) + création automatique LICENSE.md via GitHub API |
+| `LicenseCatalog` | `licenses.ts` | Catalogue 50+ licences : OSI, FSF-libre, source-available, propriétaire — avec SPDX IDs, clés GitHub |
+| `TaskService` | `task.service.ts` | Anti-collision Redlock, assertMutable, cycle de vie complet, vue publique/privée, soft-lock UTXO synchronisé, `reputationPoints=0` si projet non OSS |
+| `ProjectService` | `project.service.ts` | Création projet, vérification licence non-bloquante, `createProjectLicense()`, ancrage Merkle |
+| `ReputationService` | `reputation.service.ts` | Formule `(c+e+i)×10 + bonus_durée` — zéro si `!project.isOpenSource` |
+| `PunishmentService` | `punishment.service.ts` | Exécution punishments tous projets, UTXO spend synchronisé |
 | `WalletService` | `wallet.service.ts` | Vérification 6 critères, soft-lock, multi-chaîne |
-| `AuthService` | `auth.service.ts` | GitHub OAuth + JWT + linking wallets |
-| `TimerService` | `timer.service.ts` | BullMQ deadlines, countdown alertes 72/48/24h |
+| `TimerService` | `timer.service.ts` | BullMQ deadlines, countdown alertes 72/48/24h, pagination `take:500` |
 | `NotificationService` | `notification.service.ts` | Webhooks, événements temps réel |
-| `ReportService` | `report.service.ts` | Signalements, analyse automatique, escalade PTF |
-| `UTXOService` | `utxo.service.ts` | Système UTXO Bitcoin-style : mint, spend (TOCTOU-safe), lock/unlock transactionnels, verifyProof EIP-712 complet, proofHash aligné on-chain |
+| `ReportService` | `report.service.ts` | Signalements (adresses enregistrées uniquement — plus de ghost users) |
+| `UTXOService` | `utxo.service.ts` | UTXO Bitcoin-style : mint/spend/lock/unlock transactionnels, verifyProof multi-chain, amount>0 guards |
 | `CreditLedgerService` | `creditLedger.service.ts` | Ledger comptable + utxoId tracé par événement |
+| `DepositWorker` | `workers/deposit.worker.ts` | Écoute `CreditClaimed` / `UTXOSpent` on-chain → `UTXOService.mint()` avec guard idempotency (N1) |
 
-#### Services manquants (5/14)
+#### Services manquants (3/17)
 
 | Service | Priorité | Description |
 |---------|----------|-------------|
 | `EscrowService` | 🔴 Haute | Lien backend ↔ EscrowVault (release reward on-chain) |
 | `ValidationService` | 🔴 Haute | Tests automatiques + sandbox gVisor (projets privés) |
 | `SyncService` | 🟡 Moyenne | Repo temporaire PTF (Cas 3), reconnexion, sync auto |
-| `CurrencyConverter` | 🟡 Moyenne | EUR/ETH/BTC → USDC via oracle Chainlink |
-| `ReputationAggregator` | 🟡 Moyenne | Score cross-chaîne (agrégation multi-wallets) |
 
 #### Blockchain Abstraction Layer (BAL)
 
@@ -113,18 +118,22 @@ ptf contributors ptf report       ptf fix-docs     ptf sync
 |---------|---------|--------|
 | `MockChainAdapter` | `mock.adapter.ts` | ✅ Opérationnel (dev/test) |
 | `EVMAdapterBase` | `evm.adapter.base.ts` | ✅ Classe de base |
-| `PolygonAdapter` | `polygon.adapter.ts` | ⚠️ Structure présente, intégration réelle manquante |
-| `EthereumAdapter` | `ethereum.adapter.ts` | ⚠️ Structure présente, intégration réelle manquante |
+| `PolygonAdapter` | `polygon.adapter.ts` | ⚠️ Structure présente — throw si `SIGNER_PRIVATE_KEY` absent |
+| `EthereumAdapter` | `ethereum.adapter.ts` | ⚠️ Structure présente — throw si `SIGNER_PRIVATE_KEY` absent |
 
 #### API GraphQL
 
-- **14 Queries** : `tasks`, `task`, `myTasks`, `projects`, `project`, `myProjects`, `walletStatus`, `walletBalance`, `projectContributors`, `reputationScore`, `creditHistory`, `creditBalance`, `utxos`, `utxoBalance`, `utxoProvenance`, `health`
-- **9 Mutations** : `loginWithGithub`, `linkWallet`, `createProject`, `publishProject`, `generateTasks`, `claimTask`, `submitTask`, `cancelTask`, `withdrawCredits`, `reportUser`
+- **17 Queries** : `tasks`, `task`, `myTasks`, `projects`, `project`, `myProjects`, `walletStatus`, `walletBalance`, `projectContributors`, `reputationScore`, `creditHistory`, `creditBalance`, `utxos`, `utxoBalance`, `utxoProvenance`, `myDevices`, `verifyRepoLicense`, `getLicenses`, `health`
+- **18 Mutations** : `register`, `login`, `verifyNewDevice`, `requestGithubOAuthState`, `linkGithub`, `requestWalletChallenge`, `confirmLinkWallet`, `revokeDevice`, `revokeAllOtherDevices`, `createProject`, `publishProject`, `createProjectLicense`, `generateTasks`, `claimTask`, `submitTask`, `cancelTask`, `withdrawCredits`, `reportUser`
 - **1 Subscription** : `taskStatusChanged`
 
-#### Base de données (Prisma — 13 tables)
+#### Base de données (Prisma — 18 tables)
 
-`User`, `Project`, `Task`, `Submission`, `WalletLink`, `ContributorRecord`, `ReputationHistory`, `PunishmentRecord`, `Report`, `Notification`, `Session`, `CreditUTXO`, `CreditTransaction`, `CreditEvent`
+`User`, `DeviceSession`, `TrustedDevice`, `PendingDeviceSession`, `AuthChallenge`, `WalletLinkChallenge`, `Project`, `Task`, `Submission`, `WalletLink`, `ContributorRecord`, `Reputation`, `ReputationEvent`, `PunishmentRecord`, `Report`, `CreditUTXO`, `CreditTransaction`, `CreditEvent`
+
+**Nouveaux champs notables :**
+- `User.email`, `User.passwordHash`, `User.ptfPublicKey`, `User.ptfAddress`, `User.encryptedKey`
+- `Project.isOpenSource`, `Project.license`, `Project.licenseVerifiedAt`
 
 #### Tests
 
@@ -239,8 +248,9 @@ Vues à implémenter :
 | **Lignes Solidity** | ~640 lignes |
 | **Tests unitaires** | 13 (Vitest) + 17 (Jest) + ~60 (Foundry) = **90 tests** |
 | **Commits** | 5 |
-| **Bugs sécurité corrigés** | **22** (audit multi-agents — 2 rounds) |
-| **Progression globale** | **~55%** |
+| **Bugs sécurité corrigés** | **80** (11 rounds d'audit — smart contracts, backend, auth, licences, workers) |
+| **Findings ouverts** | **2** (N3 réconciliation rétroactive, CIA-I9 DB-before-on-chain) |
+| **Progression globale** | **~57%** |
 
 ---
 

@@ -1,5 +1,6 @@
 import type { PrismaClient, Project } from "@prisma/client";
 import type { IChainRegistry } from "../bal/chain.registry.js";
+import type { IGithubService } from "./github.service.js";
 import type {
   ProjectFilter,
   PublicProjectView,
@@ -26,8 +27,14 @@ export interface CreateProjectInput {
   ownerId?: string;
 }
 
+export interface CreateProjectResult {
+  project:        Project;
+  licenseStatus:  "ok" | "missing" | "ineligible" | "not_github";
+  licenseInstruction: string | null;
+}
+
 export interface IProjectService {
-  create(input: CreateProjectInput): Promise<Project>;
+  create(input: CreateProjectInput): Promise<CreateProjectResult>;
   findById(id: string): Promise<Project | null>;
   list(filter: ProjectFilter): Promise<PublicProjectView[]>;
   getPublicView(project: Project): PublicProjectView;
@@ -35,21 +42,58 @@ export interface IProjectService {
   updateSyncStatus(projectId: string, status: string): Promise<void>;
   calculateCommission(rewardPool: number): number;
   estimateCost(tasks: TaskDraft[]): ProjectEstimation;
-  activate(projectId: string): Promise<Project>;
+  activate(projectId: string, callerId: string): Promise<Project>;
+  /**
+   * Auto-create or update the LICENSE.md file in the project's GitHub repo.
+   * Requires the user's GitHub OAuth access token (write scope).
+   */
+  createProjectLicense(params: {
+    projectId:   string;
+    callerId:    string;
+    spdxId:      string;
+    authorName:  string;
+    userToken:   string;
+  }): Promise<{ fileUrl: string; commitSha: string; isOpenSource: boolean; license: string }>;
 }
 
 export class ProjectService implements IProjectService {
   constructor(
     private readonly prisma: PrismaClient,
-    private readonly chainRegistry: IChainRegistry
+    private readonly chainRegistry: IChainRegistry,
+    private readonly githubService: IGithubService
   ) {}
 
-  async create(input: CreateProjectInput): Promise<Project> {
+  async create(input: CreateProjectInput): Promise<CreateProjectResult> {
     const timestamp = Date.now();
     const projectId = ethers.solidityPackedKeccak256(
       ["string", "string", "uint256"],
       [input.ownerAddress, input.name, timestamp]
     );
+
+    // Non-blocking license check at creation — the project is always created.
+    // licenseStatus and licenseInstruction inform the client what to do next.
+    let isOpenSource:         boolean     = false;
+    let license:              string | null = null;
+    let licenseVerifiedAt:    Date | null   = null;
+    let licenseStatus:        CreateProjectResult["licenseStatus"] = "not_github";
+    let licenseInstruction:   string | null = null;
+
+    if (input.repoType === "github" && input.repoUrl) {
+      const check = await this.githubService.checkRepoLicense(input.repoUrl);
+      isOpenSource      = check.passes;
+      license           = check.spdxId;
+      licenseVerifiedAt = new Date();
+
+      if (check.passes) {
+        licenseStatus = "ok";
+      } else if (!check.spdxId) {
+        licenseStatus      = "missing";
+        licenseInstruction = check.instruction;
+      } else {
+        licenseStatus      = "ineligible";
+        licenseInstruction = check.instruction;
+      }
+    }
 
     const project = await this.prisma.project.create({
       data: {
@@ -68,15 +112,16 @@ export class ProjectService implements IProjectService {
         ownerId: input.ownerId,
         status: "draft",
         syncStatus: input.repoType === "ptf-temp" ? "pending" : "synced",
+        isOpenSource,
+        license,
+        licenseVerifiedAt,
       },
     });
 
-    // Ancrage on-chain de l'ID du projet
     const adapter = this.chainRegistry.get(input.chain);
-    const emptyRoot = ethers.ZeroHash;
-    await adapter.anchorMerkleRoot(projectId, emptyRoot);
+    await adapter.anchorMerkleRoot(projectId, ethers.ZeroHash);
 
-    return project;
+    return { project, licenseStatus, licenseInstruction };
   }
 
   async findById(id: string): Promise<Project | null> {
@@ -84,6 +129,8 @@ export class ProjectService implements IProjectService {
   }
 
   async list(filter: ProjectFilter): Promise<PublicProjectView[]> {
+    const limit  = Math.min(filter.limit  ?? 50, 200);
+    const offset = filter.offset ?? 0;
     const projects = await this.prisma.project.findMany({
       where: {
         ...(filter.type && filter.type !== "all" ? { type: filter.type } : {}),
@@ -93,6 +140,8 @@ export class ProjectService implements IProjectService {
       },
       include: { _count: { select: { tasks: true } } },
       orderBy: { createdAt: "desc" },
+      take:    limit,
+      skip:    offset,
     });
 
     const withOpenCount = await Promise.all(
@@ -130,9 +179,11 @@ export class ProjectService implements IProjectService {
         project.rewardMode === "free"
           ? "0"
           : `${project.escrowBalance.toFixed(2)} USDC`,
-      stack: project.stack,
-      status: project.status,
-      createdAt: project.createdAt.toISOString(),
+      stack:        project.stack,
+      status:       project.status,
+      isOpenSource: project.isOpenSource,
+      license:      project.license ?? undefined,
+      createdAt:    project.createdAt.toISOString(),
     };
   }
 
@@ -186,14 +237,68 @@ export class ProjectService implements IProjectService {
     };
   }
 
-  async activate(projectId: string): Promise<Project> {
+  async createProjectLicense(params: {
+    projectId:  string;
+    callerId:   string;
+    spdxId:     string;
+    authorName: string;
+    userToken:  string;
+  }): Promise<{ fileUrl: string; commitSha: string; isOpenSource: boolean; license: string }> {
+    const project = await this.prisma.project.findUnique({ where: { id: params.projectId } });
+    if (!project) throw new PtfError(PtfErrorCode.PROJECT_NOT_FOUND, `Projet introuvable : ${params.projectId}`);
+    if (project.ownerId !== params.callerId) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Seul le propriétaire peut modifier la licence");
+    if (project.repoType !== "github" || !project.repoUrl) {
+      throw new PtfError(PtfErrorCode.INVALID_INPUT, "La création automatique de licence n'est disponible que pour les dépôts GitHub.");
+    }
+
+    const { fileUrl, commitSha } = await this.githubService.createLicenseFile({
+      repoUrl:    project.repoUrl,
+      spdxId:     params.spdxId,
+      authorName: params.authorName,
+      userToken:  params.userToken,
+    });
+
+    // Re-verify immediately after creating the file
+    const check      = await this.githubService.checkRepoLicense(project.repoUrl);
+    const isOpenSource = check.passes;
+
+    await this.prisma.project.update({
+      where: { id: params.projectId },
+      data:  {
+        isOpenSource,
+        license:           params.spdxId,
+        licenseVerifiedAt: new Date(),
+      },
+    });
+
+    return { fileUrl, commitSha, isOpenSource, license: params.spdxId };
+  }
+
+  async activate(projectId: string, callerId: string): Promise<Project> {
     const project = await this.prisma.project.findUnique({ where: { id: projectId } });
     if (!project) {
       throw new PtfError(PtfErrorCode.PROJECT_NOT_FOUND, `Projet introuvable : ${projectId}`);
     }
+    if (project.ownerId !== callerId) {
+      throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Seul le propriétaire peut publier ce projet");
+    }
+
+    // Re-check license before publication. Non-blocking: ineligible projects can
+    // still be published but will not grant reputation points.
+    let isOpenSource      = project.isOpenSource;
+    let license           = project.license;
+    let licenseVerifiedAt = project.licenseVerifiedAt;
+
+    if (project.repoType === "github" && project.repoUrl) {
+      const check   = await this.githubService.checkRepoLicense(project.repoUrl);
+      isOpenSource  = check.passes;
+      license       = check.spdxId;
+      licenseVerifiedAt = new Date();
+    }
+
     return this.prisma.project.update({
       where: { id: projectId },
-      data: { status: "active" },
+      data:  { status: "active", isOpenSource, license, licenseVerifiedAt },
     });
   }
 }

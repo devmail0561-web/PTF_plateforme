@@ -57,6 +57,18 @@ function computeMerkleRoot(ids: string[]): string {
   return layer[0];
 }
 
+/**
+ * Returns true if the 15% grace period since claim has elapsed.
+ * Grace period = 15% of (deadline - claimedAt). If either date is missing, no forfeit.
+ */
+function shouldForfeitGuarantee(claimedAt: Date | null, deadline: Date | null): boolean {
+  if (!claimedAt || !deadline) return false;
+  const totalMs = deadline.getTime() - claimedAt.getTime();
+  if (totalMs <= 0) return false;
+  const gracePeriodMs = totalMs * 0.15;
+  return Date.now() - claimedAt.getTime() >= gracePeriodMs;
+}
+
 export interface ITaskService {
   create(projectId: string, draft: TaskDraft): Promise<Task>;
   bulkCreate(projectId: string, drafts: TaskDraft[]): Promise<Task[]>;
@@ -74,7 +86,7 @@ export interface ITaskService {
     branchRef: string,
     devAddress: string
   ): Promise<SubmitResult>;
-  cancel(taskId: string, devAddress: string): Promise<void>;
+  cancel(taskId: string, callerAddress: string): Promise<void>;
   expire(taskId: string): Promise<void>;
   computeMerkleRoot(projectId: string): Promise<string>;
   assertMutable(task: Task): void;
@@ -94,19 +106,19 @@ export class TaskService implements ITaskService {
     private readonly creditLedger: ICreditLedgerService,
     private readonly utxoService: IUTXOService
   ) {
-    // Dynamic import pour éviter les problèmes de types avec redlock v5 beta + NodeNext
+    // Dynamic import pour compatibilité ESM/CJS avec redlock v5 beta
+    // Le fallback throws pour éviter le no-op silencieux (CIA-I7) :
+    // si Redis ou Redlock est indisponible, la contention de task.claim() n'est pas protégée.
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const RedlockCtor = require("redlock");
       const Ctor = RedlockCtor.default ?? RedlockCtor;
       this.redlock = new Ctor([redis], { retryCount: 3, retryDelay: 200 });
-    } catch {
-      // Fallback no-op en cas d'échec d'import
-      this.redlock = {
-        acquire: async (keys: string[], ttl: number) => ({
-          release: async () => {},
-        }),
-      };
+    } catch (err) {
+      throw new Error(
+        `[TaskService] Impossible d'initialiser Redlock — vérifiez que Redis est accessible et que "redlock" est installé. ` +
+        `Cause : ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   }
 
@@ -119,7 +131,15 @@ export class TaskService implements ITaskService {
 
     const scoring = draft.scoring as unknown as TaskScoring;
     const durationDays = parseDurationDays(draft.duration ?? "30d");
-    const reputationPoints = this.reputationService.calculatePoints(scoring, durationDays);
+
+    // Reputation points are only awarded for open-source projects.
+    const project = await this.prisma.project.findUnique({
+      where:  { id: projectId },
+      select: { isOpenSource: true },
+    });
+    const reputationPoints = project?.isOpenSource
+      ? this.reputationService.calculatePoints(scoring, durationDays)
+      : 0;
 
     return this.prisma.task.create({
       data: {
@@ -163,6 +183,8 @@ export class TaskService implements ITaskService {
   }
 
   async list(filter: TaskFilter): Promise<Task[]> {
+    const limit  = Math.min(filter.limit  ?? 50, 200);
+    const offset = filter.offset ?? 0;
     return this.prisma.task.findMany({
       where: {
         ...(filter.status ? { status: filter.status } : {}),
@@ -172,6 +194,8 @@ export class TaskService implements ITaskService {
         ...(filter.maxReward ? { rewardAmount: { lte: filter.maxReward } } : {}),
       },
       orderBy: { createdAt: "desc" },
+      take:    limit,
+      skip:    offset,
     });
   }
 
@@ -323,11 +347,22 @@ export class TaskService implements ITaskService {
     taskId: string,
     commitHash: string,
     branchRef: string,
-    devAddress: string
+    callerAddress: string
   ): Promise<SubmitResult> {
     const task = await this.findById(taskId);
     if (!task) {
       throw new PtfError(PtfErrorCode.TASK_NOT_FOUND, `Tâche introuvable : ${taskId}`);
+    }
+
+    if (!task.devAddress || task.devAddress.toLowerCase() !== callerAddress.toLowerCase()) {
+      throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Vous ne pouvez soumettre que vos propres tâches");
+    }
+
+    if (task.status !== "claimed") {
+      throw new PtfError(
+        PtfErrorCode.TASK_IMMUTABLE,
+        `La tâche ${taskId} ne peut pas être soumise (statut : ${task.status})`
+      );
     }
 
     const submittedAt = new Date();
@@ -336,7 +371,7 @@ export class TaskService implements ITaskService {
     await this.prisma.submission.create({
       data: {
         taskId,
-        devAddress: devAddress.toLowerCase(),
+        devAddress: task.devAddress.toLowerCase(),
         commitHash,
         branchRef,
         status: "pending",
@@ -362,29 +397,54 @@ export class TaskService implements ITaskService {
     };
   }
 
-  async cancel(taskId: string, devAddress: string): Promise<void> {
+  async cancel(taskId: string, callerAddress: string): Promise<void> {
     const task = await this.findById(taskId);
     if (!task) {
       throw new PtfError(PtfErrorCode.TASK_NOT_FOUND, `Tâche introuvable : ${taskId}`);
+    }
+
+    if (!task.devAddress || task.devAddress.toLowerCase() !== callerAddress.toLowerCase()) {
+      throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Vous ne pouvez annuler que vos propres tâches");
+    }
+
+    if (task.status === "submitted" || task.status === "validated") {
+      throw new PtfError(
+        PtfErrorCode.TASK_IMMUTABLE,
+        `La tâche ${taskId} ne peut pas être annulée (statut : ${task.status})`
+      );
     }
 
     const project = await this.prisma.project.findUniqueOrThrow({
       where: { id: task.projectId },
     });
 
-    // Libération du soft-lock (toujours, quelle que soit la durée écoulée)
     if (project.rewardMode === "paid" && task.devAddress) {
-      await this.walletService.softUnlock(task.devAddress, project.chain, 10);
-      await this.utxoService.unlock(task.devAddress, 10);
-      await this.creditLedger.record({
-        devAddress: task.devAddress,
-        type: "soft_unlocked",
-        amount: 10,
-        taskId,
-        projectId: task.projectId,
-        chain: project.chain,
-        note: "10 PTF guarantee released on task cancel",
-      });
+      const forfeit = shouldForfeitGuarantee(task.claimedAt, task.deadline);
+      if (forfeit) {
+        await this.utxoService.confiscate(task.devAddress, 10, taskId);
+        await this.walletService.softUnlock(task.devAddress, project.chain, 10);
+        await this.creditLedger.record({
+          devAddress: task.devAddress,
+          type: "punishment_deducted",
+          amount: 10,
+          taskId,
+          projectId: task.projectId,
+          chain: project.chain,
+          note: "10 PTF guarantee confiscated — cancel after 15% of deadline elapsed",
+        });
+      } else {
+        await this.walletService.softUnlock(task.devAddress, project.chain, 10);
+        await this.utxoService.unlock(task.devAddress, 10);
+        await this.creditLedger.record({
+          devAddress: task.devAddress,
+          type: "soft_unlocked",
+          amount: 10,
+          taskId,
+          projectId: task.projectId,
+          chain: project.chain,
+          note: "10 PTF guarantee released on task cancel (within grace period)",
+        });
+      }
     }
 
     await this.prisma.task.update({
@@ -408,17 +468,17 @@ export class TaskService implements ITaskService {
         where: { id: task.projectId },
       });
       if (project?.rewardMode === "paid") {
-        // Release the 10 PTF soft-lock so the dev's credits are not frozen forever
+        // Expiry always happens after deadline, so the 15% threshold is always exceeded.
+        await this.utxoService.confiscate(task.devAddress, 10, taskId).catch(() => {});
         await this.walletService.softUnlock(task.devAddress, project.chain, 10).catch(() => {});
-        await this.utxoService.unlock(task.devAddress, 10).catch(() => {});
         await this.creditLedger.record({
           devAddress: task.devAddress,
-          type: "soft_unlocked",
+          type: "punishment_deducted",
           amount: 10,
           taskId,
           projectId: task.projectId,
           chain: project.chain,
-          note: "10 PTF guarantee released on task expiry",
+          note: "10 PTF guarantee confiscated — task expired without submission",
         });
       }
     }

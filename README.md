@@ -19,9 +19,21 @@
 # 1. Installer la CLI PTF (~30s)
 npm install -g @ptf/cli
 
-# 2. S'authentifier (~1 min)
-ptf auth login           # GitHub OAuth
-ptf wallet connect       # connecter son wallet crypto
+# 2. Créer son compte PTF (~2 min)
+ptf auth register --email you@example.com  # mot de passe + clé secp256k1 générée
+#   → votre clé PTF est chiffrée (AES-256-GCM) et stockée localement
+#   → aucune clé privée n'est transmise ni stockée sur nos serveurs
+
+# Connexion depuis un nouvel appareil :
+ptf auth login --email you@example.com
+#   → code OTP envoyé par email (expire en 10 min)
+#   → l'appareil est mémorisé après vérification (plus de code la prochaine fois)
+
+# 3. Lier son compte GitHub (requis pour créer/réclamer des tâches)
+ptf auth link-github     # redirect OAuth GitHub
+
+# 4. Lier son wallet crypto (requis pour créer/réclamer des tâches)
+ptf wallet connect       # signature EIP-712 challenge-response
 
 # 3. Charger son compte (~2 min)
 # Minimum 10 PTF requis pour les tâches rémunérées
@@ -97,24 +109,47 @@ chmod +x /usr/local/bin/ptf
 winget install ptf
 ```
 
-### Connecter son compte
+### Créer son compte et se connecter
+
+PTF utilise un système d'authentification à 3 étapes pour sécuriser chaque compte. Ces étapes ne sont requises qu'une seule fois (à l'inscription).
 
 ```bash
-# Lier GitHub OAuth + wallet crypto (chaîne par défaut configurée dans PTF)
-ptf auth --github --wallet 0xYourWalletAddress
+# ── Étape 1 : Créer son compte PTF (email + mot de passe) ──────────────
+ptf auth register --email you@example.com
+# → Mot de passe saisi localement (min 12 caractères)
+# → PTF génère une paire de clés secp256k1
+# → La clé privée est chiffrée avec votre mot de passe (AES-256-GCM + PBKDF2)
+# → La clé chiffrée est stockée localement sur votre appareil
+# → PTF ne stocke JAMAIS votre clé privée en clair
 
-# Verifier votre profil
+# Connexion ultérieure :
+ptf auth login --email you@example.com
+# → Appareil déjà connu → JWT immédiat
+# → Nouvel appareil → code OTP envoyé par email (10 min), appareil mémorisé ensuite
+
+# Gérer ses appareils connectés :
+ptf auth devices list               # voir tous les appareils actifs
+ptf auth devices revoke <deviceId>  # déconnecter un appareil
+ptf auth devices revoke-all         # garder uniquement l'appareil courant
+
+# ── Étape 2 : Lier son compte GitHub ────────────────────────────────────
+ptf auth link-github  # requis pour créer ou réclamer des tâches
+
+# ── Étape 3 : Lier son wallet crypto ────────────────────────────────────
+ptf wallet connect    # signature EIP-712 challenge-response (ownership prouvé)
+
+# Vérifier votre profil complet
 ptf profile
-# → GitHub : @votre-pseudo
-# → Wallet : 0xYour...
+# → PTF address : 0xYour...  (clé publique PTF)
+# → GitHub : @votre-pseudo   (lié)
+# → Wallet : 0xWallet...     (lié, Polygon)
 # → Credits PTF : 0
 # → Reputation : 0 pts (unranked)
-
-# Verifier la signature cryptographique de vos credits (EIP-712)
-ptf wallet verify 0xYourWalletAddress
-# → Signature EIP-712 valide
-# → Credits PTF : 0 (signes, verifiables on-chain)
 ```
+
+> **Sécurité :** votre clé privée PTF ne quitte jamais votre appareil. Elle est stockée chiffrée avec votre mot de passe (AES-256-GCM). Le serveur ne peut pas la lire ni la récupérer. Si vous perdez votre mot de passe, la clé est irrécupérable.
+
+> **Nouvel appareil :** à chaque connexion depuis un appareil non reconnu, un code à 6 chiffres est envoyé à votre adresse email. Après vérification, l'appareil est mémorisé — aucun code ne sera redemandé pour les connexions suivantes.
 
 > **Garantie minimum :** pour les **tâches rémunérées** (projets public paid ou private), un développeur doit disposer d'**au moins 10 crédits PTF**. Ces crédits sont *soft-locked* (réservés, non dépensables) pendant toute la durée des tâches actives. Les projets **public free** n'exigent aucune garantie de solde.
 
@@ -578,14 +613,17 @@ Le créateur de tâche définit les pénalités applicables. Elles sont **exécu
 
 > **Bannissement — droit exclusif de la plateforme PTF :** le créateur d'un projet **ne peut pas bannir un développeur**. Il peut uniquement le **signaler** via `ptf report`. La décision de bannissement est prise exclusivement par PTF après analyse. Le champ `ban` n'est pas configurable dans les `punishments`.
 
-### Réputation (indépendante, on-chain, calculée par PTF)
+### Réputation (indépendante, on-chain, open-source uniquement)
 
 La réputation est un score **non transférable** enregistré on-chain et agrégé cross-chaîne par le `ReputationAggregator`. Elle monte à chaque tâche validée et descend en cas de rejet ou de litige perdu. Elle influence la priorité d'accès aux tâches à fort enjeu et le poids de vote lors des arbitrages DAO.
+
+> **Règle fondamentale :** les points de réputation ne sont accordés que sur des tâches appartenant à un **projet public GitHub avec une licence open-source ou libre reconnue** (OSI-approuvée ou FSF-approuvée). Les projets privés, propriétaires, ou sans licence ne génèrent aucun point. Les **punitions de réputation** (malicious_code, lateDelivery…) s'appliquent à **tous les projets** sans exception.
 
 **Important :** les `reputationPoints` sont **calculés automatiquement par PTF** — ils ne sont pas configurables par le créateur. Le créateur définit `complexity`, `effort` et `impact` (chacun entre 1 et 5). PTF calcule les points selon la formule :
 
 ```
 reputationPoints = (complexity + effort + impact) x 10 + bonus_duree
+                   → 0 si le projet n'est pas open-source vérifié
 ```
 
 | Niveau | Score | Avantages |
@@ -784,7 +822,8 @@ Cette vérification protège contre toute tentative d'usurpation d'adresse. Aucu
 | **Stockage décentralisé** | Arweave (permanent) + IPFS |
 | **Frontend** | Next.js 14 + TailwindCSS |
 | **Sandbox** | Docker + gVisor (projets prives) |
-| **Auth** | GitHub OAuth + Wallet (toute chaîne supportée) |
+| **Auth** | Email + mot de passe + clé secp256k1 générée côté serveur + OTP email nouvel appareil + OAuth GitHub CSRF-safe (state nonce) |
+| **Sécurité API** | Rate limiting `express-rate-limit` (300 req/15min global, 20 req/15min auth) + depth limit GraphQL (max 6) |
 | **CLI** | Node.js + TypeScript (binaires statiques) |
 | **IA / LLM** | Compatible tous fournisseurs (OpenAI, Anthropic, Ollama...) — clé API configurée par l'utilisateur via `ptf config set-llm` — 0 coût LLM pour PTF |
 

@@ -1,7 +1,7 @@
 # PTF Project — Summary
 
-**Mis a jour :** 2026-07-28
-**Statut :** En cours de developpement — phase architecture
+**Mis a jour :** 2026-07-31
+**Statut :** En cours de developpement — backend core + auth + licences + worker on-chain + audit 11 rounds (78/80 findings corrigés)
 
 ---
 
@@ -149,8 +149,12 @@ PTF_project/
 
 | Service | Responsabilite |
 |---------|----------------|
-| `project.service` | Creation projets, calcul ID crypto, gestion arbre Merkle, stockage ref depot (URL GitHub / serveur / repo temp) + chaîne du projet |
-| `task.service` | CRUD metadonnees taches (hash, contraintes, statuts) — pas le code ; calcul hash chainages, push reseau PTF |
+| `auth.service` | Email + password (scrypt) + clé secp256k1 générée serveur, OTP email nouvel appareil, TrustedDevice, DeviceSession, GitHub OAuth, wallet EIP-712 challenge-response |
+| `email.service` | SMTP Nodemailer — envoi OTP email lors d'une connexion depuis un nouvel appareil |
+| `github.service` | Vérification licence OSS (public + OSI/FSF) via GitHub API, création automatique LICENSE.md |
+| `licenses.ts` | Catalogue 50+ licences (OSI, FSF-libre, source-available, propriétaire) avec SPDX IDs |
+| `project.service` | Création projets (non-bloquant sur licence), vérification OSS, `createProjectLicense()`, ancrage Merkle |
+| `task.service` | CRUD metadonnees taches — `reputationPoints=0` si projet non open-source vérifié |
 | `escrow.service` | Interface avec EscrowVault via ChainAdapter — verification paiements, triggers |
 | `validation.service` | Orchestration tests auto + coordination 3 peer reviewers ; recoit uniquement les resultats (pass/fail), pas le code |
 | `reputation.service` | Calcul delta reputation, ecriture on-chain via ChainAdapter |
@@ -714,7 +718,34 @@ npm init && npm install typescript apollo-server prisma ethers @solana/web3.js r
 ## Variables d'environnement (structure multi-chaîne)
 
 ```env
-# Chaîne par défaut PTF
+# ── Auth ────────────────────────────────────────────────────────────
+JWT_SECRET=<random-string-32chars-min>      # obligatoire — throw au démarrage si absent
+SIGNER_PRIVATE_KEY=0x<hex64>               # obligatoire en prod — clé de signature on-chain
+
+# ── Opérateur PTF (change UTXOs + worker) ───────────────────────────
+PTF_OPERATOR_PRIVATE_KEY=0x<hex64>         # obligatoire en prod — signe les change UTXOs (S9)
+PTF_OPERATOR_ADDRESS=0x<address>           # adresse publique de l'opérateur (pour logs)
+
+# ── Worker on-chain (dépôts N1) ─────────────────────────────────────
+RPC_WS_URL=wss://polygon-mainnet.infura.io/ws/v3/<key>  # WebSocket RPC — active le DepositWorker
+ESCROW_VAULT_ADDRESS=0x<address>           # adresse du contrat EscrowVault déployé
+
+# ── Email (OTP nouvel appareil) ──────────────────────────────────────
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=noreply@ptf.dev
+SMTP_PASS=<secret>
+SMTP_FROM=PTF <noreply@ptf.dev>
+
+# ── GitHub (vérification licences) ───────────────────────────────────
+GITHUB_TOKEN=<pat>          # optionnel — augmente de 60 à 5000 req/h
+GITHUB_CLIENT_ID=<oauth-id>
+GITHUB_CLIENT_SECRET=<oauth-secret>
+
+# ── CORS ─────────────────────────────────────────────────────────────
+CORS_ORIGIN=https://app.ptf.dev  # obligatoire en production
+
+# ── Chaîne par défaut PTF ────────────────────────────────────────────
 PTF_DEFAULT_CHAIN=polygon
 
 # RPC par chaîne EVM

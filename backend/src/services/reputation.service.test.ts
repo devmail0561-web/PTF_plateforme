@@ -84,21 +84,21 @@ describe("ReputationService — logique pure", () => {
 describe("ProjectService — calcul commission", () => {
   it("< 5000 USDC → 12%", async () => {
     const { ProjectService } = await import("./project.service.js");
-    const svc = new ProjectService(null as never, null as never);
+    const svc = new ProjectService(null as never, null as never, null as never);
     expect(svc.calculateCommission(1000)).toBeCloseTo(120);
     expect(svc.calculateCommission(4999)).toBeCloseTo(599.88);
   });
 
   it("5000–50000 USDC → 10%", async () => {
     const { ProjectService } = await import("./project.service.js");
-    const svc = new ProjectService(null as never, null as never);
+    const svc = new ProjectService(null as never, null as never, null as never);
     expect(svc.calculateCommission(5000)).toBeCloseTo(500);
     expect(svc.calculateCommission(10000)).toBeCloseTo(1000);
   });
 
   it("> 50000 USDC → 8%", async () => {
     const { ProjectService } = await import("./project.service.js");
-    const svc = new ProjectService(null as never, null as never);
+    const svc = new ProjectService(null as never, null as never, null as never);
     expect(svc.calculateCommission(100000)).toBeCloseTo(8000);
   });
 });

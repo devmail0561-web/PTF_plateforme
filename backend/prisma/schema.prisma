@@ -9,6 +9,15 @@ datasource db {
 
 model User {
   id           String   @id @default(cuid())
+  // Login credentials
+  email        String?  @unique
+  passwordHash String?  // scrypt(password, salt) — never the plaintext password
+  // PTF identity — secp256k1 keypair generated at registration.
+  // The private key is encrypted with the user's password and sent to the client once.
+  // encryptedKey format: "v1:<keySalt_b64>:<iv_b64>:<ciphertext_b64>:<authTag_b64>"
+  ptfPublicKey String?  @unique
+  ptfAddress   String?  @unique
+  encryptedKey String?  // AES-256-GCM(privKey, PBKDF2(password)) — server never stores plaintext privKey
   githubId     String?  @unique
   githubHandle String?
   isBanned     Boolean  @default(false)
@@ -16,13 +25,94 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  wallets      WalletLink[]
-  projects     Project[]
-  submissions  Submission[]
-  reputation   Reputation?
-  reports      Report[]     @relation("ReportedUser")
-  reportsFiled Report[]     @relation("ReporterUser")
-  sessions     Session[]
+  wallets        WalletLink[]
+  projects       Project[]
+  submissions    Submission[]
+  reputation     Reputation?
+  reports        Report[]          @relation("ReportedUser")
+  reportsFiled   Report[]          @relation("ReporterUser")
+  deviceSessions DeviceSession[]
+  trustedDevices TrustedDevice[]
+  authChallenges AuthChallenge[]
+}
+
+// One session per device. Each login from a new device creates a DeviceSession.
+// Users can list and revoke their devices from the account settings.
+model DeviceSession {
+  id         String   @id @default(cuid())
+  userId     String
+  token      String   @unique   // JWT — used as the bearer token
+  deviceName String?            // human-readable label, e.g. "Chrome on Ubuntu", "PTF CLI"
+  userAgent  String?
+  lastSeenAt DateTime @default(now()) @updatedAt
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+}
+
+// A device that has been verified via OTP email and is trusted for future logins.
+// The client stores deviceToken persistently (localStorage / keychain).
+// On login, passing this token skips OTP and creates a new DeviceSession immediately.
+model TrustedDevice {
+  id          String   @id @default(cuid())
+  userId      String
+  deviceToken String   @unique  // random 32-byte hex, stored by client
+  deviceName  String?
+  userAgent   String?
+  trustedAt   DateTime @default(now())
+  expiresAt   DateTime           // 1 year — renewed on each login from this device
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// A login attempt from an unrecognised device. Holds the hashed OTP until verified.
+model PendingDeviceSession {
+  id         String   @id @default(cuid())
+  userId     String
+  deviceName String?
+  userAgent  String?
+  otpHash    String   // scrypt(otp, salt) — plaintext OTP is never stored
+  expiresAt  DateTime // 10 minutes
+  used       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+}
+
+// One-time nonce for PTF keypair authentication (challenge-response).
+model AuthChallenge {
+  id        String   @id @default(cuid())
+  userId    String?  // null before the account is identified (register flow)
+  nonce     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([nonce])
+  @@index([userId])
+}
+
+// Pending nonce for wallet-link challenge-response (fixes CIA-I4).
+model WalletLinkChallenge {
+  id        String   @id @default(cuid())
+  userId    String
+  chain     String
+  address   String
+  nonce     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([nonce])
+  @@index([userId])
 }
 
 model WalletLink {
@@ -58,8 +148,12 @@ model Project {
   language     String?
   stack        String[]
   description  String?
-  ownerAddress String
-  ownerId      String?
+  ownerAddress       String
+  ownerId            String?
+  // Open-source verification — populated at create() and re-checked at activate().
+  isOpenSource       Boolean  @default(false) // true only after GitHub API confirms public + OSI license
+  license            String?                  // SPDX identifier, e.g. "MIT", "GPL-3.0"
+  licenseVerifiedAt  DateTime?               // last time the GitHub check passed
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -211,17 +305,6 @@ model Report {
   @@index([status])
 }
 
-model Session {
-  id        String   @id @default(cuid())
-  userId    String
-  token     String   @unique
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([token])
-}
 
 // UTXO model — each PTF credit is a discrete, cryptographically-signed spendable unit.
 // Inspired by Bitcoin UTXO: spending 200 PTF = selecting unspent outputs that sum to >=200,

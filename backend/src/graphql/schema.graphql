@@ -25,22 +25,50 @@ type Query {
   creditBalance(address: String!): CreditLedgerBalance!
 
   # UTXO provenance
-  utxos(address: String!, status: String, chain: String): [CreditUTXO!]!
+  utxos(address: String!, status: String, chain: String, limit: Int, offset: Int): [CreditUTXO!]!
   utxoBalance(address: String!): UTXOBalance!
-  utxoProvenance(address: String!): [CreditUTXO!]!
+  utxoProvenance(address: String!, limit: Int, offset: Int): [CreditUTXO!]!
+
+  # Device management (requires JWT)
+  myDevices: [DeviceSession!]!
+
+  # License helpers (public — no auth required)
+  verifyRepoLicense(repoUrl: String!): RepoLicenseInfo!
+  getLicenses(category: String): [LicenseCatalogEntry!]!
 
   # Health
   health: String!
 }
 
 type Mutation {
-  # Auth
-  loginWithGithub(code: String!): AuthResult!
-  linkWallet(chain: String!, address: String!, signature: String!): WalletLink!
+  # Auth — Registration (first time only)
+  register(input: RegisterInput!): AuthResult!
+
+  # Auth — Login (email + password)
+  # Known device (deviceToken provided): returns AuthResult immediately.
+  # New device: sends OTP to email, returns LoginResult { pendingSessionId }.
+  login(input: LoginInput!): LoginResult!
+  verifyNewDevice(pendingSessionId: ID!, otp: String!): AuthResult!
+
+  # Auth — GitHub linking (2-step CSRF-safe, requires JWT)
+  # Step 1: obtain a server-generated state nonce to include in the OAuth redirect URL.
+  # Step 2: exchange the code + state returned by GitHub.
+  requestGithubOAuthState: GithubOAuthState!
+  linkGithub(code: String!, state: String!): AuthResult!
+
+  # Auth — Wallet linking (2-step: request nonce → EIP-712 sign)
+  requestWalletChallenge(chain: String!, address: String!): WalletChallenge!
+  confirmLinkWallet(challengeId: ID!, signature: String!): WalletLinkResult!
+
+  # Device management
+  revokeDevice(deviceId: ID!): Boolean!
+  revokeAllOtherDevices: Boolean!
 
   # Projects
-  createProject(input: CreateProjectInput!): Project!
+  createProject(input: CreateProjectInput!): CreateProjectResult!
   publishProject(projectId: ID!): Project!
+  # Auto-create or update LICENSE.md in the GitHub repo (requires GitHub token with write access)
+  createProjectLicense(projectId: ID!, spdxId: String!, authorName: String!, userToken: String!): ProjectLicenseResult!
 
   # Tasks
   generateTasks(
@@ -145,6 +173,8 @@ input TaskFilterInput {
   skills: [String!]
   priority: String
   devAddress: String
+  limit: Int
+  offset: Int
 }
 
 # ─── Project ────────────────────────────────────────────────────────────────
@@ -163,7 +193,68 @@ type Project {
   openTaskCount: Int!
   totalRewardPool: String!
   escrowBalance: Float!
+  # Open-source verification
+  isOpenSource: Boolean!
+  license: String           # SPDX identifier, e.g. "MIT", "GPL-3.0"
   createdAt: String!
+}
+
+# Result of createProject — always created, with license status embedded.
+type CreateProjectResult {
+  # All Project fields
+  projectId:    ID!
+  name:         String!
+  type:         String!
+  rewardMode:   String!
+  chain:        String!
+  status:       String!
+  owner:        String!
+  repository:   String
+  stack:        [String!]!
+  taskCount:    Int!
+  openTaskCount: Int!
+  totalRewardPool: String!
+  escrowBalance:   Float!
+  isOpenSource: Boolean!
+  license:      String
+  createdAt:    String!
+  # License check outcome
+  licenseStatus:      String!  # "ok" | "missing" | "ineligible" | "not_github"
+  licenseInstruction: String   # instructions for the user when licenseStatus != "ok"
+}
+
+# Result of createProjectLicense — reports what was committed.
+type ProjectLicenseResult {
+  fileUrl:     String!
+  commitSha:   String!
+  isOpenSource: Boolean!
+  license:     String!
+}
+
+# Result of a GitHub open-source verification check.
+type RepoLicenseInfo {
+  isPublic:             Boolean!
+  spdxId:               String    # e.g. "MIT" — null if no license detected
+  isReputationEligible: Boolean!
+  name:                 String!
+  url:                  String
+  category:             String!   # "osi" | "free" | "source" | "proprietary"
+  passes:               Boolean!
+  reason:               String
+  instruction:          String
+}
+
+# Full license catalog entry.
+type LicenseCatalogEntry {
+  spdxId:             String!
+  name:               String!
+  category:           String!   # "osi" | "free" | "source" | "proprietary"
+  isOsi:              Boolean!
+  isFsf:              Boolean!
+  gplCompatible:      Boolean!
+  reputationEligible: Boolean!
+  description:        String!
+  url:                String!
 }
 
 input CreateProjectInput {
@@ -183,6 +274,8 @@ input ProjectFilterInput {
   type: String
   mine: Boolean
   status: String
+  limit: Int
+  offset: Int
 }
 
 # ─── Wallet ─────────────────────────────────────────────────────────────────
@@ -219,15 +312,76 @@ type WalletLink {
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
 
+input RegisterInput {
+  email:      String!
+  password:   String!
+  deviceName: String!
+}
+
+input LoginInput {
+  email:       String!
+  password:    String!
+  deviceName:  String!
+  deviceToken: String   # opaque token stored locally after first OTP verification
+}
+
+# Returned when login requires OTP (new device). pendingSessionId must be passed to verifyNewDevice.
+type LoginResult {
+  # Known device — login is complete.
+  token:        String
+  encryptedKey: String
+  user:         UserProfile
+  # New device — OTP sent to email.
+  pendingSessionId:     String
+  requiresVerification: Boolean
+}
+
+# encryptedKey lets the client decrypt the PTF private key locally.
+# Format: "v1:<keySalt_hex>:<iv_hex>:<ciphertext_hex>:<authTag_hex>"
+# deviceToken is only set by verifyNewDevice — store it persistently to skip OTP next time.
 type AuthResult {
-  token: String!
-  user: UserProfile!
+  token:        String!
+  encryptedKey: String!
+  deviceToken:  String   # only set by verifyNewDevice
+  user:         UserProfile!
+}
+
+# Step 1 of GitHub OAuth: server-issued state nonce to prevent CSRF.
+# Include state in the GitHub OAuth redirect URL; pass it back in linkGithub().
+type GithubOAuthState {
+  state: String!   # keccak256 nonce — expires in 10 minutes
+}
+
+# Step 1 of wallet-link: the client receives a nonce to sign with the wallet key.
+type WalletChallenge {
+  challengeId: ID!
+  nonce:       String!
+}
+
+# Result of confirmLinkWallet: updated JWT + the newly created WalletLink.
+type WalletLinkResult {
+  token:      String!
+  walletLink: WalletLink!
 }
 
 type UserProfile {
-  id: ID!
+  id:           ID!
+  email:        String
+  ptfAddress:   String
   githubHandle: String
-  wallets: [WalletLink!]!
+  githubLinked: Boolean!
+  walletLinked: Boolean!
+  wallets:      [WalletLink!]!
+}
+
+# One entry per connected device — visible in account settings.
+type DeviceSession {
+  id:         ID!
+  deviceName: String
+  userAgent:  String
+  lastSeenAt: String!
+  createdAt:  String!
+  isCurrent:  Boolean!
 }
 
 # ─── Reputation ──────────────────────────────────────────────────────────────
@@ -276,18 +430,20 @@ type CreditLedgerBalance {
 # ─── UTXO provenance ─────────────────────────────────────────────────────────
 
 type CreditUTXO {
-  id:              ID!
-  ownerAddress:    String!
-  amount:          Float!
-  sourceType:      String!   # task_reward | deposit | bridge_in | change
-  sourceId:        String    # taskId for rewards, deposit txHash for deposits
-  projectId:       String
-  chain:           String!
-  eip712Signature: String!   # PTF-signed proof of origin
-  txHash:          String
-  status:          String!   # unspent | spent | locked
-  spentInTxId:     String
-  createdAt:       String!
+  id:          ID!
+  ownerAddress: String!
+  amount:       Float!
+  sourceType:   String!   # task_reward | deposit | bridge_in | change
+  sourceId:     String    # taskId for rewards, deposit txHash for deposits
+  projectId:    String
+  chain:        String!
+  txHash:       String
+  status:       String!   # unspent | spent | locked
+  spentInTxId:  String
+  createdAt:    String!
+  # eip712Signature is intentionally omitted from the public schema (CIA-C4).
+  # Exposing raw EIP-712 signatures lets any client forge withdrawal proofs off-chain.
+  # Retrieve signatures via the authenticated /api/utxo/:id/proof endpoint instead.
 }
 
 type UTXOBalance {

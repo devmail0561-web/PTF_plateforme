@@ -82,6 +82,9 @@ export interface IUTXOService {
   /** Release soft-lock on task cancel or completion. */
   unlock(ownerAddress: string, amount: number): Promise<void>;
 
+  /** Confiscate locked UTXOs as a punishment (guarantee forfeiture). */
+  confiscate(ownerAddress: string, amount: number, taskId: string): Promise<void>;
+
   /** Verify the EIP-712 signature of a UTXO against PTF's public key. */
   verifyProof(utxoId: string, ptfPublicKey: string): Promise<boolean>;
 
@@ -165,6 +168,59 @@ function computeProofHash(utxos: CreditUTXO[]): string {
   );
 }
 
+// ── Operator signing (S9) ────────────────────────────────────────────────────
+// The PTF operator private key signs change UTXOs so they carry a real EIP-712 ECDSA
+// signature (65 bytes) that EscrowVault.withdrawWithProof() can recover on-chain.
+// PTF_OPERATOR_PRIVATE_KEY must be set in production — the signing wallet is the same
+// address registered as the "operator" in EscrowVault.
+//
+// In development/test the key may be absent — a deterministic keccak fallback is used
+// so unit tests don't require a live key. The fallback is NOT usable on-chain.
+
+const CHAIN_IDS_FOR_SIGN: Record<string, number> = {
+  polygon: 137, ethereum: 1, bsc: 56, avalanche: 43114, arbitrum: 42161, base: 8453,
+};
+
+async function signChangeUTXO(
+  changeId: string,
+  ownerAddress: string,
+  changeAmt: number,
+  txId: string,
+  chain: string,
+  createdAt: number
+): Promise<string> {
+  const privKey = process.env["PTF_OPERATOR_PRIVATE_KEY"];
+  if (!privKey) {
+    if (process.env["NODE_ENV"] === "production") {
+      throw new Error(
+        "[UTXOService] PTF_OPERATOR_PRIVATE_KEY is required in production to sign change UTXOs. " +
+        "Without it, change UTXOs cannot be redeemed on-chain."
+      );
+    }
+    // Dev/test fallback — not valid on-chain, but allows tests to run without a live key.
+    return ethers.keccak256(
+      ethers.solidityPacked(["bytes32", "bytes32"], [txId, changeId])
+    );
+  }
+
+  const wallet = new ethers.Wallet(privKey);
+  const structHash = buildUTXOStructHash(changeId, ownerAddress, changeAmt, txId, chain, createdAt);
+  const chainId = CHAIN_IDS_FOR_SIGN[chain.toLowerCase()] ?? 137;
+  const domainSeparator = ethers.TypedDataEncoder.hashDomain({
+    name: "PTFEscrowVault",
+    version: "1",
+    chainId,
+  });
+  const digest = ethers.keccak256(
+    ethers.concat([
+      ethers.toUtf8Bytes("\x19\x01"),
+      ethers.getBytes(domainSeparator),
+      ethers.getBytes(structHash),
+    ])
+  );
+  return wallet.signMessage(ethers.getBytes(digest));
+}
+
 // ── Service ───────────────────────────────────────────────────────────────────
 
 export class UTXOService implements IUTXOService {
@@ -184,6 +240,9 @@ export class UTXOService implements IUTXOService {
     ptfSignature:    string;
     txHash?:         string;
   }): Promise<CreditUTXO> {
+    if (params.amount <= 0) {
+      throw new Error(`mint: amount must be > 0, got ${params.amount}`);
+    }
     const now = Date.now();
     const id  = computeUTXOId(
       params.ownerAddress,
@@ -255,6 +314,9 @@ export class UTXOService implements IUTXOService {
     destination?: string;
     txHash?:      string;
   }): Promise<SpendResult> {
+    if (params.amount <= 0) {
+      throw new Error(`spend: amount must be > 0, got ${params.amount}`);
+    }
     const { ownerAddress, amount, type, chain, destination, txHash } = params;
 
     let changeUTXO: CreditUTXO | null = null;
@@ -321,13 +383,10 @@ export class UTXOService implements IUTXOService {
       // ── 5. Create change UTXO if there's leftover ────────────────────────────
       if (changeAmt > 0) {
         const changeId = computeUTXOId(ownerAddress, txId, changeAmt, spendNow);
-        // TODO: change UTXOs must carry a real PTF EIP-712 ECDSA signature (65 bytes)
-        // so they can be submitted to EscrowVault.withdrawWithProof(). This 32-byte
-        // keccak hash will cause ECDSA.recover to fail on-chain, permanently locking
-        // the change amount. Fix: sign the change UTXO struct with the operator private key.
-        const changeSig = ethers.keccak256(
-          ethers.solidityPacked(["bytes32", "bytes32"], [proofHash, changeId])
-        );
+        // Sign the change UTXO struct with the PTF operator private key (S9).
+        // PTF_OPERATOR_PRIVATE_KEY must be set in production — the signed EIP-712 digest
+        // is the only signature accepted by EscrowVault.withdrawWithProof().
+        const changeSig = await signChangeUTXO(changeId, ownerAddress, changeAmt, txId, chain, spendNow);
         changeUTXO = await tx.creditUTXO.create({
           data: {
             id:              changeId,
@@ -372,6 +431,9 @@ export class UTXOService implements IUTXOService {
   }
 
   async lock(ownerAddress: string, amount: number): Promise<void> {
+    if (amount <= 0) {
+      throw new Error(`lock: amount must be > 0, got ${amount}`);
+    }
     // Run inside a transaction so concurrent spend() cannot consume the same UTXOs
     await this.db.$transaction(async (tx: AnyPrisma) => {
       const unspent: CreditUTXO[] = await tx.creditUTXO.findMany({
@@ -400,32 +462,39 @@ export class UTXOService implements IUTXOService {
   }
 
   async unlock(ownerAddress: string, amount: number): Promise<void> {
-    const locked = await this.db.creditUTXO.findMany({
-      where:   { ownerAddress: ownerAddress.toLowerCase(), status: "locked" },
-      orderBy: { createdAt: "asc" },
-    }) as CreditUTXO[];
-
-    let remaining = amount;
-    const toUnlock: string[] = [];
-
-    for (const utxo of locked) {
-      if (remaining <= 0) break;
-      toUnlock.push(utxo.id);
-      remaining -= utxo.amount;
+    if (amount <= 0) {
+      throw new Error(`unlock: amount must be > 0, got ${amount}`);
     }
+    // Run inside a transaction so a concurrent spend() cannot consume UTXOs
+    // between the findMany and the updateMany (TOCTOU).
+    await this.db.$transaction(async (tx: AnyPrisma) => {
+      const locked = await tx.creditUTXO.findMany({
+        where:   { ownerAddress: ownerAddress.toLowerCase(), status: "locked" },
+        orderBy: { createdAt: "asc" },
+      }) as CreditUTXO[];
 
-    if (remaining > 0) {
-      throw new Error(
-        `Cannot unlock ${amount} PTF — only ${(amount - remaining).toFixed(6)} PTF currently locked`
-      );
-    }
+      let remaining = amount;
+      const toUnlock: string[] = [];
 
-    if (toUnlock.length > 0) {
-      await this.db.creditUTXO.updateMany({
-        where: { id: { in: toUnlock } },
-        data:  { status: "unspent" },
-      });
-    }
+      for (const utxo of locked) {
+        if (remaining <= 0) break;
+        toUnlock.push(utxo.id);
+        remaining -= utxo.amount;
+      }
+
+      if (remaining > 0) {
+        throw new Error(
+          `Cannot unlock ${amount} PTF — only ${(amount - remaining).toFixed(6)} PTF currently locked`
+        );
+      }
+
+      if (toUnlock.length > 0) {
+        await tx.creditUTXO.updateMany({
+          where: { id: { in: toUnlock } },
+          data:  { status: "unspent" },
+        });
+      }
+    });
   }
 
   async verifyProof(utxoId: string, ptfPublicKey: string): Promise<boolean> {
@@ -459,10 +528,20 @@ export class UTXOService implements IUTXOService {
     );
 
     // Domain must match EscrowVault constructor: EIP712("PTFEscrowVault", "1")
+    // chainId is derived from the UTXO's chain field so multi-chain UTXOs verify correctly.
+    const CHAIN_IDS: Record<string, number> = {
+      polygon: 137,
+      ethereum: 1,
+      bsc: 56,
+      avalanche: 43114,
+      arbitrum: 42161,
+      base: 8453,
+    };
+    const chainId = CHAIN_IDS[utxo.chain.toLowerCase()] ?? 137;
     const domain = {
       name: "PTFEscrowVault",
       version: "1",
-      chainId: 137, // Polygon mainnet; should match the chain the UTXO was issued on
+      chainId,
     };
     const digest = ethers.TypedDataEncoder.hashDomain(domain);
     const fullDigest = ethers.keccak256(
@@ -475,6 +554,41 @@ export class UTXOService implements IUTXOService {
     } catch {
       return false;
     }
+  }
+
+  async confiscate(ownerAddress: string, amount: number, taskId: string): Promise<void> {
+    if (amount <= 0) {
+      throw new Error(`confiscate: amount must be > 0, got ${amount}`);
+    }
+    await this.db.$transaction(async (tx: AnyPrisma) => {
+      const locked = await tx.creditUTXO.findMany({
+        where:   { ownerAddress: ownerAddress.toLowerCase(), status: "locked" },
+        orderBy: { createdAt: "asc" },
+      }) as CreditUTXO[];
+
+      let remaining = amount;
+      const toSeize: string[] = [];
+      for (const utxo of locked) {
+        if (remaining <= 0) break;
+        toSeize.push(utxo.id);
+        remaining -= utxo.amount;
+      }
+
+      if (remaining > 0) {
+        throw new Error(
+          `Cannot confiscate ${amount} PTF — only ${(amount - remaining).toFixed(6)} PTF currently locked for ${ownerAddress}`
+        );
+      }
+
+      // Mark the seized UTXOs as spent (destroyed — no change UTXO returned)
+      const confiscationTxId = ethers.keccak256(
+        ethers.solidityPacked(["address", "string", "uint256"], [ownerAddress.toLowerCase(), taskId, BigInt(Date.now())])
+      );
+      await tx.creditUTXO.updateMany({
+        where: { id: { in: toSeize } },
+        data:  { status: "spent", spentInTxId: confiscationTxId },
+      });
+    });
   }
 
   async getProvenance(ownerAddress: string): Promise<CreditUTXO[]> {

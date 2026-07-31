@@ -4,9 +4,16 @@ export class EthereumAdapter extends EvmAdapterBase {
   readonly chainId = "ethereum";
 
   constructor() {
+    const signerKey = process.env["SIGNER_PRIVATE_KEY"];
+    if (!signerKey) {
+      throw new Error(
+        "[PTF] SIGNER_PRIVATE_KEY env var is required for EthereumAdapter. " +
+        "The fallback zero-key is a known compromised address."
+      );
+    }
     super(
       process.env["RPC_ETHEREUM"] ?? "https://ethereum-rpc.publicnode.com",
-      process.env["SIGNER_PRIVATE_KEY"] ?? "0x" + "0".repeat(64),
+      signerKey,
       {
         projectRegistry: process.env["CONTRACT_PROJECT_REGISTRY_ETHEREUM"] ?? "",
         escrowVault: process.env["CONTRACT_ESCROW_VAULT_ETHEREUM"] ?? "",

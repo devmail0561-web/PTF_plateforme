@@ -67,6 +67,7 @@ export class TimerService implements ITimerService {
           },
         },
         select: { id: true, devAddress: true, deadline: true, title: true },
+        take: 500,
       });
 
       for (const task of tasks) {

@@ -1430,12 +1430,51 @@ const container = {
 
 ### Auth Service
 
-Gère l'identité des utilisateurs sur la plateforme.
+Gère l'identité des utilisateurs sur la plateforme. Le système d'authentification repose sur **trois couches indépendantes** — toutes les trois sont requises pour créer ou réclamer des tâches.
 
-- **GitHub OAuth** — connexion pour les développeurs sur projets publics ; lie le compte GitHub à l'adresse wallet
-- **Wallet Auth** — signature cryptographique via MetaMask ou WalletConnect pour les interactions blockchain
-- **JWT** — sessions courtes avec refresh tokens stockés dans Redis
-- **Permissions** — roles distincts : `developer`, `client`, `reviewer`, `arbitrator`
+#### Couche 1 — Compte PTF (email + mot de passe + clé secp256k1)
+
+- À l'inscription : le serveur génère une paire de clés secp256k1 et dérive `ptfAddress = keccak256(pubKey[1:])[12:]`
+- La clé privée est **chiffrée avec le mot de passe de l'utilisateur** (AES-256-GCM + PBKDF2 100 000 itérations) et renvoyée **une seule fois** au client
+- Le client stocke la clé chiffrée localement (localStorage / keychain) — le serveur ne la stocke jamais en clair
+- Mot de passe haché avec `scrypt` (N=32768) + `timingSafeEqual` pour la vérification
+
+#### Couche 2 — Vérification des nouveaux appareils (OTP email)
+
+- Chaque connexion depuis un **appareil non reconnu** envoie un OTP à 6 chiffres à l'adresse email (expire en 10 min)
+- L'OTP est haché scrypt en base, jamais stocké en clair
+- Après vérification, l'appareil est enregistré comme `TrustedDevice` (valable 1 an) avec un `deviceToken` persistant côté client
+- Les connexions suivantes depuis cet appareil (avec `deviceToken`) passent directement sans OTP
+
+#### Couche 3 — Liaison GitHub + Wallet (requises pour les actions)
+
+- **GitHub OAuth** — échange de code OAuth avec timeout 10s, vérification d'unicité du compte GitHub
+- **Wallet** — challenge-response EIP-712 en deux temps : `requestWalletChallenge()` émet un nonce stocké en base, `confirmLinkWallet()` vérifie la signature
+- Le JWT embarque `{ userId, ptfAddress, githubLinked, walletLinked, deviceId }` — le client sait immédiatement quelle étape est manquante
+
+#### Sessions et appareils
+
+- Chaque `DeviceSession` est identifiée par `deviceId` (embarqué dans le JWT) et révocable individuellement
+- `myDevices` liste tous les appareils actifs avec `lastSeenAt` et `isCurrent`
+- `revokeDevice(id)` / `revokeAllOtherDevices` disponibles via GraphQL
+- Un bannissement révoque **toutes** les sessions immédiatement
+
+#### Flux d'onboarding (nouvelles inscriptions uniquement)
+
+```
+register(email, password, deviceName)
+  → JWT (githubLinked=false, walletLinked=false) + encryptedKey (stocker localement)
+    ↓
+linkGithub(code)
+  → JWT mis à jour (githubLinked=true)
+    ↓
+requestWalletChallenge(chain, address) → nonce
+wallet.signTypedData(nonce) → signature
+confirmLinkWallet(challengeId, signature)
+  → JWT mis à jour (walletLinked=true)
+    ↓
+claimTask / createProject débloqués ✓
+```
 
 ### Project Service
 
@@ -1446,11 +1485,21 @@ Responsable du cycle de vie des projets de la création à l'archivage.
 - Stockage du `repo_type` (`github`, `self-hosted`, `ptf-temp`) et de `repo_url` — références vers le dépôt de code (le code lui-même n'est jamais stocké en DB)
 - Stockage de `architecture_ref` et `plan_action_ref` — chemins/URLs vers les fichiers dans le dépôt du créateur (pas le contenu)
 - Gestion de la synchronisation (`sync_status`, `last_sync_at`, `temp_repo_url`) pour les projets `ptf-temp`
+- **Vérification open-source** : à la création et à la publication d'un projet GitHub, l'API GitHub est interrogée pour vérifier que le dépôt est public et possède une licence OSI/FSF approuvée. Le projet est **toujours créé** même en cas d'échec — la réponse indique `licenseStatus` + `licenseInstruction`. La vérification est re-faite à la publication.
+- **Création automatique de licence** : `createProjectLicense(projectId, spdxId, authorName, userToken)` crée ou met à jour `LICENSE.md` dans le dépôt GitHub via l'API Contents.
 - Appel au **moteur d'évaluation du coût** pour calculer la récompense totale (uniquement pour les projets paid)
 - Enregistrement du projet sur `ProjectRegistry` (via ChainAdapter) avec le `rewardMode`
 - Pour les projets paid : déclenchement du dépôt des fonds sur `EscrowVault`
 - Pour les projets free : aucune interaction avec `EscrowVault`
 - Gestion du statut : `draft` → `open` → `in_progress` → `completed` → `archived`
+
+**Champs licence (Prisma) :**
+
+| Champ | Type | Description |
+|-------|------|-------------|
+| `isOpenSource` | `Boolean` | `true` uniquement après vérification GitHub réussie (public + licence OSI/FSF) |
+| `license` | `String?` | Identifiant SPDX, ex. `"MIT"`, `"GPL-3.0-only"` |
+| `licenseVerifiedAt` | `DateTime?` | Horodatage de la dernière vérification réussie |
 
 **Moteur d'évaluation du coût :**
 
@@ -1969,13 +2018,29 @@ Si la peer review ou la validation client détecte un bug critique, non-critique
 
 Calcule et maintient les scores de réputation de chaque participant.
 
+> **Règle fondamentale :** les points de réputation **positifs** ne sont attribués que sur des tâches appartenant à un projet dont `isOpenSource === true` — c'est-à-dire un dépôt GitHub **public** avec une **licence OSI-approuvée ou FSF-libre** vérifiée via l'API GitHub. Les **punitions de réputation** (décrements) s'appliquent à **tous les projets** sans exception.
+
+**Licences éligibles (extrait) :**
+
+| Catégorie | Exemples |
+|-----------|---------|
+| OSI | MIT, Apache-2.0, GPL-2.0/3.0, LGPL-2.1/3.0, AGPL-3.0, MPL-2.0, BSD-2/3-Clause, ISC, EPL-2.0, EUPL-1.2, CC0-1.0, Unlicense… |
+| FSF-libre (non-OSI) | WTFPL, CC-BY-SA-4.0, MS-PL, FTL… |
+| Source-available | BUSL-1.1, SSPL-1.0, Elastic-2.0 → **non éligible** |
+| Propriétaire | All Rights Reserved → **non éligible** |
+
+Catalogue complet disponible via `getLicenses()` (query GraphQL publique) ou `ptf licenses list`.
+
 **Calcul automatique des reputationPoints par tâche :**
 
 Le `ReputationEngine` calcule les points attribués à la validation d'une tâche **automatiquement** à partir des métadonnées saisies par le créateur (`complexity`, `effort`, `impact`). Le créateur ne peut pas configurer `reputationPoints` directement.
 
 ```typescript
 // Calcul automatique par le ReputationEngine de PTF
-function calculateReputationReward(task: Task): number {
+function calculateReputationReward(task: Task, project: Project): number {
+    // Zéro si le projet n'est pas open-source vérifié
+    if (!project.isOpenSource) return 0;
+
     const complexityScore = task.scoring.complexity;  // 1-5
     const effortScore     = task.scoring.effort;      // 1-5
     const impactScore     = task.scoring.impact;      // 1-5
@@ -1991,6 +2056,10 @@ function calculateReputationReward(task: Task): number {
     // Ex: complexité 4 + effort 3 + impact 4 = 110 + 10 = ~120 pts
 }
 ```
+
+**Vérification à la création des tâches :**
+
+`TaskService.create()` lit `project.isOpenSource` en base. Si `false`, `reputationPoints` est stocké à `0` dans la tâche — aucune rétro-attribution n'est possible même si la licence est ajoutée ultérieurement. Pour activer la réputation, il faut : ajouter une licence éligible → `createProjectLicense()` ou manuellement → republier le projet (`publishProject` re-vérifie) → les **nouvelles** tâches créées ensuite recevront des points.
 
 **Incréments positifs :**
 

@@ -1,9 +1,30 @@
 import type { GraphQLContext } from "../context.js";
+import { assertFullyLinked } from "../context.js";
 import type { ProjectFilter } from "../../types/index.js";
 import { PtfError, PtfErrorCode } from "../../types/errors.js";
+import { LICENSE_CATALOG } from "../../services/licenses.js";
 
 export const projectResolvers = {
   Query: {
+    verifyRepoLicense: async (
+      _: unknown,
+      args: { repoUrl: string },
+      ctx: GraphQLContext
+    ) => {
+      return ctx.services.github.checkRepoLicense(args.repoUrl);
+    },
+
+    getLicenses: async (
+      _: unknown,
+      args: { category?: string },
+      _ctx: GraphQLContext
+    ) => {
+      const list = args.category
+        ? LICENSE_CATALOG.filter((l) => l.category === args.category)
+        : LICENSE_CATALOG;
+      return list;
+    },
+
     projects: async (
       _: unknown,
       args: { filter?: ProjectFilter },
@@ -50,9 +71,9 @@ export const projectResolvers = {
       args: { input: Record<string, unknown> },
       ctx: GraphQLContext
     ) => {
-      if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
+      assertFullyLinked(ctx.user);
 
-      const project = await ctx.services.project.create({
+      const { project, licenseStatus, licenseInstruction } = await ctx.services.project.create({
         name: args.input["name"] as string,
         type: args.input["type"] as "public" | "private",
         rewardMode: args.input["rewardMode"] as "free" | "paid",
@@ -67,7 +88,26 @@ export const projectResolvers = {
         ownerId: ctx.user.userId,
       });
 
-      return ctx.services.project.getPublicView(project);
+      return {
+        ...ctx.services.project.getPublicView(project),
+        licenseStatus,
+        licenseInstruction,
+      };
+    },
+
+    createProjectLicense: async (
+      _: unknown,
+      args: { projectId: string; spdxId: string; authorName: string; userToken: string },
+      ctx: GraphQLContext
+    ) => {
+      assertFullyLinked(ctx.user);
+      return ctx.services.project.createProjectLicense({
+        projectId:  args.projectId,
+        callerId:   ctx.user.userId,
+        spdxId:     args.spdxId,
+        authorName: args.authorName,
+        userToken:  args.userToken,
+      });
     },
 
     publishProject: async (
@@ -75,8 +115,8 @@ export const projectResolvers = {
       args: { projectId: string },
       ctx: GraphQLContext
     ) => {
-      if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
-      const project = await ctx.services.project.activate(args.projectId);
+      assertFullyLinked(ctx.user);
+      const project = await ctx.services.project.activate(args.projectId, ctx.user.userId);
       return ctx.services.project.getPublicView(project);
     },
   },

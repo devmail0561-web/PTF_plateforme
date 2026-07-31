@@ -136,6 +136,8 @@ export interface PublicProjectView {
   totalRewardPool: string;
   stack: string[];
   status: string;
+  isOpenSource: boolean;
+  license?: string;      // SPDX identifier, e.g. "MIT"
   createdAt?: string;
 }
 
@@ -227,6 +229,8 @@ export interface TaskFilter {
   priority?: TaskPriority;
   projectId?: string;
   devAddress?: string;
+  limit?: number;
+  offset?: number;
 }
 
 export interface ProjectFilter {
@@ -234,4 +238,6 @@ export interface ProjectFilter {
   mine?: boolean;
   ownerAddress?: string;
   status?: string;
+  limit?: number;
+  offset?: number;
 }

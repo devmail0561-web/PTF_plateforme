@@ -1,13 +1,44 @@
+import type { User } from "@prisma/client";
 import type { GraphQLContext } from "../context.js";
+import type { CreditUTXO } from "../../services/utxo.service.js";
 import { PtfError, PtfErrorCode } from "../../types/errors.js";
 import { ethers } from "ethers";
+
+// Strip eip712Signature before returning UTXOs to GraphQL clients (CIA-C4).
+function safeUtxo(u: CreditUTXO) {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { eip712Signature: _sig, ...rest } = u;
+  return { ...rest, createdAt: u.createdAt.toISOString() };
+}
 
 function isValidAddress(addr: string): boolean {
   try { return ethers.isAddress(addr); } catch { return false; }
 }
 
+async function buildUserProfile(user: User, ctx: GraphQLContext) {
+  const wallets = await ctx.services.wallet.getLinkedChains(user.id);
+  return {
+    id:           user.id,
+    email:        user.email,
+    ptfAddress:   user.ptfAddress,
+    githubHandle: user.githubHandle,
+    githubLinked: !!user.githubId,
+    walletLinked: wallets.length > 0,
+    wallets:      wallets.map((w) => ({ id: w.id, chain: w.chain, address: w.address, isPrimary: w.isPrimary })),
+  };
+}
+
 export const walletResolvers = {
   Query: {
+    myDevices: async (
+      _: unknown,
+      __: unknown,
+      ctx: GraphQLContext
+    ) => {
+      if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
+      return ctx.services.auth.listDevices(ctx.user.userId, ctx.user.deviceId);
+    },
+
     walletStatus: async (
       _: unknown,
       args: { address: string; chain: string },
@@ -89,21 +120,22 @@ export const walletResolvers = {
       return { address: args.address, ...bal };
     },
 
-    // ── UTXO provenance ──────────────────────────────────────────────────────
-
     utxos: async (
       _: unknown,
-      args: { address: string; status?: string; chain?: string },
+      args: { address: string; status?: string; chain?: string; limit?: number; offset?: number },
       ctx: GraphQLContext
     ) => {
+      const limit  = Math.min(args.limit  ?? 50, 200);
+      const offset = args.offset ?? 0;
       if (!args.status || args.status === "unspent") {
         const list = await ctx.services.utxo.getUnspent(args.address, args.chain);
-        return list.map((u) => ({ ...u, createdAt: u.createdAt.toISOString() }));
+        return list.slice(offset, offset + limit).map(safeUtxo);
       }
       const all = await ctx.services.utxo.getProvenance(args.address);
       return all
         .filter((u) => u.status === args.status)
-        .map((u) => ({ ...u, createdAt: u.createdAt.toISOString() }));
+        .slice(offset, offset + limit)
+        .map(safeUtxo);
     },
 
     utxoBalance: async (
@@ -117,53 +149,139 @@ export const walletResolvers = {
 
     utxoProvenance: async (
       _: unknown,
-      args: { address: string },
+      args: { address: string; limit?: number; offset?: number },
       ctx: GraphQLContext
     ) => {
+      const limit  = Math.min(args.limit  ?? 50, 200);
+      const offset = args.offset ?? 0;
       const all = await ctx.services.utxo.getProvenance(args.address);
-      return all.map((u) => ({ ...u, createdAt: u.createdAt.toISOString() }));
+      return all.slice(offset, offset + limit).map(safeUtxo);
     },
   },
 
   Mutation: {
-    loginWithGithub: async (
+    // ── Register ──────────────────────────────────────────────────────────────
+    register: async (
       _: unknown,
-      args: { code: string },
+      args: { input: { email: string; password: string; deviceName: string } },
       ctx: GraphQLContext
     ) => {
-      const { token, user } = await ctx.services.auth.loginWithGithub(args.code);
-      const wallets = await ctx.services.wallet.getLinkedChains(user.id);
+      const { token, user, encryptedKey } = await ctx.services.auth.register({
+        email:      args.input.email,
+        password:   args.input.password,
+        deviceName: args.input.deviceName,
+      });
+      return { token, encryptedKey, user: await buildUserProfile(user, ctx) };
+    },
+
+    // ── Login ─────────────────────────────────────────────────────────────────
+    login: async (
+      _: unknown,
+      args: { input: { email: string; password: string; deviceName: string; deviceToken?: string } },
+      ctx: GraphQLContext
+    ) => {
+      const result = await ctx.services.auth.login({
+        email:       args.input.email,
+        password:    args.input.password,
+        deviceName:  args.input.deviceName,
+        deviceToken: args.input.deviceToken,
+      });
+
+      if (result.requiresVerification) {
+        return { pendingSessionId: result.pendingSessionId, requiresVerification: true };
+      }
+
       return {
-        token,
-        user: {
-          id: user.id,
-          githubHandle: user.githubHandle,
-          wallets: wallets.map((w) => ({
-            id: w.id,
-            chain: w.chain,
-            address: w.address,
-            isPrimary: w.isPrimary,
-          })),
-        },
+        token:        result.token,
+        encryptedKey: result.encryptedKey,
+        user:         await buildUserProfile(result.user!, ctx),
       };
     },
 
-    linkWallet: async (
+    // ── Verify new device OTP ─────────────────────────────────────────────────
+    verifyNewDevice: async (
       _: unknown,
-      args: { chain: string; address: string; signature: string },
+      args: { pendingSessionId: string; otp: string },
+      ctx: GraphQLContext
+    ) => {
+      const { token, encryptedKey, user, deviceToken } = await ctx.services.auth.verifyNewDevice({
+        pendingSessionId: args.pendingSessionId,
+        otp:              args.otp,
+      });
+      return { token, encryptedKey, deviceToken, user: await buildUserProfile(user, ctx) };
+    },
+
+    // ── Request GitHub OAuth state (step 1) ──────────────────────────────────
+    requestGithubOAuthState: async (
+      _: unknown,
+      __: unknown,
       ctx: GraphQLContext
     ) => {
       if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
-      return ctx.services.auth.linkWallet(
-        ctx.user.userId,
-        args.chain,
-        args.address,
-        args.signature
-      );
+      return ctx.services.auth.requestGithubOAuthState(ctx.user.userId);
     },
 
-    // ── UTXO withdrawal ──────────────────────────────────────────────────────
+    // ── Link GitHub (step 2: code + CSRF state) ───────────────────────────────
+    linkGithub: async (
+      _: unknown,
+      args: { code: string; state: string },
+      ctx: GraphQLContext
+    ) => {
+      if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
+      const { token, user } = await ctx.services.auth.linkGithub(ctx.user.userId, args.code, args.state, ctx.user.deviceId);
+      // encryptedKey unchanged — client already has it stored
+      return { token, encryptedKey: user.encryptedKey ?? "", user: await buildUserProfile(user, ctx) };
+    },
 
+    // ── Request wallet-link challenge ─────────────────────────────────────────
+    requestWalletChallenge: async (
+      _: unknown,
+      args: { chain: string; address: string },
+      ctx: GraphQLContext
+    ) => {
+      if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
+      return ctx.services.auth.requestWalletChallenge(ctx.user.userId, args.chain, args.address);
+    },
+
+    // ── Confirm wallet-link ───────────────────────────────────────────────────
+    confirmLinkWallet: async (
+      _: unknown,
+      args: { challengeId: string; signature: string },
+      ctx: GraphQLContext
+    ) => {
+      if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
+      const { token, walletLink } = await ctx.services.auth.confirmLinkWallet(
+        ctx.user.userId, args.challengeId, args.signature, ctx.user.deviceId,
+      );
+      return {
+        token,
+        walletLink: { id: walletLink.id, chain: walletLink.chain, address: walletLink.address, isPrimary: walletLink.isPrimary },
+      };
+    },
+
+    // ── Revoke a specific device ──────────────────────────────────────────────
+    revokeDevice: async (
+      _: unknown,
+      args: { deviceId: string },
+      ctx: GraphQLContext
+    ) => {
+      if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
+      await ctx.services.auth.revokeDevice(ctx.user.userId, args.deviceId);
+      return true;
+    },
+
+    // ── Revoke all other devices (keep current) ───────────────────────────────
+    revokeAllOtherDevices: async (
+      _: unknown,
+      __: unknown,
+      ctx: GraphQLContext
+    ) => {
+      if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
+      await ctx.services.auth.revokeAllOtherDevices(ctx.user.userId, ctx.user.deviceId);
+      return true;
+    },
+
+    // ── UTXO withdrawal (fully-linked account required) ──────────────────────
     withdrawCredits: async (
       _: unknown,
       args: { input: { amount: number; destination: string; chain: string } },
@@ -180,7 +298,6 @@ export const walletResolvers = {
         throw new PtfError(PtfErrorCode.INVALID_ADDRESS, `Adresse de destination invalide : ${destination}`);
       }
 
-      // Resolve the user's linked wallet address on the requested chain — ctx.user.userId is a cuid, not an address
       const wallets = await ctx.services.wallet.getLinkedChains(ctx.user.userId);
       const walletLink = wallets.find((w) => w.chain === chain);
       if (!walletLink) {
@@ -202,13 +319,12 @@ export const walletResolvers = {
         txId:      result.txId,
         netAmount: result.netAmount,
         proofHash: result.proofHash,
-        consumed:  result.consumed.map((u) => ({ ...u, createdAt: u.createdAt.toISOString() })),
-        change:    result.change
-          ? { ...result.change, createdAt: result.change.createdAt.toISOString() }
-          : null,
+        consumed:  result.consumed.map(safeUtxo),
+        change:    result.change ? safeUtxo(result.change) : null,
       };
     },
 
+    // ── Report (authentication required, no full-link needed) ────────────────
     reportUser: async (
       _: unknown,
       args: { input: { reportedAddress: string; taskId?: string; reason: string; evidence: string } },
@@ -216,11 +332,11 @@ export const walletResolvers = {
     ) => {
       if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
       const { reportId } = await ctx.services.report.submit({
-        reporterId: ctx.user.userId,
+        reporterId:      ctx.user.userId,
         reportedAddress: args.input.reportedAddress,
-        taskId: args.input.taskId,
-        reason: args.input.reason as never,
-        evidence: args.input.evidence,
+        taskId:          args.input.taskId,
+        reason:          args.input.reason as never,
+        evidence:        args.input.evidence,
       });
       return { id: reportId, reason: args.input.reason, status: "pending", createdAt: new Date().toISOString() };
     },
