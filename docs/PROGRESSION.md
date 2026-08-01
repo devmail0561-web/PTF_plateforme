@@ -1,14 +1,14 @@
 # PTF — Progression du projet
 
 > Version : **V0.1.0-alpha** — Dernière mise à jour : **2026-08-01**
-> Commits : `7efdde9` (MVP initial) → `fc22203` (Smart contracts) → `c3032b5` (UTXO provenance) → `03fe287` (audit sécurité multi-agents) → rounds CIA 5–10 (auth refonte, licences, réputation OSS) → round 11 (7 findings ouverts corrigés) → round 12 (21 findings) → round 14 (ReconciliationWorker N3 + CIA-I9) → frontend V0.1.0 MVP
+> Commits : `7efdde9` (MVP initial) → `fc22203` (Smart contracts) → `c3032b5` (UTXO provenance) → `03fe287` (audit sécurité multi-agents) → rounds CIA 5–10 (auth refonte, licences, réputation OSS) → round 11 (7 findings ouverts corrigés) → round 12 (21 findings) → round 14 (ReconciliationWorker N3 + CIA-I9) → frontend V0.1.0 MVP → round 15 (CLI audit 18 findings + workflow automatisé) → **frontend V0.2.0** (16 correctifs : bugs, MSW complets, /projects, nav mobile, toasts, pagination, recherche)
 
 ---
 
 ## Avancement global
 
 ```
-██████████████████████████████░░░░░░░░░░  77%
+████████████████████████████████░░░░░░░░  80%
 ```
 
 | Module | Statut | Progression |
@@ -17,11 +17,11 @@
 | CLI | ✅ Terminé | 100% |
 | Backend (core) | ✅ En cours | 90% |
 | Smart contracts EVM | ✅ Terminé | 100% |
-| Audit sécurité (rounds 1–14) | ✅ Terminé | 100% |
+| Audit sécurité (rounds 1–15) | ✅ Terminé | 100% |
 | Authentification (refonte complète) | ✅ Terminé | 100% |
 | Licences OSS (catalogue + auto-création) | ✅ Terminé | 100% |
 | Workers on-chain (dépôts N1 + réconciliation N3) | ✅ Terminé | 100% |
-| **Frontend V0.1.0 MVP** | ✅ **Terminé** | **100%** |
+| **Frontend V0.2.0** | ✅ **Terminé** | **100%** |
 | Infrastructure | 🔴 À faire | 0% |
 | Blockchain réelle | 🔴 À faire | 0% |
 | Solana / Anchor | 🔴 À faire | 0% |
@@ -55,28 +55,48 @@
 
 ### ✅ CLI — 100%
 
-**21 fichiers TypeScript — ESM — Commander.js + ethers.js v6**
+**27 fichiers TypeScript — ESM — Commander.js + ethers.js v6**
 
 | Catégorie | Fichiers | Description |
 |-----------|----------|-------------|
-| **Commandes** (13) | `init`, `config`, `scaffold`, `generate`, `tasks`, `task`, `validate-docs`, `auth`, `wallet`, `submit`, `projects`, `report`, `contributors` | Cycle complet créateur + développeur |
+| **Commandes** (15) | `init`, `config`, `scaffold`, `generate`, `tasks`, `task`, `validate-docs`, `auth`, `wallet`, `submit`, `commit`, `status`, `projects`, `report`, `contributors` | Cycle complet créateur + développeur |
 | **Utilitaires** | `crypto.ts` | `generateProjectId` (keccak256), `computeMerkleRoot`, `hashConditions` (EIP-712) |
 | **Utilitaires** | `config.ts` | Walk-up `.ptf/config.json` (comme git), `requireProjectConfig`, drafts |
 | **Utilitaires** | `docs-validator.ts` | Validation ARCHITECTURE.md + PLAN_ACTION.md, sections requises, placeholders, termes vagues |
 | **Utilitaires** | `api.ts` | Client GraphQL + mode offline complet (`PTF_OFFLINE`) |
+| **Utilitaires** | `mock-data.ts` | Données mock isolées (offline fallback) — séparées du code production |
 | **Utilitaires** | `display.ts` | Formatage terminal (chalk, ora, tableaux) |
+| **Utilitaires** | `shell.ts` | `shellEscape()`, `gitCmd()` — prévention injection shell sur tous les `execSync` |
+| **Utilitaires** | `tracker.ts` | Suivi tâches actives : local `.ptf/active-task.json` + global `~/.config/ptf/active-tasks.json`, résolution auto par branche `ptf/<taskId>` |
+| **Utilitaires** | `template.ts` | `buildTaskTemplate()` — génère le template de soumission markdown |
 | **Templates** | `architecture.template.ts`, `plan-action.template.ts` | Prompts système pour le skill `/ptf-architect` |
 | **Types** | `types.ts` | Interfaces partagées CLI |
 | **Tests** | `docs-validator.test.ts` | **13 tests Vitest** |
 | **Skill** | `.claude/commands/ptf-architect.md` | Mode 3 IA-assisté (Claude Code, Cursor, Copilot) |
 
+**Workflow développeur automatisé :**
+```bash
+ptf task claim <taskId>   # Clone repo + crée branche ptf/<taskId> + track
+ptf commit                # Commit avec tracking, lint, protection fichiers sensibles
+ptf submit                # Auto push + soumission API (détection branche + tâche auto)
+ptf status                # Progression tâche active (deadline, commits, diff stats)
+```
+
 **Commandes disponibles :**
 ```bash
 ptf init         ptf scaffold     ptf describe     ptf validate-docs
 ptf generate     ptf tasks        ptf task         ptf submit
-ptf wallet       ptf auth         ptf config       ptf projects
-ptf contributors ptf report       ptf fix-docs     ptf sync
+ptf commit       ptf status       ptf wallet       ptf auth
+ptf config       ptf projects     ptf contributors ptf report
+ptf fix-docs     ptf sync
 ```
+
+**Audit CLI (18 findings corrigés) :**
+- Shell injection fixes (shellEscape/gitCmd sur tous les execSync)
+- Fichiers sensibles (.env, *.key, *.pem) auto-unstage avant commit
+- API réellement appelée (report, cancel, contributors — pas juste des mocks)
+- Détection base branch dynamique (main/master/develop)
+- OAuth callback path fix, dead code supprimé, mock data isolée
 
 ---
 
@@ -196,60 +216,102 @@ ptf contributors ptf report       ptf fix-docs     ptf sync
 
 ---
 
-### ✅ Frontend V0.1.0 MVP — 100%
+### ✅ Frontend V0.2.0 — 100%
 
-**~55 fichiers TypeScript — Next.js 14.2.5 App Router + TailwindCSS dark theme + Apollo Client 3 + wagmi v2 + RainbowKit + Zustand + MSW 2**
+**~75 fichiers TypeScript — Next.js 14.2.5 App Router + TailwindCSS dark theme + Apollo Client 3 + wagmi v2 + RainbowKit + Zustand + MSW 2**
 
 #### Pages implémentées
 
-| Page | Route | Statut HTTP | Description |
-|------|-------|-------------|-------------|
-| **Marketplace** | `/tasks` | 200 | Liste des tâches avec filtres reward/skill/projet, badges statut/priorité, CountDown live |
-| **Détail tâche** | `/tasks/[id]` | 200 | Fiche complète : punishments, deadline, verificationSteps, reward, claimCriteria |
-| **Dashboard développeur** | `/dashboard` | 307 → `/login` | Tâches réclamées, countdown, historique, réputation — protégé par middleware Edge |
-| **Profil public** | `/profile/[address]` | 200 | Score, niveau, historique complet, crédits — accès public sans auth |
-| **Login** | `/login` | 200 | Connexion email + mot de passe |
-| **Register** | `/register` | 200 | Inscription email + mot de passe |
-| **Onboarding** | `/onboarding` | 200 | Wizard 3 étapes : OTP (code mock : `123456`) → GitHub OAuth → wallet EIP-712 via RainbowKit |
+| Page | Route | Accès | Description |
+|------|-------|-------|-------------|
+| **Marketplace** | `/tasks` | Public | Tâches avec filtres status/priority/rewardMode + **recherche textuelle** + **pagination 12/page** |
+| **Détail tâche** | `/tasks/[id]` | Public | Fiche complète : constraints, punishments, verificationSteps, reward, ClaimButton avec modal conditions |
+| **Dashboard développeur** | `/dashboard` | Auth | Tâches actives, countdown, historique, réputation + balance sidebar |
+| **Profil public** | `/profile/[address]` | Public | Score, niveau, historique réputation paginé, crédits, tâches complétées |
+| **Wallet** | `/wallet` | Auth | Balance overview (3 cartes), statut 6 vérifications, historique crédits paginé, UTXOs filtrés (All/Unspent/Locked/Spent), actions coming-soon |
+| **Projects** | `/projects` | Public | Catalogue projets avec filtres type/rewardMode, cartes avec stack + pool + open tasks |
+| **Login** | `/login` | Public | Connexion email + mot de passe |
+| **Register** | `/register` | Public | Inscription email + mot de passe |
+| **Onboarding** | `/onboarding` | Auth | Wizard 3 étapes : OTP → GitHub OAuth → wallet EIP-712 via RainbowKit |
+| **404** | `not-found.tsx` | — | Page 404 avec lien retour marketplace |
+| **Error** | `error.tsx` | — | Boundary d'erreur avec bouton "Try again" |
+| **Loading** | `loading.tsx` | — | Skeleton global Spinner |
 
 #### Middleware Edge
 
-- `middleware.ts` protège `/dashboard` → redirect `/login` si non authentifié (Next.js Edge Runtime)
+- `middleware.ts` protège `/dashboard` et `/wallet` → redirect `/login` si non authentifié
 
-#### MSW 2 — Mock Service Worker
+#### MSW 2 — Mock Service Worker (couverture complète)
 
-- 10+ tâches mock réalistes
-- Fixtures profil / auth
-- Handlers GraphQL complets
-- Fonctionne sans backend (mode `npm run dev` standalone)
+| Handler | Queries couvertes |
+|---------|-------------------|
+| `tasks.handlers` | `GetTasks`, `GetTask`, `GetMyTasks`, `ClaimTask`, `SubmitTask`, `CancelTask` |
+| `profile.handlers` | `GetReputation`, `GetCreditHistory` (paginé), `GetUTXOBalance`, `GetWalletStatus`, `GetReputationHistory`, `GetUTXOs` (filtré) |
+| `projects.handlers` | `GetProjects` (filtré type + rewardMode) |
+| `auth.handlers` | `Login`, `Register`, `VerifyNewDevice`, `LinkGithub`, `RequestWalletChallenge`, `ConfirmLinkWallet` |
 
-#### Design system
+#### Composants UI
 
-- Dark mode crypto : palette violet / amber / vert
-- `CountDown` live (composant temps réel)
-- Badges statut (open / claimed / submitted / completed)
-- Badges priorité (low / medium / high / critical)
+| Composant | Description |
+|-----------|-------------|
+| `Card`, `Badge`, `Button`, `Modal`, `Spinner`, `Input`, `ProgressBar`, `Countdown` | Primitives de base |
+| `Toaster` | Notifications toast (success / error / warning / info) — position bottom-right, auto-dismiss 4s |
+| `Navbar` | Desktop + **menu hamburger mobile** — liens auth-conditionnels, balance PTF + niveau réputation inline |
+
+#### Système de toasts
+
+`toastStore.ts` (Zustand) + `toast.success/error/info/warning()` utilisé sur :
+- Claim task → success
+- Submit task → success
+- Cancel task → info
+- Erreurs GraphQL → error
 
 #### Hooks custom
 
 | Hook | Rôle |
 |------|------|
 | `useAuth` | Session utilisateur, login/logout |
-| `usePTFBalance` | Solde crédits PTF |
-| `useReputationScore` | Score et niveau réputation |
+| `usePTFBalance` | Solde crédits PTF (polling 30s) |
+| `useReputationScore` | Score, niveau, progression vers palier suivant |
 | `useTaskCountdown` | Countdown deadline en temps réel |
 | `useTaskStatusSubscription` | Subscription GraphQL statut tâche |
-| `useClaimEligibility` | Éligibilité au claim (solde + critères) |
+| `useClaimEligibility` | Éligibilité au claim (réputation, tâches actives réelles, skills) |
+
+#### Fixtures mock
+
+| Fixture | Contenu |
+|---------|---------|
+| `tasks.fixture.ts` | 10 tâches multi-projets, 2 tâches utilisateur actives |
+| `profile.fixture.ts` | Réputation (Senior + Expert), 5 crédits, 4 événements réputation, balance UTXO |
+| `auth.fixture.ts` | `mockUser` avec skills, JWT signé mock |
+| `projects.fixture.ts` | 4 projets (2 publics, 1 OSS gratuit, 1 privé) |
 
 #### Lancer le frontend
 
 ```bash
 cd frontend
-cp .env.local.example .env.local   # déjà fait
 npm install
-npm run dev     # → http://localhost:3000
+npm run dev        # → http://localhost:3000
 npm run typecheck  # 0 erreurs TypeScript
 ```
+
+#### Correctifs V0.2.0 (par rapport à V0.1.0)
+
+| # | Type | Correctif |
+|---|------|-----------|
+| 1 | Bug | Double négatif pénalités mock (`credits: -20` → `20`, le UI préfixe `-`) |
+| 2 | Bug | `ClaimButton` comptait faussement 0 tâches actives — désormais via `GET_MY_TASKS` réel |
+| 3 | Bug | Handler `GetTasks` dupliqué (tasks + profile) → doublon supprimé |
+| 4 | MSW | `GetReputationHistory` manquant → handler + fixture ajoutés |
+| 5 | MSW | `GetUTXOs` manquant → handler avec 5 UTXOs (unspent/locked/spent) |
+| 6 | MSW | `GetProjects` manquant → handler + fixture + page `/projects` |
+| 7 | UX | Navigation mobile absente → menu hamburger complet |
+| 8 | UX | Pas de recherche → input texte dans `TaskFilters` (titre + contexte + skills) |
+| 9 | UX | Pas de pagination → pages de 12 + compteur résultats |
+| 10 | UX | Aucun toast/feedback → `Toaster` + `toastStore` Zustand |
+| 11 | UX | Onglet "All" manquant sur UTXOs wallet → ajouté en premier |
+| 12 | Sécurité | `/wallet` non protégé par middleware Edge → ajouté à `PROTECTED_ROUTES` |
+| 13–16 | Fonctionnel | `not-found`, `error`, `loading`, `GET_PROJECTS` query ajoutés |
 
 #### Vues restantes (V0.5.0)
 
@@ -257,7 +319,6 @@ npm run typecheck  # 0 erreurs TypeScript
 |-----|-------|-------------|
 | **Créateur — Nouveau projet** | `/project/new` | Wizard : upload MD, évaluation coût, dépôt escrow |
 | **Créateur — Suivi projet** | `/project/:id` | Tâches, devs actifs, escrow, soumissions |
-| **Wallet** | `/wallet` | Solde PTF, soft-locks, dépôt, retrait, bridge cross-chaîne |
 | **Leaderboard** | `/leaderboard` | Top devs par réputation globale |
 
 ---
@@ -302,15 +363,16 @@ npm run typecheck  # 0 erreurs TypeScript
 
 | Métrique | Valeur |
 |----------|--------|
-| **Fichiers source totaux** | 150+ fichiers |
-| **Lignes TypeScript** (CLI + Backend + Frontend) | ~13 000 lignes |
+| **Fichiers source totaux** | 170+ fichiers |
+| **Lignes TypeScript** (CLI + Backend + Frontend) | ~16 000 lignes |
 | **Lignes Solidity** | ~640 lignes |
 | **Tests unitaires** | 13 (Vitest) + 32 (Jest) + ~60 (Foundry) = **105 tests** |
 | **Erreurs TypeScript frontend** | **0** (`npm run typecheck` passe) |
-| **Commits** | 7 |
-| **Bugs sécurité corrigés** | **101** (14 rounds d'audit — smart contracts, backend, auth, licences, workers, réconciliation) |
-| **Findings ouverts** | **0** (tous corrigés — 101/101) |
-| **Progression globale** | **~77%** |
+| **Commits** | 8 |
+| **Bugs sécurité corrigés** | **119** (15 rounds d'audit — smart contracts, backend, auth, licences, workers, réconciliation, CLI) |
+| **Findings frontend corrigés** | **16** (V0.2.0 — bugs, MSW, UX, sécurité) |
+| **Findings ouverts** | **0** |
+| **Progression globale** | **~80%** |
 
 ---
 
@@ -319,10 +381,10 @@ npm run typecheck  # 0 erreurs TypeScript
 ```
 V0.0.1 (actuel)
 ├── ✅ Documentation
-├── ✅ CLI (13 commandes, mode offline)
+├── ✅ CLI (15 commandes, workflow automatisé, mode offline)
 ├── ✅ Backend (15 services, GraphQL, Prisma, 2 workers on-chain)
 ├── ✅ Smart contracts EVM (4 contrats, 90 tests)
-└── ✅ Audit sécurité complet (101/101 findings corrigés, 14 rounds)
+└── ✅ Audit sécurité complet (119/119 findings corrigés, 15 rounds)
 
 V0.0.2
 ├── 🔴 Services backend manquants (EscrowService, ValidationService)
@@ -334,8 +396,18 @@ V0.1.0
 ├── 🔴 Adapters blockchain réels (Polygon testnet)
 └── 🔴 Déploiement testnet Polygon Amoy
 
+V0.2.0
+└── ✅ Frontend V0.2.0 ← TERMINÉ
+    ├── Page /wallet (balance, UTXOs, historique crédits)
+    ├── Page /projects (catalogue projets)
+    ├── Nav mobile (hamburger)
+    ├── Toasts (claim, submit, cancel)
+    ├── Recherche + pagination marketplace
+    ├── MSW complets (ReputationHistory, UTXOs, Projects)
+    └── 16 bugs/gaps corrigés
+
 V0.5.0 (Beta fermée)
-├── 🔴 Frontend complet (wallet, leaderboard, project/new, project/:id)
+├── 🔴 Frontend complet (leaderboard, project/new, project/:id)
 ├── 🔴 Audit smart contracts (Slither + Mythril + agents IA)
 ├── 🔴 Infrastructure VPS Hetzner
 └── 🔴 Solana / Anchor

@@ -114,6 +114,7 @@ export function loadDraftTasks(dir?: string): unknown[] | null {
   }
 }
 
+
 export function ensureGitignore(projectDir: string): void {
   const gitignorePath = join(projectDir, ".gitignore");
   const ptfSecrets = ".ptf/secrets\n.ptf/*.key\n";

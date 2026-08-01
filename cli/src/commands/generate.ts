@@ -17,7 +17,6 @@ export const generateCommand = new Command("generate")
   .description(
     "Générer l'arbre de tâches depuis ARCHITECTURE.md + PLAN_ACTION.md (via LLM)"
   )
-  .option("--project <projectId>", "ID du projet PTF")
   .option(
     "--architecture <path>",
     "Chemin vers ARCHITECTURE.md",

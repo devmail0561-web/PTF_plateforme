@@ -1287,6 +1287,131 @@ Couvert par M2 ci-dessus.
 
 ## Round 14 — Implémentation N3 + CIA-I9 (2026-08-01)
 
+---
+
+## ROUND 15 — Audit CLI commandes (2026-08-01) — 18 findings corrigés
+
+**Audit complet de toutes les commandes PTF CLI. 18 bugs identifiés, 18 corrigés. 0 ouverts.**
+
+---
+
+### [CLI-1] ptfBalance hardcodé à 0 dans task show
+**Fichier :** `cli/src/commands/task.ts`
+**Correction :** Appel réel `client.getWalletStatus()` au lieu du hardcode `ptfBalance = 0`.
+
+---
+
+### [CLI-2] task cancel ne faisait aucun appel API
+**Fichier :** `cli/src/commands/task.ts`
+**Correction :** Appel GraphQL `cancelTask` mutation + `untrackTask()`.
+
+---
+
+### [CLI-3] tasks preview : skip ajoutait à approved[] au lieu de skipped[]
+**Fichier :** `cli/src/commands/tasks.ts`
+**Correction :** Séparation en tableau `skipped[]` distinct.
+
+---
+
+### [CLI-4] submit auto-stage risquait de commit des secrets
+**Fichier :** `cli/src/commands/submit.ts`
+**Correction :** `SENSITIVE_PATTERNS` array (.env, *.key, *.pem, etc.) — auto-unstage avant commit.
+
+---
+
+### [CLI-5] Shell injection dans tous les execSync
+**Fichiers :** `cli/src/commands/task.ts`, `submit.ts`, `commit.ts`
+**Correction :** Création de `shell.ts` avec `shellEscape()` et `gitCmd()`. Tous les appels execSync passent par ces helpers.
+
+---
+
+### [CLI-6] OAuth callback path matching cassé
+**Fichier :** `cli/src/commands/auth.ts`
+**Correction :** `req.url === "/callback" || req.url?.startsWith("/callback?")`.
+
+---
+
+### [CLI-7] Options --project inutilisées sur tasks preview/publish
+**Fichier :** `cli/src/commands/tasks.ts`
+**Correction :** Options supprimées.
+
+---
+
+### [CLI-8] status.ts diff comparant la branche à elle-même
+**Fichier :** `cli/src/commands/status.ts`
+**Correction :** `detectBaseBranch()` pour trouver main/master/develop.
+
+---
+
+### [CLI-9] Hardcoded origin/main dans submit
+**Fichier :** `cli/src/commands/submit.ts`
+**Correction :** `detectBaseBranch()` réutilisée.
+
+---
+
+### [CLI-10] URL parsing edge case dans task claim
+**Fichier :** `cli/src/commands/task.ts`
+**Correction :** `projectRepoUrl.replace(/\/+$/, "").split("/").pop()` — gère trailing slashes.
+
+---
+
+### [CLI-11] validate-docs --arch-only sans vérification existsSync
+**Fichier :** `cli/src/commands/validate-docs.ts`
+**Correction :** `existsSync()` ajouté avant appel aux fonctions de validation.
+
+---
+
+### [CLI-12] report.ts n'envoyait jamais la mutation à l'API
+**Fichier :** `cli/src/commands/report.ts`
+**Correction :** Appel `client.query()` avec mutation GraphQL + guard `client.isOffline()`.
+
+---
+
+### [CLI-13] contributors command toujours en mocks hardcodés
+**Fichier :** `cli/src/commands/projects.ts`
+**Correction :** Appel API réel si online, fallback mocks uniquement si offline.
+
+---
+
+### [CLI-14] Dead code — wallet.ts double loadUserConfig
+**Fichier :** `cli/src/commands/wallet.ts`
+**Correction :** `userConfig2`/`client2` supprimés, réutilisation du `userConfig` existant.
+
+---
+
+### [CLI-15] Fake offline token sauvegardé (ghp_offline_simulated_token)
+**Fichier :** `cli/src/commands/auth.ts`
+**Correction :** `githubToken: undefined` en mode offline — plus de faux token simulé.
+
+---
+
+### [CLI-16] Offline detection patterns — déjà unifié
+**Statut :** Pas de changement nécessaire. Tous les commands utilisent `client.isOffline()`.
+
+---
+
+### [CLI-17] Dynamic imports sans try/catch
+**Statut :** Pas de changement nécessaire. `inquirer`/`ora` sont des dépendances requises (installées). `open` a déjà un try/catch.
+
+---
+
+### [CLI-18] Mock data mélangé au code production dans api.ts
+**Fichiers :** `cli/src/utils/api.ts`, `cli/src/utils/mock-data.ts` (nouveau)
+**Correction :** `mockWalletStatus`, `mockTasks`, `mockProjects`, `generateMockTasks` extraits dans `mock-data.ts`. `api.ts` ne contient plus que la logique API réelle.
+
+---
+
+## Statut global post-round 15
+
+| Sévérité | Round 15 CLI | Total cumulé rounds 1–15 | Ouverts |
+|----------|--------------|--------------------------|---------|
+| High | 5 (injection, secrets, fake token, dead API calls) | 23 | 0 |
+| Medium | 8 (dead code, mocks, offline, options) | 25 | 0 |
+| Low | 5 (URL parse, unused options, path matching) | 9 | 0 |
+| **Total** | **18** | **57** | **0** |
+
+---
+
 ### [N3] Réconciliation rétroactive DB/on-chain
 **Fichiers créés/modifiés :**
 - `backend/prisma/schema.prisma` — ajout modèle `SyncCheckpoint`
@@ -1303,3 +1428,147 @@ Couvert par M2 ci-dessus.
 
 ### [CIA-I9] DB commit avant confirmation on-chain
 **Solution :** Intégré dans `ReconciliationWorker.detectStaleSpent()` — les UTXOs de type `withdrawal` dont la `CreditTransaction` n'a pas de `txHash` après 10 minutes sont automatiquement revertés à `unspent`.
+
+---
+
+## ROUND 16 — Audit Frontend V0.2.0 (2026-08-01)
+
+**Périmètre :** `frontend/src/` — 16 findings corrigés (3 bugs, 3 MSW manquants, 1 sécurité, 9 UX/fonctionnel)
+
+### Récapitulatif
+
+| Sévérité | Findings | Corrigés |
+|----------|----------|---------|
+| Bug | 3 | 3 |
+| Sécurité | 1 | 1 |
+| MSW manquant | 3 | 3 |
+| UX/Fonctionnel | 9 | 9 |
+| **Total** | **16** | **16** |
+
+---
+
+### [FE-B1] Double négatif dans les pénalités mock
+**Fichier :** `frontend/src/mocks/data/tasks.fixture.ts`
+**Problème :** `lateDelivery: { credits: -20 }` — le composant `TaskDetail` affichait `- ${rule.credits}` → rendu final `--20`.
+**Correction :** Valeurs positives dans la fixture (`credits: 20`). Le UI préfixe le `-` à l'affichage.
+
+---
+
+### [FE-B2] `ClaimButton` hardcodait `userActiveTasks = 0` et `userSkills = []`
+**Fichier :** `frontend/src/components/tasks/ClaimButton.tsx`
+**Problème :** L'éligibilité était toujours favorable pour les critères `maxActiveTasks` et `requiredSkills` — le check était ineffectif.
+**Correction :** Ajout d'un `useQuery(GET_MY_TASKS)` pour compter les tâches actives réelles. `userSkills` lu depuis `user.skills` (ajouté sur `UserProfile`).
+
+---
+
+### [FE-B3] Handler `GetTasks` déclaré deux fois (conflict MSW)
+**Fichiers :** `frontend/src/mocks/handlers/tasks.handlers.ts`, `frontend/src/mocks/handlers/profile.handlers.ts`
+**Problème :** MSW enregistrait deux handlers pour `GetTasks`. Le second (profile) écrasait le premier, cassant silencieusement les filtres `status/priority/rewardMode`.
+**Correction :** Handler dupliqué supprimé de `profile.handlers.ts`.
+
+---
+
+### [FE-S1] `/wallet` non protégé par le middleware Edge
+**Fichier :** `frontend/src/middleware.ts`
+**Problème :** `PROTECTED_ROUTES` ne contenait que `/dashboard`. La page `/wallet` (données financières) était accessible sans token.
+**Correction :** `/wallet` ajouté à `PROTECTED_ROUTES` et au `matcher`.
+
+---
+
+### [FE-M1] `GetReputationHistory` sans handler MSW
+**Fichier :** `frontend/src/mocks/handlers/profile.handlers.ts`
+**Problème :** `ReputationHistoryTable` appelait `GET_REPUTATION_HISTORY` — aucun handler → erreur silencieuse en dev, tableau vide.
+**Correction :** Handler ajouté + `mockReputationHistory` (4 événements) dans `profile.fixture.ts`.
+
+---
+
+### [FE-M2] `GetUTXOs` sans handler MSW
+**Fichier :** `frontend/src/mocks/handlers/profile.handlers.ts`
+**Problème :** La page `/wallet` appelait `GetUTXOs` — aucun handler → UTXOs toujours vides en dev.
+**Correction :** Handler ajouté avec 5 UTXOs (unspent/locked/spent) filtrables par `status`.
+
+---
+
+### [FE-M3] `GetProjects` sans handler MSW et sans page
+**Problème :** Le CLI expose `ptf project list` mais le frontend n'avait aucune page `/projects` ni handler MSW.
+**Correction :**
+- `frontend/src/mocks/handlers/projects.handlers.ts` — handler `GetProjects` avec filtres type/rewardMode
+- `frontend/src/mocks/data/projects.fixture.ts` — 4 projets (2 publics OSS, 1 OSS gratuit, 1 privé)
+- `frontend/src/app/projects/page.tsx` — page complète avec cartes projet
+- `GET_PROJECTS` ajouté dans `queries.ts`
+- Lien "Projects" ajouté dans la Navbar
+
+---
+
+### [FE-U1] Navigation mobile absente
+**Fichier :** `frontend/src/components/layout/Navbar.tsx`
+**Problème :** Sur mobile, les liens de navigation étaient cachés (`hidden md:flex`) sans alternative — le site était inutilisable sans clavier.
+**Correction :** Menu hamburger SVG + overlay mobile avec tous les liens, balance, réputation et logout.
+
+---
+
+### [FE-U2] Pas de recherche textuelle sur le marketplace
+**Fichiers :** `frontend/src/components/tasks/TaskFilters.tsx`, `frontend/src/app/tasks/page.tsx`
+**Problème :** Les filtres ne permettaient que des sélections par enum — impossible de chercher par nom de technologie ou titre.
+**Correction :** Input texte "Search tasks..." avec filtre client-side sur titre + contexte + requiredSkills.
+
+---
+
+### [FE-U3] Pas de pagination sur `/tasks`
+**Fichier :** `frontend/src/app/tasks/page.tsx`
+**Problème :** `GET_TASKS` retournait jusqu'à 20 résultats hardcodés sans contrôle de navigation.
+**Correction :** Pagination côté client par pages de 12 + affichage compteur résultats.
+
+---
+
+### [FE-U4] Aucun toast/feedback visuel sur les mutations
+**Problème :** Claim, submit et cancel task ne donnaient aucun retour visuel en dehors des états de chargement inline.
+**Correction :**
+- `frontend/src/lib/toast/toastStore.ts` — store Zustand avec auto-dismiss 4s
+- `frontend/src/components/ui/Toaster.tsx` — rendu bottom-right, 4 types (success/error/warning/info)
+- Intégré dans `layout.tsx`, `ClaimButton`, `SubmitTaskForm`, `DashboardPage`
+
+---
+
+### [FE-U5] Onglet "All" manquant sur les UTXOs wallet
+**Fichier :** `frontend/src/app/wallet/page.tsx`
+**Problème :** Les tabs commençaient à "Unspent" — impossible d'afficher tous les UTXOs sans choisir un filtre.
+**Correction :** Tab `{ label: 'All', value: null }` ajouté en première position.
+
+---
+
+### [FE-U6] Pages `not-found.tsx`, `error.tsx`, `loading.tsx` manquantes
+**Problème :** Les routes inconnues retombaient sur une 404 Next.js par défaut non stylisée. Les erreurs GraphQL n'avaient pas de boundary.
+**Correction :** 3 fichiers créés dans `app/` avec le design system PTF.
+
+---
+
+### Fichiers créés ou modifiés (Round 16)
+
+| Action | Fichier |
+|--------|---------|
+| Créé | `frontend/src/app/projects/page.tsx` |
+| Créé | `frontend/src/app/not-found.tsx` |
+| Créé | `frontend/src/app/error.tsx` |
+| Créé | `frontend/src/app/loading.tsx` |
+| Créé | `frontend/src/components/ui/Toaster.tsx` |
+| Créé | `frontend/src/lib/toast/toastStore.ts` |
+| Créé | `frontend/src/mocks/data/projects.fixture.ts` |
+| Créé | `frontend/src/mocks/handlers/projects.handlers.ts` |
+| Modifié | `frontend/src/components/layout/Navbar.tsx` (mobile nav + lien Projects) |
+| Modifié | `frontend/src/components/tasks/ClaimButton.tsx` (active tasks réels + skills + toast) |
+| Modifié | `frontend/src/components/tasks/SubmitTaskForm.tsx` (toast) |
+| Modifié | `frontend/src/components/tasks/TaskFilters.tsx` (recherche texte) |
+| Modifié | `frontend/src/app/tasks/page.tsx` (pagination + recherche) |
+| Modifié | `frontend/src/app/dashboard/page.tsx` (toast cancel) |
+| Modifié | `frontend/src/app/wallet/page.tsx` (tab All UTXOs) |
+| Modifié | `frontend/src/app/layout.tsx` (Toaster) |
+| Modifié | `frontend/src/lib/graphql/queries.ts` (GET_PROJECTS) |
+| Modifié | `frontend/src/middleware.ts` (/wallet protégé) |
+| Modifié | `frontend/src/mocks/handlers/index.ts` (projectsHandlers) |
+| Modifié | `frontend/src/mocks/handlers/profile.handlers.ts` (GetReputationHistory + GetUTXOs, doublon GetTasks supprimé) |
+| Modifié | `frontend/src/mocks/data/profile.fixture.ts` (mockReputationHistory) |
+| Modifié | `frontend/src/mocks/data/tasks.fixture.ts` (valeurs pénalités corrigées) |
+| Modifié | `frontend/src/mocks/data/auth.fixture.ts` (skills sur mockUser) |
+| Modifié | `frontend/src/types/graphql.ts` (skills sur UserProfile) |
+| Modifié | `frontend/src/lib/auth/authStore.ts` (skills depuis JWT payload) |

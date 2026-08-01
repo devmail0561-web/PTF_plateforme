@@ -1,7 +1,13 @@
 import { Command } from "commander";
 import chalk from "chalk";
+import { existsSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { join } from "node:path";
 import { loadUserConfig } from "../utils/config.js";
 import { PtfApiClient } from "../utils/api.js";
+import { buildTaskTemplate } from "../utils/template.js";
+import { trackTask, getTrackedTaskByProject, untrackTask } from "../utils/tracker.js";
+import { gitCmd, shellEscape } from "../utils/shell.js";
 import {
   printTask,
   printError,
@@ -32,17 +38,70 @@ taskCommand
       process.exit(1);
     }
 
-    if (task.reward && task.reward.amount > 0) {
-      const ptfBalance = 0;
-      if (ptfBalance < 10) {
-        printError(
-          `Solde PTF insuffisant (${ptfBalance} PTF). Minimum 10 PTF requis pour réclamer une tâche paid.\n` +
+    if (task.reward && task.reward.amount > 0 && userConfig.walletAddress) {
+      const { status: walletStatus } = await client.getWalletStatus(userConfig.walletAddress);
+      if (walletStatus.ptfBalance < 10) {
+        printWarning(
+          `Solde PTF faible (${walletStatus.ptfBalance} PTF). Minimum 10 PTF requis pour réclamer une tâche paid.\n` +
             chalk.dim("Rechargez votre compte : ptf wallet deposit")
         );
       }
     }
 
     printTask(task, true);
+
+    console.log(
+      "\n" +
+        chalk.bold.cyan("━━━ Comment soumettre ━━━") +
+        "\n\n" +
+        chalk.bold("  Via CLI :") + "\n" +
+        chalk.dim("  $ ") + chalk.cyan("ptf submit") + "\n" +
+        chalk.dim("    Branche, commit et task ID sont auto-détectés.") + "\n" +
+        chalk.dim("    Override si besoin : ptf submit --branch <b> --commit <sha>") + "\n\n" +
+        chalk.bold("  Via Web UI :") + "\n" +
+        "  1. Bouton \"Submit Task\" sur la page de la tâche\n" +
+        "  2. Renseigner branche + hash de commit\n\n" +
+        chalk.bold("  Après soumission :") + "\n" +
+        "  1. Validation automatique (tests, lint, contraintes)\n" +
+        "  2. Peer review (3 reviewers Expert ≥ 2000 pts)\n" +
+        "  3. Validation client (auto-approbation après 72h)\n" +
+        "  4. Reward libéré"
+    );
+  });
+
+taskCommand
+  .command("template <taskId>")
+  .description("Afficher/exporter le template de soumission (format attendu, contraintes, vérification)")
+  .option("-o, --output <file>", "Écrire le template dans un fichier")
+  .option("-c, --copy", "Copier le template dans le presse-papier")
+  .action(async (taskId: string, opts: { output?: string; copy?: boolean }) => {
+    const userConfig = loadUserConfig();
+    const client = new PtfApiClient(userConfig);
+
+    const { task, offline } = await client.getTask(taskId);
+    if (offline) printOfflineBanner();
+
+    if (!task) {
+      printError(`Tâche non trouvée : ${taskId}`);
+      process.exit(1);
+    }
+
+    const template = buildTaskTemplate(task);
+
+    if (opts.output) {
+      writeFileSync(opts.output, template, "utf-8");
+      printSuccess(`Template écrit dans ${opts.output}`);
+    } else if (opts.copy) {
+      const cmd = process.platform === "darwin"
+        ? "pbcopy"
+        : process.platform === "win32"
+          ? "clip"
+          : "xclip -selection clipboard";
+      execSync(cmd, { input: template });
+      printSuccess("Template copié dans le presse-papier");
+    } else {
+      console.log(template);
+    }
   });
 
 taskCommand
@@ -160,20 +219,98 @@ taskCommand
       process.exit(1);
     }
 
+    // --- Setup repo & branch ---
+    const projectId = task.projectId;
+    const branch = `ptf/${taskId}`;
+    let repoPath = process.cwd();
+    let repoUrl: string | null = null;
+
+    // Check if already in project repo
+    const existingProject = getTrackedTaskByProject(projectId);
+    if (existingProject) {
+      printError(
+        `Vous avez déjà une tâche active sur ce projet : ${existingProject.taskId}\n` +
+          chalk.dim("Soumettez-la d'abord (ptf submit) ou abandonnez-la (ptf task cancel).")
+      );
+      process.exit(1);
+    }
+
+    // Detect if we're in a git repo for this project
+    let inProjectRepo = false;
+    try {
+      const remoteUrl = execSync("git remote get-url origin", { encoding: "utf-8" }).trim();
+      // If project has a known repo URL, match it
+      // For now, assume we're in the right repo if git is present
+      inProjectRepo = true;
+      repoUrl = remoteUrl;
+    } catch {
+      inProjectRepo = false;
+    }
+
+    if (!inProjectRepo) {
+      // Try to clone the project repo
+      // Look for repo URL from task/project metadata (in full API this comes from the project)
+      const { projects } = await client.getProjects({ type: "all" });
+      const project = projects.find((p) => p.projectId === projectId);
+      const projectRepoUrl = project?.repository ?? null;
+
+      if (!projectRepoUrl) {
+        printError(
+          "Impossible de trouver le dépôt du projet.\n" +
+            chalk.dim("Clonez manuellement le repo, placez-vous dedans, puis relancez ptf task claim.")
+        );
+        process.exit(1);
+      }
+
+      repoUrl = projectRepoUrl;
+      const repoName = projectRepoUrl.replace(/\/+$/, "").split("/").pop()?.replace(".git", "") || projectId;
+      repoPath = join(process.cwd(), repoName);
+
+      if (existsSync(repoPath)) {
+        printInfo(`Répertoire ${repoName}/ existant détecté, utilisation en cours...`);
+      } else {
+        printInfo(`Clonage de ${projectRepoUrl}...`);
+        execSync(`git clone ${shellEscape(projectRepoUrl)} ${shellEscape(repoName)}`, { stdio: "inherit" });
+      }
+    }
+
+    // Create and switch to the task branch
+    try {
+      execSync(gitCmd(repoPath, `checkout -b ${shellEscape(branch)}`), { stdio: "pipe" });
+      printSuccess(`Branche ${chalk.cyan(branch)} créée`);
+    } catch {
+      execSync(gitCmd(repoPath, `checkout ${shellEscape(branch)}`), { stdio: "pipe" });
+      printInfo(`Branche ${chalk.cyan(branch)} existante, switch effectué`);
+    }
+
+    // Track the task (local + global)
+    trackTask({
+      taskId,
+      projectId,
+      branch,
+      repoPath,
+      repoUrl,
+      claimedAt: new Date().toISOString(),
+      commits: [],
+      verifications: [],
+      pushed: false,
+    });
+
     printSuccess(`Tâche réclamée avec succès !\n`);
     console.log(
       `  Tâche ID      : ${chalk.dim(result.taskId)}\n` +
+        `  Branche       : ${chalk.cyan(branch)}\n` +
+        `  Repo          : ${chalk.dim(repoPath)}\n` +
         `  Réclamé à     : ${new Date(result.claimedAt).toLocaleString("fr-FR")}\n` +
         `  Deadline      : ${formatDeadlineCountdown(result.deadline)}\n` +
         `  Conditions    : ${chalk.dim(conditionsHash.slice(0, 16) + "...")} (ancré on-chain)\n`
     );
 
     console.log(
-      chalk.dim("\nVos tâches actives : ") +
-        chalk.cyan("ptf tasks mine") +
-        "\n" +
-        chalk.dim("Soumettre quand terminé : ") +
-        chalk.cyan(`ptf submit ${taskId} --branch feat/impl`)
+      chalk.dim("\nWorkflow :") + "\n" +
+        chalk.dim("  1. Implémentez dans ") + chalk.cyan(branch) + "\n" +
+        chalk.dim("  2. Committez normalement (git commit)") + "\n" +
+        chalk.dim("  3. Quand terminé : ") + chalk.cyan("ptf submit") + chalk.dim(" (push + soumission auto)")
     );
   });
 
@@ -240,6 +377,23 @@ taskCommand
       printInfo("Annulation avortée.");
       return;
     }
+
+    const { default: ora } = await import("ora");
+    const spinner = ora("Annulation en cours...").start();
+
+    try {
+      await client.query<{ cancelTask: boolean }>(
+        `mutation CancelTask($taskId: String!) { cancelTask(taskId: $taskId) }`,
+        { taskId }
+      );
+      spinner.succeed("Annulation confirmée.");
+    } catch (err) {
+      spinner.fail("Échec de l'annulation côté serveur.");
+      printError((err as Error).message);
+      process.exit(1);
+    }
+
+    untrackTask(task.projectId);
 
     printSuccess(`Tâche ${taskId.slice(0, 12)}... abandonnée.`);
     if (task.reward) {

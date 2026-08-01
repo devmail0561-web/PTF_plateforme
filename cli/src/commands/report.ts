@@ -1,7 +1,8 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { loadUserConfig } from "../utils/config.js";
-import { printError, printSuccess, printInfo, printWarning } from "../utils/display.js";
+import { PtfApiClient } from "../utils/api.js";
+import { printError, printSuccess, printInfo, printWarning, printOfflineBanner } from "../utils/display.js";
 
 const VALID_REASONS = [
   "malicious_code",
@@ -69,12 +70,31 @@ export const reportCommand = new Command("report")
         return;
       }
 
-      printWarning("Mode offline — signalement simulé");
-      printSuccess(
-        "Signalement soumis. Il sera analysé par le ReportService PTF.\n" +
-          chalk.dim(
-            "L'historique du signalement sera enregistré on-chain de manière immuable."
-          )
-      );
+      const userConfig = loadUserConfig();
+      const client = new PtfApiClient(userConfig);
+
+      if (client.isOffline()) {
+        printOfflineBanner();
+        printWarning("Signalement non envoyé — reconnectez-vous et relancez.");
+        return;
+      }
+
+      try {
+        await client.query(
+          `mutation Report($dev: String!, $reason: String!, $taskId: String!, $evidence: String!) {
+            reportDeveloper(devAddress: $dev, reason: $reason, taskId: $taskId, evidence: $evidence)
+          }`,
+          { dev: options.dev, reason: options.reason, taskId: options.task, evidence: options.evidence }
+        );
+        printSuccess(
+          "Signalement soumis. Il sera analysé par le ReportService PTF.\n" +
+            chalk.dim(
+              "L'historique du signalement sera enregistré on-chain de manière immuable."
+            )
+        );
+      } catch (err) {
+        printError(`Échec du signalement : ${(err as Error).message}`);
+        process.exit(1);
+      }
     }
   );

@@ -131,7 +131,6 @@ tasksCommand
 tasksCommand
   .command("preview")
   .description("Revoir les tâches générées avant publication")
-  .option("--project <projectId>", "ID du projet")
   .action(async () => {
     const config = requireProjectConfig();
     const drafts = loadDraftTasks();
@@ -153,6 +152,7 @@ tasksCommand
     const { default: inquirer } = await import("inquirer");
     const approved: PtfTask[] = [];
     const rejected: string[] = [];
+    const skipped: PtfTask[] = [];
 
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i];
@@ -182,7 +182,8 @@ tasksCommand
         rejected.push(task.id);
         printInfo(`Tâche retirée : ${task.title}`);
       } else {
-        approved.push(task);
+        skipped.push(task);
+        printInfo(`Tâche passée : ${task.title}`);
       }
     }
 
@@ -193,7 +194,8 @@ tasksCommand
         chalk.bold("Résumé de la revue :") +
         `\n  Approuvées : ${chalk.green(String(approved.length))}` +
         `\n  Rejetées   : ${chalk.red(String(rejected.length))}` +
-        `\n  Total      : ${approved.length}`
+        `\n  Passées    : ${chalk.yellow(String(skipped.length))}` +
+        `\n  Total      : ${tasks.length}`
     );
 
     if (approved.length > 0) {
@@ -209,7 +211,6 @@ tasksCommand
 tasksCommand
   .command("publish")
   .description("Déposer l'escrow et publier les tâches dans le réseau PTF")
-  .option("--project <projectId>", "ID du projet")
   .action(async () => {
     const config = requireProjectConfig();
     const userConfig = loadUserConfig();

@@ -142,17 +142,39 @@ contributorsCommand
     const userConfig = loadUserConfig();
     const client = new PtfApiClient(userConfig);
 
-    printInfo("Mode offline — données simulées");
+    if (client.isOffline()) {
+      printInfo("Mode offline — données simulées");
+      const rows = [
+        ["0xAbCd...1234", "dev_alice", "12", "1 800 USDC", "750 pts", "Senior"],
+        ["0xEfGh...5678", "dev_bob", "5", "450 USDC", "250 pts", "Junior"],
+      ];
+      printTable(
+        ["Wallet", "GitHub", "Tâches", "Total gagné", "Réputation", "Niveau"],
+        rows
+      );
+      return;
+    }
 
-    const rows = [
-      ["0xAbCd...1234", "dev_alice", "12", "1 800 USDC", "750 pts", "Senior"],
-      ["0xEfGh...5678", "dev_bob", "5", "450 USDC", "250 pts", "Junior"],
-    ];
-
-    printTable(
-      ["Wallet", "GitHub", "Tâches", "Total gagné", "Réputation", "Niveau"],
-      rows
-    );
+    try {
+      const data = await client.query<{ contributors: { address: string; github: string; taskCount: number; totalEarned: string; reputation: number; level: string }[] }>(
+        `query Contributors($projectId: String!) { contributors(projectId: $projectId) { address github taskCount totalEarned reputation level } }`,
+        { projectId }
+      );
+      const rows = data.contributors.map((c) => [
+        c.address.slice(0, 6) + "..." + c.address.slice(-4),
+        c.github,
+        String(c.taskCount),
+        c.totalEarned,
+        `${c.reputation} pts`,
+        c.level,
+      ]);
+      printTable(
+        ["Wallet", "GitHub", "Tâches", "Total gagné", "Réputation", "Niveau"],
+        rows
+      );
+    } catch (err) {
+      printError(`Échec : ${(err as Error).message}`);
+    }
   });
 
 contributorsCommand

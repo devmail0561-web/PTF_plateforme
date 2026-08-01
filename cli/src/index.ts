@@ -8,6 +8,8 @@ import { tasksCommand } from "./commands/tasks.js";
 import { taskCommand } from "./commands/task.js";
 import { walletCommand } from "./commands/wallet.js";
 import { submitCommand } from "./commands/submit.js";
+import { commitCommand } from "./commands/commit.js";
+import { statusCommand } from "./commands/status.js";
 import { authCommand } from "./commands/auth.js";
 import {
   projectsCommand,
@@ -35,39 +37,13 @@ program.addCommand(tasksCommand);
 program.addCommand(taskCommand);
 program.addCommand(walletCommand);
 program.addCommand(submitCommand);
+program.addCommand(commitCommand);
+program.addCommand(statusCommand);
 program.addCommand(authCommand);
 program.addCommand(projectsCommand);
 program.addCommand(projectCommand);
 program.addCommand(contributorsCommand);
 program.addCommand(reportCommand);
-
-// Alias status
-program
-  .command("status")
-  .description("Afficher le statut du projet et du wallet courants")
-  .action(async () => {
-    const { loadProjectConfig, loadUserConfig } = await import(
-      "./utils/config.js"
-    );
-    const { printProjectConfig, printInfo } = await import(
-      "./utils/display.js"
-    );
-
-    const projectConfig = loadProjectConfig();
-    const userConfig = loadUserConfig();
-
-    if (projectConfig) {
-      printProjectConfig(projectConfig);
-    } else {
-      printInfo("Pas de projet PTF dans ce répertoire.");
-    }
-
-    if (userConfig.walletAddress) {
-      printInfo(`Wallet : ${userConfig.walletAddress} (${userConfig.walletChain})`);
-    } else {
-      printInfo("Aucun wallet configuré. Lancez : ptf auth login");
-    }
-  });
 
 program
   .command("describe")

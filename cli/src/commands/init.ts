@@ -159,8 +159,7 @@ export const initCommand = new Command("init")
       ownerAddress,
     };
 
-    const ptfDir = join(process.cwd(), ".ptf");
-    const configPath = join(ptfDir, "config.json");
+    const configPath = join(process.cwd(), ".ptf", "config.json");
 
     saveProjectConfig(config);
     ensureGitignore(process.cwd());

@@ -30,6 +30,10 @@ export const validateDocsCommand = new Command("validate-docs")
       : join(cwd, options.plan);
 
     if (options.archOnly) {
+      if (!existsSync(archPath)) {
+        console.error(chalk.red(`✗ Fichier introuvable : ${archPath}`));
+        process.exit(1);
+      }
       const { errors, sectionResults } = validateArchitectureFile(archPath);
       const hardErrors = errors.filter((e) => e.type === "error");
       const warnings = errors.filter((e) => e.type === "warning");
@@ -44,6 +48,10 @@ export const validateDocsCommand = new Command("validate-docs")
     }
 
     if (options.planOnly) {
+      if (!existsSync(planPath)) {
+        console.error(chalk.red(`✗ Fichier introuvable : ${planPath}`));
+        process.exit(1);
+      }
       const { errors, sectionResults } = validatePlanFile(planPath);
       const hardErrors = errors.filter((e) => e.type === "error");
       const warnings = errors.filter((e) => e.type === "warning");

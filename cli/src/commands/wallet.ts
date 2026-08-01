@@ -74,10 +74,9 @@ walletCommand
     }
 
     const chain = options.chain;
-    const userConfig2 = loadUserConfig();
-    const client2 = new PtfApiClient(userConfig2);
+    const client = new PtfApiClient(userConfig);
 
-    if (client2.isOffline()) {
+    if (client.isOffline()) {
       printOfflineBanner();
       printWarning("Mode offline — adresse PTF simulée");
       console.log(

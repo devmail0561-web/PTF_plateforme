@@ -16,13 +16,13 @@ authCommand
     const userConfig = loadUserConfig();
 
     if (options.offline || process.env["PTF_OFFLINE"]) {
-      printWarning("Mode offline — token GitHub simulé");
+      printWarning("Mode offline — aucun token GitHub réel sauvegardé");
       saveUserConfig({
-        githubToken: "ghp_offline_simulated_token",
+        githubToken: undefined,
         walletAddress: options.wallet ?? "0x0000000000000000000000000000000000000000",
         walletChain: "polygon",
       });
-      printSuccess("Connecté en mode offline.");
+      printSuccess("Configuré en mode offline.");
       printInfo(
         "Configurez votre wallet réel : ptf config set-wallet <address>"
       );
@@ -56,7 +56,7 @@ authCommand
     await new Promise<void>((resolve) => {
       const { createServer } = require("http") as typeof import("http");
       const server = createServer((req, res) => {
-        if (req.url?.startsWith("/callback")) {
+        if (req.url === "/callback" || req.url?.startsWith("/callback?")) {
           const url = new URL(req.url, `http://localhost:${callbackPort}`);
           const token = url.searchParams.get("token");
           if (token) {
