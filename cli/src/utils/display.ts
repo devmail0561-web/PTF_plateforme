@@ -230,20 +230,20 @@ export function printEstimation(est: {
   console.log("╠" + line + "╣");
   console.log(`║  Tâches estimées       : ~${est.taskCount} tâches` + " ".repeat(Math.max(0, 28 - String(est.taskCount).length)) + "║");
   console.log(`║  Effort total estimé   : ~${est.totalEffortHours} heures-dev` + " ".repeat(Math.max(0, 24 - String(est.totalEffortHours).length)) + "║");
-  console.log(`║  Reward pool suggéré   : ${est.rewardPoolSuggested.toFixed(0)} USDC` + " ".repeat(Math.max(0, 28 - est.rewardPoolSuggested.toFixed(0).length)) + "║");
-  console.log(`║  Commission PTF (${est.commissionRate * 100}%)  : ${est.commissionAmount.toFixed(0)} USDC` + " ".repeat(Math.max(0, 26 - est.commissionAmount.toFixed(0).length)) + "║");
-  console.log(`║  Total à déposer       : ${est.totalDeposit.toFixed(0)} USDC` + " ".repeat(Math.max(0, 28 - est.totalDeposit.toFixed(0).length)) + "║");
+  console.log(`║  Reward pool suggéré   : ${est.rewardPoolSuggested.toFixed(0)} PTF` + " ".repeat(Math.max(0, 29 - est.rewardPoolSuggested.toFixed(0).length)) + "║");
+  console.log(`║  Commission PTF (${est.commissionRate * 100}%)  : ${est.commissionAmount.toFixed(0)} PTF` + " ".repeat(Math.max(0, 27 - est.commissionAmount.toFixed(0).length)) + "║");
+  console.log(`║  Total à déposer       : ${est.totalDeposit.toFixed(0)} PTF` + " ".repeat(Math.max(0, 29 - est.totalDeposit.toFixed(0).length)) + "║");
   console.log("╠" + line + "╣");
-  console.log("║  Grille commission PTF :                         ║");
-  console.log("║    < 5 000 USDC      → 12 %                      ║");
-  console.log("║    5 000–50 000 USDC → 10 %                      ║");
-  console.log("║    > 50 000 USDC     →  8 %                      ║");
+  console.log("║  Grille commission PTF (réf. USD) :              ║");
+  console.log("║    < 5 000 USD eq.   → 12 %                      ║");
+  console.log("║    5 000–50 000 USD  → 10 %                      ║");
+  console.log("║    > 50 000 USD      →  8 %                      ║");
 
   if (est.byPhase && est.byPhase.length > 0) {
     console.log("╠" + line + "╣");
     console.log("║  Décomposition par phase :                       ║");
     est.byPhase.forEach((p) => {
-      const line2 = `║  ${p.name.padEnd(14)}: ${p.taskCount} tâches  ~${p.rewardPool.toFixed(0)} USDC`;
+      const line2 = `║  ${p.name.padEnd(14)}: ${p.taskCount} tâches  ~${p.rewardPool.toFixed(0)} PTF`;
       console.log(line2 + " ".repeat(Math.max(0, 60 - line2.length)) + "║");
     });
   }

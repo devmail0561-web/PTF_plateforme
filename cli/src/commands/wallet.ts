@@ -48,7 +48,7 @@ walletCommand
   .description("Déposer des fonds sur votre compte PTF")
   .option("--chain <chain>", "Chaîne source", "polygon")
   .option("--amount <amount>", "Montant à déposer")
-  .option("--token <token>", "Token (USDC, ETH, EUR...)", "USDC")
+  .option("--token <token>", "Devise/token source pour la conversion (USDC, ETH, EUR...) — sera converti en PTF", "PTF")
   .option("--currency <currency>", "Alias pour --token")
   .action(async (options) => {
     const userConfig = loadUserConfig();
@@ -92,12 +92,12 @@ walletCommand
           "\n" +
           chalk.dim("En mode réel, l'adresse officielle PTF serait vérifiée via Merkle root réseau.\n") +
           chalk.dim("Après confirmation on-chain, vos crédits PTF seront crédités automatiquement.\n") +
-          (token !== "USDC"
+          (token !== "PTF"
             ? chalk.dim(
-                `Conversion automatique ${token} → USDC via oracle Chainlink (~0.5% de frais, taux garanti 60s)\n`
+                `Conversion automatique ${token} → PTF via oracle Chainlink (~0.5% de frais, taux garanti 60s)\n`
               )
             : "") +
-          chalk.dim("1 PTF = 1 USDC (parité garantie)")
+          chalk.dim("Taux PTF/USD déterminé par le marché — vérifiez le prix actuel avant tout dépôt.")
       );
     } else {
       printInfo(
@@ -317,7 +317,7 @@ walletCommand
     printWarning("Mode offline — bridge simulé");
     printSuccess(
       `Bridge de ${amount} PTF initié : ${options.from} → ${options.to}\n` +
-        chalk.dim("1 PTF = 1 USDC sur toutes les chaînes (parité garantie)\n") +
+        chalk.dim("PTF : token natif à valeur flottante — taux déterminé par le marché\n") +
         chalk.dim("~2-5 minutes pour la confirmation cross-chaîne")
     );
   });
@@ -360,7 +360,7 @@ walletCommand
         { type: "soft_locked",         direction: "debit",  amount: 10.0,   taskId: "0xdef…", chain: "polygon", txHash: null,      note: "10 PTF guarantee locked on task claim",   createdAt: new Date(Date.now() - 86400000 * 3).toISOString() },
         { type: "punishment_deducted", direction: "debit",  amount: 20.0,   taskId: "0xghi…", chain: "polygon", txHash: "0x002…", note: "punishment:lateDelivery",    createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
         { type: "soft_unlocked",       direction: "credit", amount: 10.0,   taskId: "0xghi…", chain: "polygon", txHash: null,      note: "10 PTF guarantee released on task cancel", createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
-        { type: "deposit",             direction: "credit", amount: 50.0,   taskId: null,     chain: "polygon", txHash: "0x003…", note: "50 USDC deposit",             createdAt: new Date(Date.now() - 86400000 * 10).toISOString() },
+        { type: "deposit",             direction: "credit", amount: 50.0,   taskId: null,     chain: "polygon", txHash: "0x003…", note: "50 PTF deposit",              createdAt: new Date(Date.now() - 86400000 * 10).toISOString() },
       ].slice(0, limit);
     } else {
       const result = await client.query<{
@@ -577,18 +577,20 @@ walletCommand
     }
 
     printInfo(
-      `Récupération du taux ${options.from}/USDC via oracle Chainlink...`
+      `Récupération du taux ${options.from}/PTF via oracle Chainlink...`
     );
     await new Promise((r) => setTimeout(r, 500));
 
-    const mockRate = options.from === "EUR" ? 1.08 : options.from === "ETH" ? 2800 : 1;
-    const usdcAmount = amount * mockRate * 0.995;
+    const mockUsdRate = options.from === "EUR" ? 1.08 : options.from === "ETH" ? 2800 : 1;
+    const mockPtfPrice = 1.50; // prix PTF simulé en USD
+    const ptfAmount = (amount * mockUsdRate * 0.995) / mockPtfPrice;
 
     console.log(
       "\n" +
         chalk.bold("Estimation de conversion\n") +
-        `  ${amount} ${options.from} → ${usdcAmount.toFixed(2)} USDC → ${usdcAmount.toFixed(6)} PTF\n` +
-        chalk.dim(`  Taux : 1 ${options.from} = ${mockRate.toFixed(4)} USDC\n`) +
+        `  ${amount} ${options.from} → ${(amount * mockUsdRate).toFixed(2)} USD → ${ptfAmount.toFixed(6)} PTF\n` +
+        chalk.dim(`  Taux : 1 ${options.from} = ${mockUsdRate.toFixed(4)} USD\n`) +
+        chalk.dim(`  Prix PTF : ~${mockPtfPrice.toFixed(2)} USD (taux marché simulé)\n`) +
         chalk.dim("  Frais de conversion : ~0.5%\n") +
         chalk.yellow("  ⚠ Mode offline — taux simulé. Taux garanti 60s en mode réel.")
     );

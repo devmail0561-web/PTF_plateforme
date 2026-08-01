@@ -146,7 +146,7 @@ taskCommand
       if (status.ptfBalance < 10) {
         printError(
           `Solde PTF insuffisant : ${status.ptfBalance} PTF (minimum 10 PTF requis pour les projets paid).\n` +
-            chalk.dim("Rechargez : ptf wallet deposit --chain polygon --amount 10 --token USDC")
+            chalk.dim("Rechargez : ptf wallet deposit (puis envoyez des PTF depuis votre exchange)")
         );
         process.exit(1);
       }

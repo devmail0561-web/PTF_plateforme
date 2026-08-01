@@ -115,7 +115,7 @@ export const generateCommand = new Command("generate")
         message:
           `Générer ${tasks.length} tâches` +
           (config.rewardMode === "paid"
-            ? ` pour ${estimation.totalDeposit.toFixed(0)} USDC (reward + commission PTF) ?`
+            ? ` pour ~${estimation.totalDeposit.toFixed(0)} USD eq. en PTF (reward + commission PTF) ?`
             : " (projet free — aucun paiement requis) ?"),
         default: true,
       },

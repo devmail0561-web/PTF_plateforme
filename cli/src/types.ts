@@ -126,8 +126,8 @@ export interface PtfTask {
   deadline?: string;
   devAddress?: string;
   reward?: {
-    amount: number;
-    token: "USDC";
+    amount: number;    // montant en PTF (valeur de référence en USD au moment de la création)
+    token: "PTF";
   };
   claimCriteria: ClaimCriteria;
   punishments: Punishments;

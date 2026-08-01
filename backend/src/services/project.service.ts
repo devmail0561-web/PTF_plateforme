@@ -102,7 +102,7 @@ export class ProjectService implements IProjectService {
         type: input.type,
         rewardMode: input.rewardMode,
         chain: input.chain,
-        token: input.rewardMode === "paid" ? (input.token ?? "USDC") : undefined,
+        token: input.rewardMode === "paid" ? (input.token ?? "PTF") : undefined,
         repoType: input.repoType,
         repoUrl: input.repoUrl,
         language: input.language,
@@ -181,7 +181,7 @@ export class ProjectService implements IProjectService {
       totalRewardPool:
         project.rewardMode === "free"
           ? "0"
-          : `${project.escrowBalance.toFixed(2)} USDC`,
+          : `${project.escrowBalance.toFixed(6)} PTF`,
       stack:        project.stack,
       status:       project.status,
       isOpenSource: project.isOpenSource,

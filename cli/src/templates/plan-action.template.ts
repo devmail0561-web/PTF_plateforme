@@ -6,7 +6,7 @@ created_at: "{{DATE}}"
 owner: "{{OWNER_WALLET}}"
 reward_mode: "{{REWARD_MODE}}"
 total_tasks: "{{TOTAL_TASK_COUNT}}"
-total_reward_pool: "{{TOTAL_REWARD_POOL}} USDC"
+total_reward_pool: "{{TOTAL_REWARD_POOL}} USD eq."
 ---
 
 # {{PROJECT_NAME}} — Plan d'action PTF
@@ -64,7 +64,7 @@ scoring:
   effort: 3
   reward:
     amount: 150
-    token: "USDC"
+    token: "PTF"
 dependencies: []
 status: open
 duration: "30d"
@@ -116,6 +116,6 @@ verificationSteps:
 
 | Phase | Timeline | Tâches | Reward Pool | Livrable clé |
 |-------|----------|--------|-------------|-------------|
-| 1 — {{PHASE_1_NAME}} | {{PHASE_1_TIMELINE}} | {{PHASE_1_TASK_COUNT}} | {{PHASE_1_REWARD_POOL}} USDC | {{PHASE_1_KEY_DELIVERABLE}} |
-| **Total** | **{{TOTAL_TIMELINE}}** | **{{TOTAL_TASK_COUNT}}** | **{{TOTAL_REWARD_POOL}} USDC** | **{{PROJECT_NAME}} v1.0** |
+| 1 — {{PHASE_1_NAME}} | {{PHASE_1_TIMELINE}} | {{PHASE_1_TASK_COUNT}} | {{PHASE_1_REWARD_POOL}} USD eq. | {{PHASE_1_KEY_DELIVERABLE}} |
+| **Total** | **{{TOTAL_TIMELINE}}** | **{{TOTAL_TASK_COUNT}}** | **{{TOTAL_REWARD_POOL}} USD eq.** | **{{PROJECT_NAME}} v1.0** |
 `;

@@ -145,8 +145,8 @@ contributorsCommand
     if (client.isOffline()) {
       printInfo("Mode offline — données simulées");
       const rows = [
-        ["0xAbCd...1234", "dev_alice", "12", "1 800 USDC", "750 pts", "Senior"],
-        ["0xEfGh...5678", "dev_bob", "5", "450 USDC", "250 pts", "Junior"],
+        ["0xAbCd...1234", "dev_alice", "12", "1 800 PTF", "750 pts", "Senior"],
+        ["0xEfGh...5678", "dev_bob", "5", "450 PTF", "250 pts", "Junior"],
       ];
       printTable(
         ["Wallet", "GitHub", "Tâches", "Total gagné", "Réputation", "Niveau"],

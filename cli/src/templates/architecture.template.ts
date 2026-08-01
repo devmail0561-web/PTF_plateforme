@@ -31,7 +31,7 @@ code_language:
 
 **Public cible :** {{TARGET_AUDIENCE}}
 
-**Mode de rémunération :** \`{{REWARD_MODE}}\` — \`free\` (open source) | \`paid\` (rémunéré, escrow USDC)
+**Mode de rémunération :** \`{{REWARD_MODE}}\` — \`free\` (open source) | \`paid\` (rémunéré, escrow PTF, récompenses libellées en USD payées en PTF au taux oracle)
 
 ---
 

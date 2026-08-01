@@ -36,7 +36,7 @@ export function TaskCard({ task }: TaskCardProps) {
           <span className="font-mono font-bold text-ptf-accent text-base">
             {formatPTF(task.rewardAmount)}
           </span>
-          <span className="text-xs text-ptf-text-3">{task.rewardToken ?? 'USDC'}</span>
+          <span className="text-xs text-ptf-text-3">{task.rewardToken ?? 'PTF'}</span>
         </div>
       ) : (
         <span className="text-xs text-ptf-text-3 italic">Free / Reputation only</span>

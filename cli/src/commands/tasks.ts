@@ -58,7 +58,7 @@ tasksCommand
       t.title.slice(0, 40) + (t.title.length > 40 ? "..." : ""),
       t.priority,
       t.status,
-      t.reward ? `${t.reward.amount} USDC` : "—",
+      t.reward ? `${t.reward.amount} PTF` : "—",
       t.duration,
       t.claimCriteria.requiredSkills?.slice(0, 2).join(", ") ?? "any",
     ]);
@@ -122,7 +122,7 @@ tasksCommand
         `  ${chalk.bold(task.title)}\n` +
           `  ID : ${chalk.dim(task.id.slice(0, 16) + "...")}\n` +
           `  Statut : ${task.status}  Deadline : ${countdown}\n` +
-          (task.reward ? `  Reward : ${chalk.green(task.reward.amount + " USDC")}\n` : "") +
+          (task.reward ? `  Reward : ${chalk.green(task.reward.amount + " PTF")}\n` : "") +
           ""
       );
     });
@@ -255,8 +255,9 @@ tasksCommand
         "\n" +
           chalk.yellow.bold("⚠  Paiement requis avant publication\n") +
           chalk.dim(
-            `Vous devrez déposer ${totalDeposit.toFixed(2)} USDC sur la chaîne ${config.chain}\n` +
-              "en escrow avant que les tâches soient visibles dans le réseau PTF."
+            `Vous devrez déposer ${totalDeposit.toFixed(6)} PTF sur la chaîne ${config.chain}\n` +
+              "en escrow avant que les tâches soient visibles dans le réseau PTF.\n" +
+              chalk.dim("Le montant en PTF est calculé au taux oracle PTF/USD au moment du dépôt.")
           )
       );
     }
@@ -268,7 +269,7 @@ tasksCommand
         name: "confirm",
         message:
           config.rewardMode === "paid"
-            ? `Confirmer le dépôt de ${totalDeposit.toFixed(2)} USDC et la publication ?`
+            ? `Confirmer le dépôt de ~${totalDeposit.toFixed(2)} USD eq. en PTF et la publication ?`
             : `Confirmer la publication de ${tasks.length} tâche(s) (projet free) ?`,
         default: false,
       },

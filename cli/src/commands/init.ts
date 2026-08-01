@@ -31,7 +31,7 @@ export const initCommand = new Command("init")
     `Blockchain : ${SUPPORTED_CHAINS.join(" | ")}`,
     "polygon"
   )
-  .option("--token <token>", "Token de paiement (défaut: USDC)", "USDC")
+  .option("--token <token>", "Token de paiement (défaut: PTF)", "PTF")
   .option("--github <owner/repo>", "Repo GitHub (Cas 1)")
   .option("--server <url>", "Serveur self-hosted (Cas 2)")
   .option("-l, --language <lang>", "Langage principal du projet", "TypeScript")
@@ -98,11 +98,11 @@ export const initCommand = new Command("init")
           message: "Mode de rémunération :",
           choices: [
             {
-              name: "free — open source, pas de reward USDC, pénalités réputation uniquement",
+              name: "free — open source, pas de reward PTF, pénalités réputation uniquement",
               value: "free",
             },
             {
-              name: "paid — escrow USDC, reward par tâche, garantie 10 PTF requise",
+              name: "paid — escrow PTF, reward par tâche (réf. USD), garantie 10 PTF requise",
               value: "paid",
             },
           ],
@@ -198,7 +198,8 @@ export const initCommand = new Command("init")
           "\n" +
           chalk.dim(
             `  Lors de la publication, vous déposerez le reward pool + commission PTF en escrow.\n` +
-              `  Assurez-vous d'avoir suffisamment d'USDC sur la chaîne ${chain}.`
+              `  Assurez-vous d'avoir suffisamment de PTF sur la chaîne ${chain}.\n` +
+              `  Le montant PTF requis est calculé au taux oracle PTF/USD au moment de la publication.`
           )
       );
     }

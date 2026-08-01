@@ -165,7 +165,7 @@ export class TaskService implements ITaskService {
         unlocks: [],
         duration: draft.duration ?? "30d",
         rewardAmount: draft.rewardAmount,
-        rewardToken: draft.rewardAmount ? "USDC" : undefined,
+        rewardToken: draft.rewardAmount ? "PTF" : undefined,
       },
     });
   }
@@ -577,7 +577,7 @@ export class TaskService implements ITaskService {
       priority: task.priority as import("../types/index.js").TaskPriority,
       title: task.title,
       reward: task.rewardAmount
-        ? { amount: task.rewardAmount, token: task.rewardToken ?? "USDC" }
+        ? { amount: task.rewardAmount, token: task.rewardToken ?? "PTF" }
         : null,
       duration: task.duration,
       deadline: task.deadline?.toISOString(),

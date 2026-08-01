@@ -17,7 +17,7 @@ function buildTemplate(task: Task): string {
     `- **Type:** ${task.type}`,
     `- **Priority:** ${task.priority}`,
     `- **Duration:** ${task.duration}`,
-    `- **Reward:** ${task.rewardMode === 'paid' ? `${task.rewardAmount} ${task.rewardToken ?? 'USDC'}` : 'Reputation only'}`,
+    `- **Reward:** ${task.rewardMode === 'paid' ? `${task.rewardAmount} ${task.rewardToken ?? 'PTF'}` : 'Reputation only'}`,
     ``,
     `## Objective`,
     task.objective,

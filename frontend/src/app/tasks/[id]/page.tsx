@@ -57,7 +57,7 @@ export default function TaskDetailPage() {
         {task.rewardMode === 'paid' && task.rewardAmount != null && (
           <div className="text-right shrink-0">
             <p className="font-mono text-2xl font-bold text-ptf-accent">{formatPTF(task.rewardAmount)}</p>
-            <p className="text-xs text-ptf-text-3">{task.rewardToken ?? 'USDC'}</p>
+            <p className="text-xs text-ptf-text-3">{task.rewardToken ?? 'PTF'}</p>
           </div>
         )}
       </div>
