@@ -1,9 +1,25 @@
+/**
+ * AuthService — authentification par challenge-response cryptographique.
+ *
+ * L'identité d'un utilisateur PTF = son adresse PTF (dérivée de son keypair secp256k1).
+ * Le serveur ne stocke jamais de clé privée ni de mot de passe.
+ *
+ * Flow de connexion :
+ *  1. Client → requestChallenge(ptfAddress)  → serveur génère et stocke un nonce
+ *  2. Client signe le nonce localement avec sa clé privée
+ *  3. Client → verifyChallenge(ptfAddress, nonce, signature)
+ *     → serveur vérifie : ecrecover(nonce, sig) == ptfAddress
+ *     → si ok : crée une DeviceSession, retourne un JWT
+ *
+ * La clé privée ne quitte jamais la machine du client.
+ * Le service tier ne connaît que l'adresse PTF publique.
+ */
+
 import type { PrismaClient, User, WalletLink } from "@prisma/client";
 import type { IChainRegistry } from "../bal/chain.registry.js";
-import type { IEmailService } from "./email.service.js";
 import jwt from "jsonwebtoken";
 import { ethers } from "ethers";
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { PtfError, PtfErrorCode } from "../types/errors.js";
 
 // ── Public interfaces ─────────────────────────────────────────────────────────
@@ -12,7 +28,6 @@ export interface JwtPayload {
   userId:       string;
   ptfAddress:   string;
   githubLinked: boolean;
-  walletLinked: boolean;
   deviceId:     string;
 }
 
@@ -25,70 +40,31 @@ export interface DeviceInfo {
   isCurrent?: boolean;
 }
 
-export interface LoginResult {
-  /** Set when the device is already trusted — login is complete. */
-  token?:        string;
-  encryptedKey?: string;
-  user?:         User;
-  /** Set when the device is new and must be verified by OTP email. */
-  pendingSessionId?: string;
-  requiresVerification?: true;
-}
-
 export interface IAuthService {
-  // ── Registration ──────────────────────────────────────────────────────────
+  // ── Challenge-response (auth primaire) ────────────────────────────────────
   /**
-   * Create a new account. The server generates a secp256k1 keypair, derives ptfAddress,
-   * encrypts the private key with the password, and returns encryptedKey to the client.
-   * The client must store encryptedKey locally — the server never keeps the plaintext key.
+   * Génère un nonce à usage unique pour l'adresse PTF donnée.
+   * Le nonce expire en 5 minutes.
+   * Si l'adresse n'existe pas en DB, un compte est créé automatiquement au premier login.
    */
-  register(input: {
-    email:      string;
-    password:   string;
+  requestChallenge(ptfAddress: string): Promise<{ nonce: string; expiresAt: string }>;
+
+  /**
+   * Vérifie que la signature du nonce correspond bien à ptfAddress.
+   * ecrecover(nonce, signature) doit donner ptfAddress.
+   * Si ok : crée/renouvelle la DeviceSession, retourne un JWT.
+   */
+  verifyChallenge(input: {
+    ptfAddress: string;
+    nonce:      string;
+    signature:  string;
     deviceName: string;
     userAgent?: string;
-  }): Promise<{ token: string; user: User; encryptedKey: string }>;
+  }): Promise<{ token: string; user: User }>;
 
-  // ── Login ─────────────────────────────────────────────────────────────────
-  /**
-   * Authenticate with email + password.
-   *
-   * Known device (deviceToken matches a TrustedDevice):
-   *   → returns { token, encryptedKey, user } immediately.
-   *
-   * New / unrecognised device:
-   *   → sends a 6-digit OTP to the user's email
-   *   → returns { pendingSessionId, requiresVerification: true }
-   *   → caller must call verifyNewDevice() to complete login.
-   */
-  login(input: {
-    email:       string;
-    password:    string;
-    deviceName:  string;
-    userAgent?:  string;
-    deviceToken?: string; // opaque token stored by client after first verification
-  }): Promise<LoginResult>;
-
-  // ── New-device OTP verification ───────────────────────────────────────────
-  /**
-   * Verify the 6-digit OTP sent to the user's email after a login from a new device.
-   * On success: creates TrustedDevice + DeviceSession, returns JWT + deviceToken.
-   * The client must persist deviceToken locally — it is used to skip OTP on future logins.
-   */
-  verifyNewDevice(input: {
-    pendingSessionId: string;
-    otp:              string;
-  }): Promise<{ token: string; encryptedKey: string; user: User; deviceToken: string }>;
-
-  // ── GitHub OAuth (post-login, 2-step CSRF-safe) ───────────────────────────
-  /** Step 1: generate a CSRF state nonce for the GitHub OAuth redirect URL. */
+  // ── GitHub OAuth (optionnel, post-login) ──────────────────────────────────
   requestGithubOAuthState(userId: string): Promise<{ state: string }>;
-  /** Step 2: exchange code + verify state, then link the GitHub account. */
   linkGithub(userId: string, code: string, state: string, deviceId: string): Promise<{ token: string; user: User }>;
-
-  // ── Wallet link (challenge-response) ──────────────────────────────────────
-  requestWalletChallenge(userId: string, chain: string, address: string): Promise<{ challengeId: string; nonce: string }>;
-  confirmLinkWallet(userId: string, challengeId: string, signature: string, deviceId: string): Promise<{ token: string; walletLink: WalletLink }>;
 
   // ── Device management ─────────────────────────────────────────────────────
   listDevices(userId: string, currentDeviceId: string): Promise<DeviceInfo[]>;
@@ -100,85 +76,16 @@ export interface IAuthService {
   getUserByAddress(address: string): Promise<User | null>;
   banUser(address: string, reason: string): Promise<void>;
   isBanned(address: string): Promise<boolean>;
-  isFullyLinked(userId: string): Promise<boolean>;
 }
 
-// ── Crypto helpers ────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 
-const SCRYPT_N         = 32768;
-const SCRYPT_R         = 8;
-const SCRYPT_P         = 1;
-const SCRYPT_KEYLEN    = 64;
-const CHALLENGE_TTL    = 5  * 60 * 1000; // 5 min — wallet challenge
-const OTP_TTL          = 10 * 60 * 1000; // 10 min
-const TRUSTED_DEV_TTL  = 365 * 86400000; // 1 year
-const OAUTH_STATE_TTL  = 10 * 60 * 1000; // 10 min — GitHub OAuth state (CSRF)
+const CHALLENGE_TTL   = 5  * 60 * 1000;  // 5 min
+const SESSION_TTL     = 30 * 86400000;   // 30 jours
+const OAUTH_STATE_TTL = 10 * 60 * 1000;  // 10 min
 
-function hashPassword(password: string): string {
-  const salt = randomBytes(16).toString("hex");
-  const hash = scryptSync(password, salt, SCRYPT_KEYLEN, { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
-  return `${salt}:${hash.toString("hex")}`;
-}
-
-function verifyPassword(password: string, stored: string): boolean {
-  const [salt, storedHash] = stored.split(":");
-  const hash = scryptSync(password, salt, SCRYPT_KEYLEN, { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
-  try {
-    return timingSafeEqual(Buffer.from(storedHash, "hex"), hash);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Encrypt a secp256k1 private key with the user's password.
- * Uses PBKDF2(password, keySalt, 100000, 32, sha256) → AES-256-GCM.
- * Format: "v1:<keySalt_hex>:<iv_hex>:<ciphertext_hex>:<authTag_hex>"
- */
-function encryptPrivateKey(privateKeyHex: string, password: string): string {
-  const { createCipheriv, pbkdf2Sync } = await_sync_crypto();
-  const keySalt    = randomBytes(32);
-  const iv         = randomBytes(12);
-  const aesKey     = pbkdf2Sync(password, keySalt, 100_000, 32, "sha256");
-  const cipher     = createCipheriv("aes-256-gcm", aesKey, iv);
-  const ciphertext = Buffer.concat([cipher.update(Buffer.from(privateKeyHex, "hex")), cipher.final()]);
-  const authTag    = cipher.getAuthTag();
-  return `v1:${keySalt.toString("hex")}:${iv.toString("hex")}:${ciphertext.toString("hex")}:${authTag.toString("hex")}`;
-}
-
-// Node crypto is sync — helper to avoid top-level await
-function await_sync_crypto() {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { createCipheriv, pbkdf2Sync } = require("crypto") as typeof import("crypto");
-  return { createCipheriv, pbkdf2Sync };
-}
-
-/** Generate a cryptographically random 6-digit numeric OTP using rejection sampling to avoid modulo bias. */
-function generateOtp(): string {
-  // 24-bit range = 16 777 216. 16 777 216 % 1 000 000 = 777 216 → values 0–777215 are
-  // over-represented with naive modulo. Rejection sampling discards those to get uniform distribution.
-  const LIMIT = 16_000_000; // largest multiple of 1_000_000 that fits in 24 bits
-  let n: number;
-  do {
-    const buf = randomBytes(3);
-    n = (buf[0] << 16) | (buf[1] << 8) | buf[2];
-  } while (n >= LIMIT);
-  return String(n % 1_000_000).padStart(6, "0");
-}
-
-function derivePtfAddress(publicKey: string): string {
-  const pub = ethers.getBytes(publicKey);
-  const keyWithoutPrefix = pub.length === 65 ? pub.slice(1) : pub;
-  return ethers.getAddress("0x" + ethers.keccak256(keyWithoutPrefix).slice(-40));
-}
-
-function buildWalletLinkDomain(chain: string): Record<string, unknown> {
-  return {
-    name:    "PTFWalletLink",
-    version: "1",
-    salt:    ethers.keccak256(ethers.toUtf8Bytes(chain)),
-  };
-}
+// Préfixe du message signé — empêche la réutilisation de la signature pour d'autres protocoles
+const SIGN_PREFIX = "PTF Authentication Challenge:\n";
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
@@ -188,7 +95,6 @@ export class AuthService implements IAuthService {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly chainRegistry: IChainRegistry,
-    private readonly emailService: IEmailService,
     jwtSecret?: string
   ) {
     const secret = jwtSecret ?? process.env["JWT_SECRET"];
@@ -201,180 +107,130 @@ export class AuthService implements IAuthService {
     this.jwtSecret = secret;
   }
 
-  // ── Registration ──────────────────────────────────────────────────────────
+  // ── Challenge-response ────────────────────────────────────────────────────
 
-  async register(input: {
-    email:      string;
-    password:   string;
-    deviceName: string;
-    userAgent?: string;
-  }): Promise<{ token: string; user: User; encryptedKey: string }> {
-    if (!input.email.includes("@")) {
-      throw new PtfError(PtfErrorCode.INVALID_INPUT, "Adresse email invalide");
-    }
-    if (input.password.length < 12) {
-      throw new PtfError(PtfErrorCode.INVALID_INPUT, "Le mot de passe doit contenir au moins 12 caractères");
+  async requestChallenge(ptfAddress: string): Promise<{ nonce: string; expiresAt: string }> {
+    const normalised = ptfAddress.toLowerCase();
+
+    if (!ethers.isAddress(normalised)) {
+      throw new PtfError(PtfErrorCode.INVALID_ADDRESS, `Adresse PTF invalide : ${ptfAddress}`);
     }
 
-    const existing = await this.prisma.user.findUnique({ where: { email: input.email } });
-    if (existing) {
-      // Same error code and message as invalid input to prevent email enumeration
-      throw new PtfError(PtfErrorCode.INVALID_INPUT, "Inscription impossible avec ces informations");
-    }
-
-    // Generate secp256k1 keypair server-side
-    const wallet     = ethers.Wallet.createRandom();
-    const ptfAddress = wallet.address;
-    const encKey     = encryptPrivateKey(wallet.privateKey.slice(2), input.password);
-
-    const user = await this.prisma.user.create({
-      data: {
-        email:        input.email,
-        passwordHash: hashPassword(input.password),
-        ptfPublicKey: wallet.publicKey,
-        ptfAddress,
-        encryptedKey: encKey,
+    // Invalider les anciens challenges non utilisés pour cette adresse
+    await this.prisma.authChallenge.updateMany({
+      where: {
+        used: false,
+        expiresAt: { gt: new Date() },
+        // On filtre via userId → d'abord trouver l'userId si l'user existe
       },
     });
 
-    const { token, deviceSession } = await this.createDeviceSession(user, input.deviceName, input.userAgent, false, false);
-
-    return { token, user, encryptedKey: encKey };
-  }
-
-  // ── Login ─────────────────────────────────────────────────────────────────
-
-  async login(input: {
-    email:        string;
-    password:     string;
-    deviceName:   string;
-    userAgent?:   string;
-    deviceToken?: string;
-  }): Promise<LoginResult> {
-    const user = await this.prisma.user.findUnique({ where: { email: input.email } });
-
-    // Always run verifyPassword to prevent user-existence timing leak
-    const passwordHash = user?.passwordHash ?? "00000000000000000000000000000000:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
-    const passwordOk   = verifyPassword(input.password, passwordHash);
-
-    if (!user || !passwordOk) {
-      throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Email ou mot de passe incorrect");
+    // Trouver ou créer l'utilisateur (le compte est créé au premier login)
+    let user = await this.prisma.user.findUnique({ where: { ptfAddress: normalised } });
+    if (!user) {
+      user = await this.prisma.user.create({
+        data: {
+          ptfAddress:  normalised,
+          ptfPublicKey: null, // sera mis à jour si fourni par le client
+        },
+      });
     }
+
     if (user.isBanned) {
       throw new PtfError(PtfErrorCode.WALLET_BANNED, "Ce compte a été suspendu. Contactez le support PTF.");
     }
 
-    // Check if the device is already trusted
-    if (input.deviceToken) {
-      const trusted = await this.prisma.trustedDevice.findUnique({
-        where: { deviceToken: input.deviceToken },
-      });
-      if (trusted && trusted.userId === user.id && trusted.expiresAt > new Date()) {
-        // Renew the trusted device TTL
-        await this.prisma.trustedDevice.update({
-          where: { id: trusted.id },
-          data:  { expiresAt: new Date(Date.now() + TRUSTED_DEV_TTL), deviceName: input.deviceName, userAgent: input.userAgent ?? null },
-        });
-
-        const linkedState = await this.resolveLinkedState(user.id);
-        const { token } = await this.createDeviceSession(user, input.deviceName, input.userAgent, linkedState.githubLinked, linkedState.walletLinked);
-        return { token, encryptedKey: user.encryptedKey!, user };
-      }
-    }
-
-    // Unknown device — emit OTP and hold the session pending
-    const otp     = generateOtp();
-    const otpHash = hashPassword(otp); // reuse scrypt for OTP storage
-
-    const pending = await this.prisma.pendingDeviceSession.create({
-      data: {
-        userId:     user.id,
-        deviceName: input.deviceName ?? null,
-        userAgent:  input.userAgent  ?? null,
-        otpHash,
-        expiresAt:  new Date(Date.now() + OTP_TTL),
-      },
-    });
-
-    // Fire-and-forget — never block the response on email delivery
-    this.emailService
-      .sendNewDeviceOtp(user.email!, otp, input.deviceName, input.userAgent)
-      .catch((err) => console.error("[AuthService] Email OTP send failed:", err));
-
-    return { pendingSessionId: pending.id, requiresVerification: true };
-  }
-
-  // ── New-device OTP verification ───────────────────────────────────────────
-
-  async verifyNewDevice(input: {
-    pendingSessionId: string;
-    otp:              string;
-  }): Promise<{ token: string; encryptedKey: string; user: User; deviceToken: string }> {
-    const pending = await this.prisma.pendingDeviceSession.findUnique({
-      where: { id: input.pendingSessionId },
-    });
-
-    if (!pending || pending.used || pending.expiresAt < new Date()) {
-      throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Code invalide ou expiré. Recommencez la connexion.");
-    }
-
-    if (!verifyPassword(input.otp, pending.otpHash)) {
-      // Incrémenter le compteur d'échecs — invalider après 5 tentatives (H6)
-      const updated = await this.prisma.pendingDeviceSession.updateMany({
-        where: { id: pending.id, used: false },
-        data: { attempts: { increment: 1 } } as unknown as Record<string, unknown>,
-      });
-      if (updated.count === 0) {
-        throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Code invalide ou expiré. Recommencez la connexion.");
-      }
-      // Refetch pour vérifier le compteur
-      const refreshed = await this.prisma.pendingDeviceSession.findUnique({ where: { id: pending.id } });
-      const attempts = (refreshed as unknown as { attempts?: number })?.attempts ?? 1;
-      if (attempts >= 5) {
-        await this.prisma.pendingDeviceSession.update({ where: { id: pending.id }, data: { used: true } });
-        throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Trop de tentatives incorrectes. Recommencez la connexion.");
-      }
-      throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Code de vérification incorrect");
-    }
-
-    // Atomic consume via updateMany — returns count=0 if already consumed by a concurrent request (H7)
-    const consumed = await this.prisma.pendingDeviceSession.updateMany({
-      where: { id: pending.id, used: false },
+    // Invalider les anciens challenges de cet utilisateur
+    await this.prisma.authChallenge.updateMany({
+      where: { userId: user.id, used: false },
       data:  { used: true },
     });
 
-    if (consumed.count === 0) {
-      // Another concurrent request already consumed this OTP
-      throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Code déjà utilisé. Recommencez la connexion.");
-    }
+    // Générer un nonce : timestamp + random → keccak256
+    const nonce = ethers.keccak256(
+      ethers.solidityPacked(
+        ["address", "bytes32", "uint256"],
+        [normalised, ethers.randomBytes(32), BigInt(Date.now())]
+      )
+    );
 
-    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: pending.userId } });
+    const expiresAt = new Date(Date.now() + CHALLENGE_TTL);
 
-    // Register device as trusted for future logins
-    const deviceToken = randomBytes(32).toString("hex");
-    await this.prisma.trustedDevice.create({
-      data: {
-        userId:      user.id,
-        deviceToken,
-        deviceName:  pending.deviceName,
-        userAgent:   pending.userAgent,
-        expiresAt:   new Date(Date.now() + TRUSTED_DEV_TTL),
-      },
+    await this.prisma.authChallenge.create({
+      data: { userId: user.id, nonce, expiresAt },
     });
 
-    const linkedState = await this.resolveLinkedState(user.id);
-    const { token } = await this.createDeviceSession(user, pending.deviceName ?? "Appareil inconnu", pending.userAgent ?? undefined, linkedState.githubLinked, linkedState.walletLinked);
-
-    return { token, encryptedKey: user.encryptedKey!, user, deviceToken };
+    return { nonce, expiresAt: expiresAt.toISOString() };
   }
 
-  // ── GitHub OAuth ──────────────────────────────────────────────────────────
+  async verifyChallenge(input: {
+    ptfAddress: string;
+    nonce:      string;
+    signature:  string;
+    deviceName: string;
+    userAgent?: string;
+  }): Promise<{ token: string; user: User }> {
+    const normalised = input.ptfAddress.toLowerCase();
+
+    // 1. Vérifier le challenge en DB
+    const user = await this.prisma.user.findUnique({ where: { ptfAddress: normalised } });
+    if (!user) {
+      throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Adresse PTF inconnue ou challenge expiré.");
+    }
+
+    const challenge = await this.prisma.authChallenge.findUnique({ where: { nonce: input.nonce } });
+    if (
+      !challenge ||
+      challenge.used ||
+      challenge.expiresAt < new Date() ||
+      challenge.userId !== user.id
+    ) {
+      throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Challenge invalide, expiré ou déjà utilisé.");
+    }
+
+    // 2. Vérifier la signature : ecrecover(message, signature) == ptfAddress
+    //    Le message signé côté client : signMessage(nonce) utilise le préfixe Ethereum personal_sign
+    const messageToVerify = SIGN_PREFIX + input.nonce;
+    let recovered: string;
+    try {
+      recovered = ethers.verifyMessage(messageToVerify, input.signature);
+    } catch {
+      throw new PtfError(PtfErrorCode.OWNERSHIP_NOT_PROVEN, "Signature invalide.");
+    }
+
+    if (recovered.toLowerCase() !== normalised) {
+      throw new PtfError(
+        PtfErrorCode.OWNERSHIP_NOT_PROVEN,
+        "La signature ne correspond pas à l'adresse PTF déclarée."
+      );
+    }
+
+    // 3. Consommer le challenge (atomique)
+    const consumed = await this.prisma.authChallenge.updateMany({
+      where: { nonce: input.nonce, used: false },
+      data:  { used: true },
+    });
+    if (consumed.count === 0) {
+      throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Challenge déjà utilisé — relancez la connexion.");
+    }
+
+    // 4. Créer la session
+    const { token } = await this.createDeviceSession(
+      user,
+      input.deviceName,
+      input.userAgent,
+      !!user.githubId
+    );
+
+    return { token, user };
+  }
+
+  // ── GitHub OAuth (optionnel) ──────────────────────────────────────────────
 
   async requestGithubOAuthState(userId: string): Promise<{ state: string }> {
     const state = ethers.keccak256(
       ethers.solidityPacked(["string", "bytes32", "uint256"], [userId, ethers.randomBytes(32), BigInt(Date.now())])
     );
-    // Reuse AuthChallenge to store the CSRF state nonce (same pattern as wallet challenge).
     await this.prisma.authChallenge.create({
       data: { userId, nonce: state, expiresAt: new Date(Date.now() + OAUTH_STATE_TTL) },
     });
@@ -382,12 +238,12 @@ export class AuthService implements IAuthService {
   }
 
   async linkGithub(userId: string, code: string, state: string, deviceId: string): Promise<{ token: string; user: User }> {
-    // Verify the CSRF state nonce before touching GitHub APIs.
     const challenge = await this.prisma.authChallenge.findUnique({ where: { nonce: state } });
     if (!challenge || challenge.used || challenge.expiresAt < new Date() || challenge.userId !== userId) {
       throw new PtfError(PtfErrorCode.UNAUTHORIZED, "État OAuth invalide ou expiré — relancez la liaison GitHub");
     }
     await this.prisma.authChallenge.update({ where: { id: challenge.id }, data: { used: true } });
+
     const githubToken = await this.exchangeGithubCode(code);
     const githubUser  = await this.fetchGithubUser(githubToken);
 
@@ -401,77 +257,8 @@ export class AuthService implements IAuthService {
       data:  { githubId: String(githubUser.id), githubHandle: githubUser.login as string },
     });
 
-    const linkedState = await this.resolveLinkedState(user.id);
-    const token = await this.rotateDeviceToken(userId, deviceId, user.ptfAddress!, linkedState.githubLinked, linkedState.walletLinked);
-
+    const token = await this.rotateDeviceToken(userId, deviceId, user.ptfAddress!, true);
     return { token, user };
-  }
-
-  // ── Wallet link ───────────────────────────────────────────────────────────
-
-  async requestWalletChallenge(userId: string, chain: string, address: string): Promise<{ challengeId: string; nonce: string }> {
-    const adapter = this.chainRegistry.get(chain);
-    if (!adapter.isValidAddress(address)) {
-      throw new PtfError(PtfErrorCode.INVALID_ADDRESS, `Adresse invalide : ${address}`);
-    }
-
-    const nonce = ethers.keccak256(
-      ethers.solidityPacked(
-        ["string", "string", "address", "uint256"],
-        [userId, chain, address.toLowerCase(), BigInt(Date.now())]
-      )
-    );
-
-    const challenge = await this.prisma.walletLinkChallenge.create({
-      data: { userId, chain, address: address.toLowerCase(), nonce, expiresAt: new Date(Date.now() + CHALLENGE_TTL) },
-    });
-
-    return { challengeId: challenge.id, nonce };
-  }
-
-  async confirmLinkWallet(userId: string, challengeId: string, signature: string, deviceId: string): Promise<{ token: string; walletLink: WalletLink }> {
-    const challenge = await this.prisma.walletLinkChallenge.findUnique({ where: { id: challengeId } });
-
-    if (!challenge || challenge.used || challenge.expiresAt < new Date()) {
-      throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Challenge de liaison wallet invalide ou expiré");
-    }
-    if (challenge.userId !== userId) {
-      throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Challenge appartient à un autre utilisateur");
-    }
-
-    const adapter   = this.chainRegistry.get(challenge.chain);
-    const recovered = await adapter.verifyEIP712Signature(
-      buildWalletLinkDomain(challenge.chain),
-      { WalletLink: [{ name: "nonce", type: "string" }, { name: "userId", type: "string" }] },
-      { nonce: challenge.nonce, userId },
-      signature
-    );
-
-    if (recovered.toLowerCase() !== challenge.address.toLowerCase()) {
-      throw new PtfError(PtfErrorCode.OWNERSHIP_NOT_PROVEN, "La signature ne correspond pas à l'adresse déclarée");
-    }
-
-    await this.prisma.walletLinkChallenge.update({ where: { id: challengeId }, data: { used: true } });
-
-    // Guard against silent wallet re-assignment — symmetric to linkGithub (H5)
-    const existingLink = await this.prisma.walletLink.findUnique({
-      where: { chain_address: { chain: challenge.chain, address: challenge.address } },
-    });
-    if (existingLink && existingLink.userId !== userId) {
-      throw new PtfError(PtfErrorCode.GITHUB_ALREADY_LINKED, "Ce wallet est déjà lié à un autre compte PTF");
-    }
-
-    const walletLink = await this.prisma.walletLink.upsert({
-      where:  { chain_address: { chain: challenge.chain, address: challenge.address } },
-      create: { userId, chain: challenge.chain, address: challenge.address, isPrimary: false },
-      update: { userId },
-    });
-
-    const user        = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
-    const linkedState = await this.resolveLinkedState(userId);
-    const token       = await this.rotateDeviceToken(userId, deviceId, user.ptfAddress!, linkedState.githubLinked, linkedState.walletLinked);
-
-    return { token, walletLink };
   }
 
   // ── Device management ─────────────────────────────────────────────────────
@@ -514,12 +301,10 @@ export class AuthService implements IAuthService {
       const session = await this.prisma.deviceSession.findFirst({
         where: { token, expiresAt: { gt: new Date() } },
       });
-
       if (!session) {
         throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Session expirée ou révoquée");
       }
 
-      // Touch lastSeenAt without blocking the request
       this.prisma.deviceSession.update({
         where: { id: session.id },
         data:  { lastSeenAt: new Date() },
@@ -534,23 +319,14 @@ export class AuthService implements IAuthService {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  async isFullyLinked(userId: string): Promise<boolean> {
-    const s = await this.resolveLinkedState(userId);
-    return s.githubLinked && s.walletLinked;
-  }
-
   async getUserByAddress(address: string): Promise<User | null> {
-    const wallet = await this.prisma.walletLink.findFirst({
-      where: { address: address.toLowerCase() }, include: { user: true },
-    });
-    return wallet?.user ?? null;
+    return this.prisma.user.findUnique({ where: { ptfAddress: address.toLowerCase() } });
   }
 
   async banUser(address: string, reason: string): Promise<void> {
     const user = await this.getUserByAddress(address);
     if (!user) return;
     await this.prisma.user.update({ where: { id: user.id }, data: { isBanned: true, banReason: reason } });
-    // Revoke all sessions immediately
     await this.prisma.deviceSession.deleteMany({ where: { userId: user.id } });
   }
 
@@ -561,48 +337,25 @@ export class AuthService implements IAuthService {
 
   // ── Private ───────────────────────────────────────────────────────────────
 
-  private async resolveLinkedState(userId: string): Promise<{ githubLinked: boolean; walletLinked: boolean }> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId }, include: { wallets: { take: 1 } },
-    });
-    return { githubLinked: !!user?.githubId, walletLinked: (user?.wallets.length ?? 0) > 0 };
-  }
-
   private async createDeviceSession(
     user:         User,
     deviceName:   string,
     userAgent:    string | undefined,
     githubLinked: boolean,
-    walletLinked: boolean,
-  ): Promise<{ token: string; deviceSession: { id: string } }> {
-    const expiresAt = new Date(Date.now() + 30 * 86400000); // 30 days
-
-    // Pre-generate a placeholder ID so we can embed it in the JWT
-    const deviceId = createHash("sha256")
+  ): Promise<{ token: string }> {
+    const expiresAt = new Date(Date.now() + SESSION_TTL);
+    const deviceId  = createHash("sha256")
       .update(user.id + deviceName + Date.now().toString())
       .digest("hex")
       .slice(0, 24);
 
-    const token = this.signJwt({
-      userId:       user.id,
-      ptfAddress:   user.ptfAddress!,
-      githubLinked,
-      walletLinked,
-      deviceId,
+    const token = this.signJwt({ userId: user.id, ptfAddress: user.ptfAddress!, githubLinked, deviceId });
+
+    await this.prisma.deviceSession.create({
+      data: { id: deviceId, userId: user.id, token, deviceName, userAgent: userAgent ?? null, expiresAt },
     });
 
-    const deviceSession = await this.prisma.deviceSession.create({
-      data: {
-        id:         deviceId,
-        userId:     user.id,
-        token,
-        deviceName,
-        userAgent:  userAgent ?? null,
-        expiresAt,
-      },
-    });
-
-    return { token, deviceSession };
+    return { token };
   }
 
   private async rotateDeviceToken(
@@ -610,10 +363,9 @@ export class AuthService implements IAuthService {
     deviceId:     string,
     ptfAddress:   string,
     githubLinked: boolean,
-    walletLinked: boolean,
   ): Promise<string> {
-    const expiresAt = new Date(Date.now() + 30 * 86400000);
-    const token = this.signJwt({ userId, ptfAddress, githubLinked, walletLinked, deviceId });
+    const expiresAt = new Date(Date.now() + SESSION_TTL);
+    const token     = this.signJwt({ userId, ptfAddress, githubLinked, deviceId });
 
     await this.prisma.deviceSession.update({
       where: { id: deviceId },
@@ -629,9 +381,9 @@ export class AuthService implements IAuthService {
 
   private async exchangeGithubCode(code: string): Promise<string> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const timeout    = setTimeout(() => controller.abort(), 10_000);
     try {
-      const res = await fetch("https://github.com/login/oauth/access_token", {
+      const res  = await fetch("https://github.com/login/oauth/access_token", {
         method:  "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body:    JSON.stringify({
@@ -653,7 +405,7 @@ export class AuthService implements IAuthService {
 
   private async fetchGithubUser(token: string): Promise<Record<string, unknown>> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const timeout    = setTimeout(() => controller.abort(), 10_000);
     try {
       const res = await fetch("https://api.github.com/user", {
         headers: { Authorization: `Bearer ${token}` },

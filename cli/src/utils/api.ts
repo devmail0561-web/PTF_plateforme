@@ -18,13 +18,40 @@ export class PtfApiClient {
 
   constructor(config: PtfUserConfig) {
     this.apiUrl = config.ptfApiUrl ?? "https://api.ptf.dev";
-    // Offline when no URL is configured; try to connect otherwise (network errors fall back gracefully)
     this.offline = !config.ptfApiUrl;
-    this.apiToken = (config as unknown as { ptfApiToken?: string }).ptfApiToken;
+    // sessionToken est le JWT retourné après challenge-response
+    this.apiToken = config.sessionToken ?? (config as unknown as { ptfApiToken?: string }).ptfApiToken;
   }
 
   isOffline(): boolean {
     return this.offline || process.env["PTF_OFFLINE"] === "true";
+  }
+
+  // ── Auth challenge-response ────────────────────────────────────────────────
+
+  async requestAuthChallenge(ptfAddress: string): Promise<{ nonce: string; expiresAt: string }> {
+    const data = await this.query<{ requestChallenge: { nonce: string; expiresAt: string } }>(
+      `mutation RequestChallenge($ptfAddress: String!) {
+        requestChallenge(ptfAddress: $ptfAddress) { nonce expiresAt }
+      }`,
+      { ptfAddress }
+    );
+    return data.requestChallenge;
+  }
+
+  async verifyAuthChallenge(
+    ptfAddress: string,
+    nonce:      string,
+    signature:  string,
+    deviceName = "PTF CLI"
+  ): Promise<{ token: string }> {
+    const data = await this.query<{ verifyChallenge: { token: string } }>(
+      `mutation VerifyChallenge($input: VerifyChallengeInput!) {
+        verifyChallenge(input: $input) { token user { ptfAddress } }
+      }`,
+      { input: { ptfAddress, nonce, signature, deviceName } }
+    );
+    return data.verifyChallenge;
   }
 
   /**

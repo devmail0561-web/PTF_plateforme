@@ -11,10 +11,196 @@ import {
   printOfflineBanner,
 } from "../utils/display.js";
 import { isValidAddress } from "../utils/crypto.js";
+import {
+  createWallet,
+  restoreWallet,
+  listLocalWallets,
+  getKeystorePath,
+} from "../utils/keystore.js";
 
 export const walletCommand = new Command("wallet").description(
   "Gérer son wallet PTF (crédits, dépôts, vérifications)"
 );
+
+// ── Création et restauration du wallet ────────────────────────────────────────
+
+walletCommand
+  .command("create")
+  .description("Créer un nouveau wallet PTF (keypair secp256k1 + seed phrase BIP-39)")
+  .action(async () => {
+    const { default: inquirer } = await import("inquirer");
+
+    console.log(
+      "\n" + chalk.bold("Création d'un wallet PTF\n") +
+      chalk.dim("─".repeat(50)) + "\n" +
+      "Un keypair secp256k1 va être généré sur cette machine.\n" +
+      chalk.yellow("La clé privée ne quittera jamais votre appareil.\n")
+    );
+
+    const { password, confirm } = await inquirer.prompt<{ password: string; confirm: string }>([
+      {
+        type:    "password",
+        name:    "password",
+        message: "Choisissez un mot de passe pour chiffrer votre keystore :",
+        mask:    "*",
+        validate: (v: string) => v.length >= 8 || "Minimum 8 caractères.",
+      },
+      {
+        type:    "password",
+        name:    "confirm",
+        message: "Confirmez le mot de passe :",
+        mask:    "*",
+      },
+    ]);
+
+    if (password !== confirm) {
+      printError("Les mots de passe ne correspondent pas.");
+      process.exit(1);
+    }
+
+    const wallet = createWallet(password);
+
+    console.log(
+      "\n" + chalk.green.bold("✓ Wallet créé !\n") +
+      chalk.dim("─".repeat(50)) + "\n" +
+      `  Adresse PTF : ${chalk.cyan.bold(wallet.address)}\n` +
+      `  Keystore    : ${chalk.dim(wallet.keystorePath)}\n`
+    );
+
+    console.log(
+      chalk.yellow.bold("\n  ⚠  SEED PHRASE — À SAUVEGARDER IMMÉDIATEMENT\n") +
+      chalk.yellow("  ┌" + "─".repeat(46) + "┐") + "\n" +
+      chalk.yellow("  │") + "                                              " + chalk.yellow("│") + "\n"
+    );
+
+    const words = wallet.mnemonic.split(" ");
+    for (let i = 0; i < words.length; i += 3) {
+      const line = words.slice(i, i + 3)
+        .map((w, j) => `${String(i + j + 1).padStart(2)}. ${w.padEnd(12)}`)
+        .join("  ");
+      console.log(chalk.yellow("  │  ") + chalk.bold(line) + chalk.yellow("  │"));
+    }
+
+    console.log(
+      chalk.yellow("  │") + "                                              " + chalk.yellow("│") + "\n" +
+      chalk.yellow("  └" + "─".repeat(46) + "┘") + "\n\n" +
+      chalk.red("  ATTENTION : Ces 12 mots sont la seule façon de récupérer\n") +
+      chalk.red("  votre wallet si vous perdez le fichier keystore.\n") +
+      chalk.red("  Notez-les sur papier et gardez-les en lieu sûr.\n") +
+      chalk.red("  Ne les partagez jamais — ils donnent accès à tous vos fonds.\n")
+    );
+
+    const { confirmed } = await inquirer.prompt<{ confirmed: boolean }>([
+      {
+        type:    "confirm",
+        name:    "confirmed",
+        message: "J'ai sauvegardé ma seed phrase en lieu sûr.",
+        default: false,
+      },
+    ]);
+
+    if (!confirmed) {
+      printWarning("Veuillez sauvegarder votre seed phrase avant de continuer.");
+    }
+
+    saveUserConfig({ walletAddress: wallet.address });
+
+    printSuccess(
+      `Wallet configuré comme wallet actif.\n` +
+      chalk.dim("Connectez-vous au service PTF : ptf auth login")
+    );
+  });
+
+walletCommand
+  .command("restore")
+  .description("Restaurer un wallet PTF depuis une seed phrase BIP-39")
+  .action(async () => {
+    const { default: inquirer } = await import("inquirer");
+
+    console.log(
+      "\n" + chalk.bold("Restauration d'un wallet PTF\n") +
+      chalk.dim("─".repeat(50)) + "\n" +
+      "Entrez vos 12 mots (seed phrase) pour restaurer votre wallet.\n"
+    );
+
+    const { mnemonic, password, confirm } = await inquirer.prompt<{
+      mnemonic: string;
+      password: string;
+      confirm: string;
+    }>([
+      {
+        type:     "input",
+        name:     "mnemonic",
+        message:  "Seed phrase (12 mots séparés par des espaces) :",
+        validate: (v: string) => {
+          const words = v.trim().split(/\s+/);
+          return words.length === 12 || "La seed phrase doit contenir exactement 12 mots.";
+        },
+      },
+      {
+        type:    "password",
+        name:    "password",
+        message: "Nouveau mot de passe pour le keystore :",
+        mask:    "*",
+        validate: (v: string) => v.length >= 8 || "Minimum 8 caractères.",
+      },
+      {
+        type:    "password",
+        name:    "confirm",
+        message: "Confirmez le mot de passe :",
+        mask:    "*",
+      },
+    ]);
+
+    if (password !== confirm) {
+      printError("Les mots de passe ne correspondent pas.");
+      process.exit(1);
+    }
+
+    let wallet;
+    try {
+      wallet = restoreWallet(mnemonic, password);
+    } catch (err) {
+      printError((err as Error).message);
+      process.exit(1);
+    }
+
+    saveUserConfig({ walletAddress: wallet.address });
+
+    printSuccess(
+      `Wallet restauré !\n` +
+      `  Adresse PTF : ${chalk.cyan.bold(wallet.address)}\n` +
+      `  Keystore    : ${chalk.dim(wallet.keystorePath)}\n\n` +
+      chalk.dim("Reconnectez-vous : ptf auth login")
+    );
+  });
+
+walletCommand
+  .command("list")
+  .description("Lister les wallets PTF présents sur cette machine")
+  .action(() => {
+    const cfg = loadUserConfig();
+    const wallets = listLocalWallets();
+
+    if (wallets.length === 0) {
+      printInfo(
+        "Aucun wallet PTF trouvé sur cette machine.\n" +
+        chalk.dim("Créez-en un : ptf wallet create")
+      );
+      return;
+    }
+
+    console.log("\n" + chalk.bold(`${wallets.length} wallet(s) PTF local(aux) :\n`));
+    wallets.forEach((address) => {
+      const isCurrent = address.toLowerCase() === cfg.walletAddress?.toLowerCase();
+      console.log(
+        `  ${isCurrent ? chalk.cyan("→") : " "} ${address}` +
+        (isCurrent ? chalk.dim(" (actif)") : "") + "\n" +
+        `     Keystore : ${chalk.dim(getKeystorePath(address))}`
+      );
+    });
+    console.log("");
+  });
 
 walletCommand
   .command("status")

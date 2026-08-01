@@ -41,24 +41,15 @@ type Query {
 }
 
 type Mutation {
-  # Auth — Registration (first time only)
-  register(input: RegisterInput!): AuthResult!
+  # Auth — Challenge-response (auth primaire, pas de mot de passe côté serveur)
+  # Step 1: le serveur génère un nonce pour l'adresse PTF donnée (TTL 5 min).
+  # Step 2: le client signe le nonce localement et envoie la signature.
+  requestChallenge(ptfAddress: String!): ChallengeResult!
+  verifyChallenge(input: VerifyChallengeInput!): AuthResult!
 
-  # Auth — Login (email + password)
-  # Known device (deviceToken provided): returns AuthResult immediately.
-  # New device: sends OTP to email, returns LoginResult { pendingSessionId }.
-  login(input: LoginInput!): LoginResult!
-  verifyNewDevice(pendingSessionId: ID!, otp: String!): AuthResult!
-
-  # Auth — GitHub linking (2-step CSRF-safe, requires JWT)
-  # Step 1: obtain a server-generated state nonce to include in the OAuth redirect URL.
-  # Step 2: exchange the code + state returned by GitHub.
+  # Auth — GitHub linking (optionnel, 2-step CSRF-safe, requires JWT)
   requestGithubOAuthState: GithubOAuthState!
   linkGithub(code: String!, state: String!): AuthResult!
-
-  # Auth — Wallet linking (2-step: request nonce → EIP-712 sign)
-  requestWalletChallenge(chain: String!, address: String!): WalletChallenge!
-  confirmLinkWallet(challengeId: ID!, signature: String!): WalletLinkResult!
 
   # Device management
   revokeDevice(deviceId: ID!): Boolean!
@@ -313,38 +304,24 @@ type WalletLink {
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
 
-input RegisterInput {
-  email:      String!
-  password:   String!
-  deviceName: String!
+# Retourné par requestChallenge — le client signe le nonce avec sa clé privée locale.
+type ChallengeResult {
+  nonce:     String!   # keccak256 aléatoire, TTL 5 min
+  expiresAt: String!   # ISO 8601
 }
 
-input LoginInput {
-  email:       String!
-  password:    String!
-  deviceName:  String!
-  deviceToken: String   # opaque token stored locally after first OTP verification
+input VerifyChallengeInput {
+  ptfAddress: String!   # adresse PTF de l'utilisateur
+  nonce:      String!   # nonce reçu via requestChallenge
+  signature:  String!   # personal_sign(nonce, privateKey) — clé privée locale, ne quitte pas la machine
+  deviceName: String!   # ex : "PTF CLI", "Chrome / Ubuntu"
+  userAgent:  String
 }
 
-# Returned when login requires OTP (new device). pendingSessionId must be passed to verifyNewDevice.
-type LoginResult {
-  # Known device — login is complete.
-  token:        String
-  encryptedKey: String
-  user:         UserProfile
-  # New device — OTP sent to email.
-  pendingSessionId:     String
-  requiresVerification: Boolean
-}
-
-# encryptedKey lets the client decrypt the PTF private key locally.
-# Format: "v1:<keySalt_hex>:<iv_hex>:<ciphertext_hex>:<authTag_hex>"
-# deviceToken is only set by verifyNewDevice — store it persistently to skip OTP next time.
+# Retourné par verifyChallenge et linkGithub.
 type AuthResult {
-  token:        String!
-  encryptedKey: String!
-  deviceToken:  String   # only set by verifyNewDevice
-  user:         UserProfile!
+  token: String!        # JWT de session (30 jours)
+  user:  UserProfile!
 }
 
 # Step 1 of GitHub OAuth: server-issued state nonce to prevent CSRF.
@@ -367,11 +344,10 @@ type WalletLinkResult {
 
 type UserProfile {
   id:           ID!
-  email:        String
-  ptfAddress:   String
+  ptfAddress:   String!   # adresse PTF = identité principale
+  ptfPublicKey: String    # clé publique compressée (optionnelle)
   githubHandle: String
   githubLinked: Boolean!
-  walletLinked: Boolean!
   wallets:      [WalletLink!]!
 }
 

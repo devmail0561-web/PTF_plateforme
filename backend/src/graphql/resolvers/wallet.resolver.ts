@@ -19,11 +19,10 @@ async function buildUserProfile(user: User, ctx: GraphQLContext) {
   const wallets = await ctx.services.wallet.getLinkedChains(user.id);
   return {
     id:           user.id,
-    email:        user.email,
-    ptfAddress:   user.ptfAddress,
+    ptfAddress:   user.ptfAddress!,
+    ptfPublicKey: (user as unknown as { ptfPublicKey?: string }).ptfPublicKey ?? null,
     githubHandle: user.githubHandle,
     githubLinked: !!user.githubId,
-    walletLinked: wallets.length > 0,
     wallets:      wallets.map((w) => ({ id: w.id, chain: w.chain, address: w.address, isPrimary: w.isPrimary })),
   };
 }
@@ -161,58 +160,34 @@ export const walletResolvers = {
   },
 
   Mutation: {
-    // ── Register ──────────────────────────────────────────────────────────────
-    register: async (
+    // ── Challenge-response step 1 : génère un nonce ──────────────────────────
+    requestChallenge: async (
       _: unknown,
-      args: { input: { email: string; password: string; deviceName: string } },
+      args: { ptfAddress: string },
       ctx: GraphQLContext
     ) => {
-      const { token, user, encryptedKey } = await ctx.services.auth.register({
-        email:      args.input.email,
-        password:   args.input.password,
-        deviceName: args.input.deviceName,
-      });
-      return { token, encryptedKey, user: await buildUserProfile(user, ctx) };
+      return ctx.services.auth.requestChallenge(args.ptfAddress);
     },
 
-    // ── Login ─────────────────────────────────────────────────────────────────
-    login: async (
+    // ── Challenge-response step 2 : vérifie la signature, crée la session ────
+    verifyChallenge: async (
       _: unknown,
-      args: { input: { email: string; password: string; deviceName: string; deviceToken?: string } },
+      args: {
+        input: {
+          ptfAddress: string;
+          nonce:      string;
+          signature:  string;
+          deviceName: string;
+          userAgent?: string;
+        };
+      },
       ctx: GraphQLContext
     ) => {
-      const result = await ctx.services.auth.login({
-        email:       args.input.email,
-        password:    args.input.password,
-        deviceName:  args.input.deviceName,
-        deviceToken: args.input.deviceToken,
-      });
-
-      if (result.requiresVerification) {
-        return { pendingSessionId: result.pendingSessionId, requiresVerification: true };
-      }
-
-      return {
-        token:        result.token,
-        encryptedKey: result.encryptedKey,
-        user:         await buildUserProfile(result.user!, ctx),
-      };
+      const { token, user } = await ctx.services.auth.verifyChallenge(args.input);
+      return { token, user: await buildUserProfile(user, ctx) };
     },
 
-    // ── Verify new device OTP ─────────────────────────────────────────────────
-    verifyNewDevice: async (
-      _: unknown,
-      args: { pendingSessionId: string; otp: string },
-      ctx: GraphQLContext
-    ) => {
-      const { token, encryptedKey, user, deviceToken } = await ctx.services.auth.verifyNewDevice({
-        pendingSessionId: args.pendingSessionId,
-        otp:              args.otp,
-      });
-      return { token, encryptedKey, deviceToken, user: await buildUserProfile(user, ctx) };
-    },
-
-    // ── Request GitHub OAuth state (step 1) ──────────────────────────────────
+    // ── Request GitHub OAuth state (step 1, optionnel) ───────────────────────
     requestGithubOAuthState: async (
       _: unknown,
       __: unknown,
@@ -230,10 +205,7 @@ export const walletResolvers = {
     ) => {
       if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
       const { token, user } = await ctx.services.auth.linkGithub(ctx.user.userId, args.code, args.state, ctx.user.deviceId);
-      // encryptedKey unchanged — client already has it stored locally from initial login.
-      // Never return "" which would overwrite the client's stored key with an empty string.
-      // "__unchanged__" is a sentinel the frontend must recognise and ignore (M6).
-      return { token, encryptedKey: user.encryptedKey ?? "__unchanged__", user: await buildUserProfile(user, ctx) };
+      return { token, user: await buildUserProfile(user, ctx) };
     },
 
     // ── Request wallet-link challenge ─────────────────────────────────────────

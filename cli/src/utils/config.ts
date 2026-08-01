@@ -10,14 +10,15 @@ const userConf = new Conf<PtfUserConfig>({
 
 export function loadUserConfig(): PtfUserConfig {
   return {
-    ptfApiUrl: userConf.get("ptfApiUrl") ?? "https://api.ptf.dev",
-    githubToken: userConf.get("githubToken"),
+    ptfApiUrl:    userConf.get("ptfApiUrl") ?? "https://api.ptf.dev",
+    ptfNodeUrl:   userConf.get("ptfNodeUrl"),
     walletAddress: userConf.get("walletAddress"),
-    walletChain: userConf.get("walletChain") ?? "polygon",
-    llmProvider: userConf.get("llmProvider"),
-    llmApiKey: userConf.get("llmApiKey"),
-    llmUrl: userConf.get("llmUrl"),
-    llmModel: userConf.get("llmModel"),
+    sessionToken: userConf.get("sessionToken"),
+    githubToken:  userConf.get("githubToken"),
+    llmProvider:  userConf.get("llmProvider"),
+    llmApiKey:    userConf.get("llmApiKey"),
+    llmUrl:       userConf.get("llmUrl"),
+    llmModel:     userConf.get("llmModel"),
   };
 }
 

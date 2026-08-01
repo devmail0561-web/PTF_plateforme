@@ -15,14 +15,22 @@ export interface PtfProjectConfig {
 }
 
 export interface PtfUserConfig {
-  githubToken?: string;
+  /** Adresse PTF active (keystore local) */
   walletAddress?: string;
-  walletChain?: string;
+  /** JWT de session retourné par le service tier après challenge-response */
+  sessionToken?: string;
+  /** GitHub OAuth token — liaison optionnelle pour accéder aux repos publics */
+  githubToken?: string;
+  /** URL du service tier PTF (backend optionnel) */
   ptfApiUrl?: string;
+  /** URL du nœud PTF direct (accès sans service tier) */
+  ptfNodeUrl?: string;
   llmProvider?: "anthropic" | "openai" | "ollama" | "mistral";
   llmApiKey?: string;
   llmUrl?: string;
   llmModel?: string;
+  /** @deprecated — la chaîne n'est plus liée au wallet mais au projet */
+  walletChain?: string;
 }
 
 export interface ValidationError {

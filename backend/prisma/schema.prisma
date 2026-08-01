@@ -9,17 +9,13 @@ datasource db {
 
 model User {
   id           String   @id @default(cuid())
-  // Login credentials
-  email        String?  @unique
-  passwordHash String?  // scrypt(password, salt) — never the plaintext password
-  // PTF identity — secp256k1 keypair generated at registration.
-  // The private key is encrypted with the user's password and sent to the client once.
-  // encryptedKey format: "v1:<keySalt_b64>:<iv_b64>:<ciphertext_b64>:<authTag_b64>"
-  ptfPublicKey String?  @unique
-  ptfAddress   String?  @unique
-  encryptedKey String?  // AES-256-GCM(privKey, PBKDF2(password)) — server never stores plaintext privKey
+  // PTF identity — keypair généré côté client, serveur ne stocke que l'adresse publique.
+  ptfAddress   String?  @unique  // adresse dérivée du keypair secp256k1 (lowercase)
+  ptfPublicKey String?  @unique  // clé publique compressée (optionnelle, fournie par le client)
+  // GitHub (liaison optionnelle)
   githubId     String?  @unique
   githubHandle String?
+  // Modération
   isBanned     Boolean  @default(false)
   banReason    String?
   createdAt    DateTime @default(now())
@@ -32,17 +28,16 @@ model User {
   reports        Report[]          @relation("ReportedUser")
   reportsFiled   Report[]          @relation("ReporterUser")
   deviceSessions DeviceSession[]
-  trustedDevices TrustedDevice[]
   authChallenges AuthChallenge[]
 }
 
-// One session per device. Each login from a new device creates a DeviceSession.
-// Users can list and revoke their devices from the account settings.
+// Une session par appareil/client. Créée après un challenge-response réussi.
+// L'utilisateur peut lister et révoquer ses sessions depuis son profil.
 model DeviceSession {
   id         String   @id @default(cuid())
   userId     String
-  token      String   @unique   // JWT — used as the bearer token
-  deviceName String?            // human-readable label, e.g. "Chrome on Ubuntu", "PTF CLI"
+  token      String   @unique   // JWT — bearer token
+  deviceName String?            // ex : "PTF CLI", "Chrome / Ubuntu"
   userAgent  String?
   lastSeenAt DateTime @default(now()) @updatedAt
   expiresAt  DateTime
@@ -54,47 +49,18 @@ model DeviceSession {
   @@index([userId])
 }
 
-// A device that has been verified via OTP email and is trusted for future logins.
-// The client stores deviceToken persistently (localStorage / keychain).
-// On login, passing this token skips OTP and creates a new DeviceSession immediately.
-model TrustedDevice {
-  id          String   @id @default(cuid())
-  userId      String
-  deviceToken String   @unique  // random 32-byte hex, stored by client
-  deviceName  String?
-  userAgent   String?
-  trustedAt   DateTime @default(now())
-  expiresAt   DateTime           // 1 year — renewed on each login from this device
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-}
-
-// A login attempt from an unrecognised device. Holds the hashed OTP until verified.
-model PendingDeviceSession {
-  id         String   @id @default(cuid())
-  userId     String
-  deviceName String?
-  userAgent  String?
-  otpHash    String   // scrypt(otp, salt) — plaintext OTP is never stored
-  expiresAt  DateTime // 10 minutes
-  used       Boolean  @default(false)
-  createdAt  DateTime @default(now())
-
-  @@index([userId])
-}
-
-// One-time nonce for PTF keypair authentication (challenge-response).
+// Nonce à usage unique pour le challenge-response (auth primaire) et OAuth CSRF state.
+// Créé par requestChallenge(), consommé par verifyChallenge().
+// TTL : 5 min pour auth, 10 min pour OAuth state.
 model AuthChallenge {
   id        String   @id @default(cuid())
-  userId    String?  // null before the account is identified (register flow)
+  userId    String
   nonce     String   @unique
   expiresAt DateTime
   used      Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([nonce])
   @@index([userId])
