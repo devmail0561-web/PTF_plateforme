@@ -37,6 +37,14 @@ export class ReportService implements IReportService {
     reason: ReportReason;
     evidence: string;
   }): Promise<{ reportId: string }> {
+    // Runtime validation against the enum — TypeScript types are erased at runtime (L3)
+    if (!REPORT_REASONS.includes(input.reason as ReportReason)) {
+      throw new PtfError(
+        PtfErrorCode.INVALID_INPUT,
+        `Raison de signalement invalide : ${input.reason}. Valeurs acceptées : ${REPORT_REASONS.join(", ")}`
+      );
+    }
+
     const reportedUser = await this.prisma.walletLink.findFirst({
       where: { address: input.reportedAddress.toLowerCase() },
     });

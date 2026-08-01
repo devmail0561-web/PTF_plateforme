@@ -85,9 +85,18 @@ contract EscrowVaultTest is Test {
     // ── Soft lock ────────────────────────────────────────────────────────────
 
     function test_softLock() public {
+        // Dev must approve vault to pull PTF tokens (custodial lock — H6 fix)
+        vm.prank(dev);
+        ptf.approve(address(vault), 10e6);
+
+        uint256 devBefore = ptf.balanceOf(dev);
         vm.prank(operator);
         vault.softLock(dev);
+
         assertEq(vault.getSoftLocked(dev), 10e6);
+        // Tokens are now in vault custody
+        assertEq(ptf.balanceOf(dev), devBefore - 10e6);
+        assertEq(ptf.balanceOf(address(vault)), 10e6);
     }
 
     function test_softLockInsufficientBalance_reverts() public {
@@ -99,12 +108,19 @@ contract EscrowVaultTest is Test {
     }
 
     function test_softUnlock() public {
+        vm.prank(dev);
+        ptf.approve(address(vault), 10e6);
+
+        uint256 devBefore = ptf.balanceOf(dev);
         vm.prank(operator);
         vault.softLock(dev);
 
         vm.prank(operator);
         vault.softUnlock(dev);
+
         assertEq(vault.getSoftLocked(dev), 0);
+        // Tokens returned to dev
+        assertEq(ptf.balanceOf(dev), devBefore);
     }
 
     // ── Task reward release ──────────────────────────────────────────────────
@@ -193,43 +209,53 @@ contract EscrowVaultTest is Test {
 
     // ── Punishment 80/20 distribution ────────────────────────────────────────
 
+    // Helper: soft-lock dev (requires prior approval)
+    function _softLockDev(address _dev, uint256 _amount) internal {
+        vm.prank(_dev);
+        ptf.approve(address(vault), _amount);
+        vm.prank(operator);
+        vault.softLock(_dev);
+    }
+
     function test_punishment_distribution_8020() public {
-        uint256 slashAmount = 50e6; // 50 PTF
+        // H6 fix: punishment now slashes from vault custody, not from dev wallet.
+        // Dev must first soft-lock (transferring 10 PTF into vault).
+        _softLockDev(dev, 10e6);
+
+        uint256 slashAmount = 50e6; // 50 PTF requested
 
         uint256 treasuryBefore = ptf.balanceOf(treasury);
-        uint256 escrowBefore   = vault.getEscrowBalance(PROJECT_ID);
 
         vm.prank(operator);
         vault.executePunishment(PROJECT_ID, TASK_ID, dev, slashAmount, "maliciousCode");
 
-        // dev had 20 PTF, slashing 50 → capped at 20
-        uint256 actualSlash    = 20e6;
-        uint256 expectedTreasury = (actualSlash * 8000) / 10000; // 16 PTF
-        uint256 expectedProject  = actualSlash - expectedTreasury; // 4 PTF
+        // dev soft-locked 10 PTF in vault → actualSlash = min(10, 50) = 10
+        uint256 actualSlash    = 10e6;
+        uint256 expectedTreasury = (actualSlash * 8000) / 10000; // 8 PTF
+        uint256 expectedProjectFund = actualSlash - expectedTreasury; // 2 PTF → treasury (H7 fix)
 
-        assertEq(ptf.balanceOf(dev), 0);
-        assertEq(ptf.balanceOf(treasury), treasuryBefore + expectedTreasury);
-        assertEq(vault.getEscrowBalance(PROJECT_ID), escrowBefore + expectedProject);
+        // Vault burned the 10 PTF it held; treasury got 80% + 20%
+        assertEq(ptf.balanceOf(treasury), treasuryBefore + expectedTreasury + expectedProjectFund);
+        assertEq(vault.getSoftLocked(dev), 0);
     }
 
     function test_punishment_exact_slash() public {
-        // Dev has exactly 50 PTF
-        ptf.mint(dev, 30e6); // now 50 total (setUp gave 20)
+        // Soft-lock 10 PTF first
+        _softLockDev(dev, 10e6);
 
         vm.prank(operator);
-        vault.executePunishment(PROJECT_ID, TASK_ID, dev, 50e6, "criticalBug");
+        vault.executePunishment(PROJECT_ID, TASK_ID, dev, 10e6, "criticalBug");
 
-        uint256 expectedTreasury = (50e6 * 8000) / 10000; // 40 PTF
-        uint256 expectedProject  = 50e6 - expectedTreasury; // 10 PTF
+        uint256 expectedTreasury = (10e6 * 8000) / 10000; // 8 PTF
+        uint256 expectedProject  = 10e6 - expectedTreasury; // 2 PTF → treasury (H7 fix)
 
-        assertEq(ptf.balanceOf(dev), 0);
-        assertEq(ptf.balanceOf(treasury), expectedTreasury);
-        assertEq(vault.getEscrowBalance(PROJECT_ID), expectedProject);
+        assertEq(ptf.balanceOf(treasury), expectedTreasury + expectedProject);
+        assertEq(vault.getSoftLocked(dev), 0);
     }
 
-    function test_punishment_zeroBalance_noRevert() public {
+    function test_punishment_zeroLocked_noRevert() public {
         address brokedev = makeAddr("brokedev");
-        // No balance — punishment still emits but does nothing financially
+        // No soft-lock — punishment emits but does nothing financially
         vm.prank(operator);
         vault.executePunishment(PROJECT_ID, TASK_ID, brokedev, 100e6, "lateDelivery");
         assertEq(ptf.balanceOf(brokedev), 0);

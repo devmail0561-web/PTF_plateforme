@@ -135,8 +135,10 @@ export class ProjectService implements IProjectService {
       where: {
         ...(filter.type && filter.type !== "all" ? { type: filter.type } : {}),
         ...(filter.ownerAddress ? { ownerAddress: filter.ownerAddress.toLowerCase() } : {}),
-        ...(filter.status ? { status: filter.status } : {}),
-        status: filter.mine ? undefined : { not: "draft" },
+        ...(filter.mine
+          ? (filter.status ? { status: filter.status } : {})
+          : { status: filter.status ?? { not: "draft" } }
+        ),
       },
       include: { _count: { select: { tasks: true } } },
       orderBy: { createdAt: "desc" },
@@ -164,6 +166,7 @@ export class ProjectService implements IProjectService {
     const openTaskCount = (project as unknown as { openTaskCount?: number }).openTaskCount ?? 0;
 
     return {
+      id: project.id,
       projectId: project.id,
       type: project.type as ProjectType,
       rewardMode: project.rewardMode as ProjectRewardMode,

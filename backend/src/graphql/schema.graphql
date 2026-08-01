@@ -202,7 +202,8 @@ type Project {
 # Result of createProject — always created, with license status embedded.
 type CreateProjectResult {
   # All Project fields
-  projectId:    ID!
+  id:           ID!    # matches Project.id — use this field for consistency
+  projectId:    ID!    # kept for backwards compatibility
   name:         String!
   type:         String!
   rewardMode:   String!

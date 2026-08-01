@@ -56,53 +56,54 @@ export class ReputationService implements IReputationService {
     reason: string,
     taskId?: string
   ): Promise<void> {
-    // Mise à jour on-chain via ChainAdapter
-    const adapter = this.chainRegistry.get(chain);
-    const txHash = await adapter.setReputation(
-      devAddress,
-      BigInt(delta),
-      reason
-    );
-
-    // Mise à jour en base via l'userId lié au wallet
+    // Vérifier le WalletLink AVANT l'appel on-chain pour éviter le no-op post-write
     const walletLink = await this.prisma.walletLink.findFirst({
       where: { address: devAddress.toLowerCase(), chain },
     });
 
-    if (!walletLink) return;
+    if (!walletLink) {
+      // Log mais ne pas lancer d'erreur — le dev peut ne pas avoir lié son wallet sur cette chaîne
+      console.warn(`[ReputationService] No WalletLink for ${devAddress} on ${chain} — skipping DB update`);
+      return;
+    }
 
-    const rep = await this.prisma.reputation.upsert({
-      where: { userId: walletLink.userId },
-      create: {
-        userId: walletLink.userId,
-        totalPoints: Math.max(0, delta),
-        level: this.getLevel(Math.max(0, delta)),
-        completedTasks: delta > 0 ? 1 : 0,
-      },
-      update: {
-        totalPoints: { increment: delta },
-      },
-    });
+    // Appel on-chain
+    const adapter = this.chainRegistry.get(chain);
+    const txHash = await adapter.setReputation(devAddress, BigInt(delta), reason);
 
-    const newTotal = Math.max(0, rep.totalPoints);
-    await this.prisma.reputation.update({
-      where: { userId: walletLink.userId },
-      data: {
-        totalPoints: newTotal,
-        level: this.getLevel(newTotal),
-        completedTasks: delta > 0 ? { increment: 1 } : undefined,
-      },
-    });
+    // Mise à jour atomique en un seul upsert + event dans une transaction
+    await this.prisma.$transaction(async (tx) => {
+      // Récupérer le score actuel pour calculer le nouveau total
+      const existing = await tx.reputation.findUnique({ where: { userId: walletLink.userId } });
+      const currentTotal = existing?.totalPoints ?? 0;
+      const newTotal = Math.max(0, currentTotal + delta);
+      const newLevel = this.getLevel(newTotal);
 
-    await this.prisma.reputationEvent.create({
-      data: {
-        reputationId: rep.id,
-        delta,
-        reason,
-        taskId,
-        chain,
-        txHash,
-      },
+      const rep = await tx.reputation.upsert({
+        where: { userId: walletLink.userId },
+        create: {
+          userId: walletLink.userId,
+          totalPoints: newTotal,
+          level: newLevel,
+          completedTasks: delta > 0 ? 1 : 0,
+        },
+        update: {
+          totalPoints: newTotal,
+          level: newLevel,
+          ...(delta > 0 ? { completedTasks: { increment: 1 } } : {}),
+        },
+      });
+
+      await tx.reputationEvent.create({
+        data: {
+          reputationId: rep.id,
+          delta,
+          reason,
+          taskId,
+          chain,
+          txHash,
+        },
+      });
     });
   }
 

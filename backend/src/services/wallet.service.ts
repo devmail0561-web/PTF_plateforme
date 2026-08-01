@@ -89,15 +89,17 @@ export class WalletService implements IWalletService {
     const raw = await adapter.getBalance(address, "PTF");
     const balance = Number(raw) / 10 ** PTF_DECIMALS;
 
-    // Soft-locked : somme des tâches claimed actives
-    const activeTasks = await this.prisma.task.findMany({
+    // Soft-locked : uniquement les tâches paid actives (projets free n'ont pas de soft-lock PTF)
+    const activePaidTasks = await this.prisma.task.findMany({
       where: {
         devAddress: address.toLowerCase(),
         status: { in: ["claimed", "in_progress"] },
+        project: { rewardMode: "paid" },
       },
+      include: { project: { select: { rewardMode: true } } },
     });
 
-    const softLocked = activeTasks.length > 0 ? 10 * activeTasks.length : 0;
+    const softLocked = activePaidTasks.length * 10;
 
     return {
       address,

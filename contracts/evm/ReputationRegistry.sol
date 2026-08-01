@@ -113,7 +113,8 @@ contract ReputationRegistry is Ownable {
      * 0–99 → Unranked, 100–499 → Junior, 500–1999 → Senior, 2000+ → Expert
      */
     function getLevel(address dev) external view returns (string memory) {
-        uint256 score = this.getScore(dev);
+        int256 raw = _scores[dev];
+        uint256 score = raw > 0 ? uint256(raw) : 0;
         if (score >= 2000) return "Expert";
         if (score >= 500) return "Senior";
         if (score >= 100) return "Junior";

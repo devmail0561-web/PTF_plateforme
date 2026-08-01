@@ -249,6 +249,32 @@ export class TaskService implements ITaskService {
       }
     }
 
+    if (criteria.minCompletedTasks) {
+      const score = await this.reputationService.getScore(devAddress);
+      if (score.completedTasks < criteria.minCompletedTasks) {
+        throw new PtfError(
+          PtfErrorCode.INSUFFICIENT_PTF_BALANCE,
+          `Tâches complétées insuffisantes : ${score.completedTasks}/${criteria.minCompletedTasks}`
+        );
+      }
+    }
+
+    if (criteria.maxActiveTasks) {
+      const activeCount = await this.prisma.task.count({
+        where: {
+          devAddress: devAddress.toLowerCase(),
+          status: { in: ["claimed", "in_progress", "submitted", "under_review"] },
+        },
+      });
+      if (activeCount >= criteria.maxActiveTasks) {
+        throw new PtfError(
+          PtfErrorCode.INSUFFICIENT_PTF_BALANCE,
+          `Trop de tâches actives : ${activeCount}/${criteria.maxActiveTasks}`
+        );
+      }
+    }
+    // requiredSkills : pas de compétences stockées sur le user pour l'instant — skip silencieux documenté
+
     // Vérification dépendances
     if (task.dependencies.length > 0) {
       const deps = await this.prisma.task.findMany({
@@ -407,57 +433,69 @@ export class TaskService implements ITaskService {
       throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Vous ne pouvez annuler que vos propres tâches");
     }
 
-    if (task.status === "submitted" || task.status === "validated") {
+    const UNCANCELLABLE: string[] = ["submitted", "under_review", "validated", "rejected", "disputed", "blocked"];
+    if (UNCANCELLABLE.includes(task.status)) {
       throw new PtfError(
         PtfErrorCode.TASK_IMMUTABLE,
         `La tâche ${taskId} ne peut pas être annulée (statut : ${task.status})`
       );
     }
 
-    const project = await this.prisma.project.findUniqueOrThrow({
-      where: { id: task.projectId },
-    });
-
-    if (project.rewardMode === "paid" && task.devAddress) {
-      const forfeit = shouldForfeitGuarantee(task.claimedAt, task.deadline);
-      if (forfeit) {
-        await this.utxoService.confiscate(task.devAddress, 10, taskId);
-        await this.walletService.softUnlock(task.devAddress, project.chain, 10);
-        await this.creditLedger.record({
-          devAddress: task.devAddress,
-          type: "punishment_deducted",
-          amount: 10,
-          taskId,
-          projectId: task.projectId,
-          chain: project.chain,
-          note: "10 PTF guarantee confiscated — cancel after 15% of deadline elapsed",
-        });
-      } else {
-        await this.walletService.softUnlock(task.devAddress, project.chain, 10);
-        await this.utxoService.unlock(task.devAddress, 10);
-        await this.creditLedger.record({
-          devAddress: task.devAddress,
-          type: "soft_unlocked",
-          amount: 10,
-          taskId,
-          projectId: task.projectId,
-          chain: project.chain,
-          note: "10 PTF guarantee released on task cancel (within grace period)",
-        });
+    const lock = await this.redlock.acquire([`lock:task:${taskId}`], LOCK_TTL_MS);
+    try {
+      // Re-check status sous lock
+      const fresh = await this.prisma.task.findUnique({ where: { id: taskId }, select: { status: true } });
+      if (fresh && UNCANCELLABLE.includes(fresh.status)) {
+        throw new PtfError(PtfErrorCode.TASK_IMMUTABLE, `La tâche ${taskId} ne peut pas être annulée (statut : ${fresh.status})`);
       }
-    }
 
-    await this.prisma.task.update({
-      where: { id: taskId },
-      data: {
-        status: "open",
-        devAddress: null,
-        claimedAt: null,
-        deadline: null,
-        conditionsHash: null,
-        eip712Signature: null,
-      },
-    });
+      const project = await this.prisma.project.findUniqueOrThrow({
+        where: { id: task.projectId },
+      });
+
+      if (project.rewardMode === "paid" && task.devAddress) {
+        const forfeit = shouldForfeitGuarantee(task.claimedAt, task.deadline);
+        if (forfeit) {
+          await this.utxoService.confiscate(task.devAddress, 10, taskId);
+          await this.walletService.softUnlock(task.devAddress, project.chain, 10);
+          await this.creditLedger.record({
+            devAddress: task.devAddress,
+            type: "punishment_deducted",
+            amount: 10,
+            taskId,
+            projectId: task.projectId,
+            chain: project.chain,
+            note: "10 PTF guarantee confiscated — cancel after 15% of deadline elapsed",
+          });
+        } else {
+          await this.walletService.softUnlock(task.devAddress, project.chain, 10);
+          await this.utxoService.unlock(task.devAddress, 10);
+          await this.creditLedger.record({
+            devAddress: task.devAddress,
+            type: "soft_unlocked",
+            amount: 10,
+            taskId,
+            projectId: task.projectId,
+            chain: project.chain,
+            note: "10 PTF guarantee released on task cancel (within grace period)",
+          });
+        }
+      }
+
+      await this.prisma.task.update({
+        where: { id: taskId },
+        data: {
+          status: "open",
+          devAddress: null,
+          claimedAt: null,
+          deadline: null,
+          conditionsHash: null,
+          eip712Signature: null,
+        },
+      });
+    } finally {
+      await lock.release();
+    }
   }
 
   async expire(taskId: string): Promise<void> {
@@ -468,18 +506,25 @@ export class TaskService implements ITaskService {
         where: { id: task.projectId },
       });
       if (project?.rewardMode === "paid") {
-        // Expiry always happens after deadline, so the 15% threshold is always exceeded.
-        await this.utxoService.confiscate(task.devAddress, 10, taskId).catch(() => {});
+        let confiscated = false;
+        try {
+          await this.utxoService.confiscate(task.devAddress, 10, taskId);
+          confiscated = true;
+        } catch {
+          // UTXOs already consumed or insufficient — no ledger entry
+        }
         await this.walletService.softUnlock(task.devAddress, project.chain, 10).catch(() => {});
-        await this.creditLedger.record({
-          devAddress: task.devAddress,
-          type: "punishment_deducted",
-          amount: 10,
-          taskId,
-          projectId: task.projectId,
-          chain: project.chain,
-          note: "10 PTF guarantee confiscated — task expired without submission",
-        });
+        if (confiscated) {
+          await this.creditLedger.record({
+            devAddress: task.devAddress,
+            type: "punishment_deducted",
+            amount: 10,
+            taskId,
+            projectId: task.projectId,
+            chain: project.chain,
+            note: "10 PTF guarantee confiscated — task expired without submission",
+          });
+        }
       }
     }
 

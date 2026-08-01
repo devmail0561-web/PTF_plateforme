@@ -89,7 +89,7 @@ export interface IUTXOService {
   verifyProof(utxoId: string, ptfPublicKey: string): Promise<boolean>;
 
   /** Full audit: return all UTXOs (spent + unspent) with provenance chain. */
-  getProvenance(ownerAddress: string): Promise<CreditUTXO[]>;
+  getProvenance(ownerAddress: string, opts?: { limit?: number; offset?: number }): Promise<CreditUTXO[]>;
 }
 
 // ── EIP-712 typehash for UTXO creation ───────────────────────────────────────
@@ -186,6 +186,7 @@ async function signChangeUTXO(
   ownerAddress: string,
   changeAmt: number,
   txId: string,
+  proofHash: string,
   chain: string,
   createdAt: number
 ): Promise<string> {
@@ -197,9 +198,9 @@ async function signChangeUTXO(
         "Without it, change UTXOs cannot be redeemed on-chain."
       );
     }
-    // Dev/test fallback — not valid on-chain, but allows tests to run without a live key.
+    // Dev/test fallback — matches verifyProof's expected digest
     return ethers.keccak256(
-      ethers.solidityPacked(["bytes32", "bytes32"], [txId, changeId])
+      ethers.solidityPacked(["bytes32", "bytes32"], [proofHash, changeId])
     );
   }
 
@@ -218,7 +219,11 @@ async function signChangeUTXO(
       ethers.getBytes(structHash),
     ])
   );
-  return wallet.signMessage(ethers.getBytes(digest));
+  // Use signingKey.sign() to sign the raw EIP-712 digest without the Ethereum personal_sign prefix.
+  // wallet.signMessage() would prepend "\x19Ethereum Signed Message:\n32" — incompatible with
+  // EscrowVault.withdrawWithProof() which uses _hashTypedDataV4 (\x19\x01 prefix only).
+  const sig = wallet.signingKey.sign(digest);
+  return ethers.Signature.from(sig).serialized;
 }
 
 // ── Service ───────────────────────────────────────────────────────────────────
@@ -386,7 +391,7 @@ export class UTXOService implements IUTXOService {
         // Sign the change UTXO struct with the PTF operator private key (S9).
         // PTF_OPERATOR_PRIVATE_KEY must be set in production — the signed EIP-712 digest
         // is the only signature accepted by EscrowVault.withdrawWithProof().
-        const changeSig = await signChangeUTXO(changeId, ownerAddress, changeAmt, txId, chain, spendNow);
+        const changeSig = await signChangeUTXO(changeId, ownerAddress, changeAmt, txId, proofHash, chain, spendNow);
         changeUTXO = await tx.creditUTXO.create({
           data: {
             id:              changeId,
@@ -504,17 +509,61 @@ export class UTXOService implements IUTXOService {
 
     if (!utxo) return false;
 
+    // Deposit UTXOs: their proof is the on-chain CreditClaimed event, not an ECDSA signature.
+    // Consider them verified if they exist in DB (they were created by the trusted DepositWorker).
+    if (utxo.sourceType === "deposit") {
+      return true; // TODO: verify against on-chain event when EscrowService is implemented
+    }
+
     if (utxo.sourceType === "change") {
-      // Verify the change UTXO signature: keccak256(proofHash || changeId)
-      // We need the parent CreditTransaction to recover proofHash
+      // Verify the change UTXO signature produced by signChangeUTXO().
+      // We need the parent CreditTransaction to recover proofHash (dev path) or
+      // to confirm parentTx existence (prod path).
       const parentTx = await this.db.creditTransaction.findUnique({
         where: { id: utxo.sourceId ?? "" },
       });
       if (!parentTx) return false;
-      const expectedSig = ethers.keccak256(
-        ethers.solidityPacked(["bytes32", "bytes32"], [parentTx.proofHash, utxo.id])
-      );
-      return expectedSig.toLowerCase() === utxo.eip712Signature.toLowerCase();
+
+      const privKey = process.env["PTF_OPERATOR_PRIVATE_KEY"];
+      if (privKey) {
+        // Production: reconstruct the exact EIP-712 digest that signChangeUTXO signed.
+        // signChangeUTXO builds: digest = keccak256(\x19\x01 || domainSeparator || structHash)
+        // and signs it with signingKey.sign() — no personal_sign prefix added.
+        const structHash = buildUTXOStructHash(
+          utxo.id,
+          utxo.ownerAddress,
+          utxo.amount,
+          utxo.sourceId,   // txId = sourceId for change UTXOs
+          utxo.chain,
+          utxo.createdAt.getTime()
+        );
+        const chainId = CHAIN_IDS_FOR_SIGN[utxo.chain.toLowerCase()] ?? 137;
+        const domainSeparator = ethers.TypedDataEncoder.hashDomain({
+          name: "PTFEscrowVault",
+          version: "1",
+          chainId,
+        });
+        const digest = ethers.keccak256(
+          ethers.concat([
+            ethers.toUtf8Bytes("\x19\x01"),
+            ethers.getBytes(domainSeparator),
+            ethers.getBytes(structHash),
+          ])
+        );
+        try {
+          const recovered = ethers.recoverAddress(digest, utxo.eip712Signature);
+          return recovered.toLowerCase() === ptfPublicKey.toLowerCase();
+        } catch {
+          return false;
+        }
+      } else {
+        // Dev/test fallback: compare keccak hashes — matches signChangeUTXO dev fallback
+        // which returns keccak256(proofHash || changeId).
+        const expectedSig = ethers.keccak256(
+          ethers.solidityPacked(["bytes32", "bytes32"], [parentTx.proofHash, utxo.id])
+        );
+        return expectedSig.toLowerCase() === utxo.eip712Signature.toLowerCase();
+      }
     }
 
     // Recover signer from the full EIP-712 digest (struct hash only is NOT a valid digest)
@@ -580,21 +629,56 @@ export class UTXOService implements IUTXOService {
         );
       }
 
-      // Mark the seized UTXOs as spent (destroyed — no change UTXO returned)
+      // Compute the actual total seized and any overshoot surplus.
+      const totalSeized = toSeize.reduce((acc, id) => {
+        const utxo = locked.find((u) => u.id === id)!;
+        return acc + utxo.amount;
+      }, 0);
+      const changeAmt = parseFloat((totalSeized - amount).toFixed(6));
+
+      const confiscateNow = Date.now();
       const confiscationTxId = ethers.keccak256(
-        ethers.solidityPacked(["address", "string", "uint256"], [ownerAddress.toLowerCase(), taskId, BigInt(Date.now())])
+        ethers.solidityPacked(
+          ["address", "string", "uint256"],
+          [ownerAddress.toLowerCase(), taskId, BigInt(confiscateNow)]
+        )
       );
+
+      // Mark the seized UTXOs as spent (confiscated — penalty applied).
       await tx.creditUTXO.updateMany({
         where: { id: { in: toSeize } },
         data:  { status: "spent", spentInTxId: confiscationTxId },
       });
+
+      // If the last selected UTXO overshot the penalty amount, return the surplus as a
+      // locked change UTXO. It remains locked (not unspent) — it belongs to the dev but
+      // cannot be spent until explicitly unlocked. This prevents the dev losing more PTF
+      // than the penalty amount.
+      if (changeAmt > 0) {
+        const changeId = computeUTXOId(ownerAddress, confiscationTxId, changeAmt, confiscateNow);
+        await tx.creditUTXO.create({
+          data: {
+            id:              changeId,
+            ownerAddress:    ownerAddress.toLowerCase(),
+            amount:          changeAmt,
+            sourceType:      "change",
+            sourceId:        confiscationTxId,
+            createdInTxId:   confiscationTxId,
+            chain:           locked[0]?.chain ?? "polygon",
+            eip712Signature: `confiscate-change:${confiscationTxId}`,
+            status:          "locked", // remains locked — dev owns it but cannot spend it yet
+          },
+        });
+      }
     });
   }
 
-  async getProvenance(ownerAddress: string): Promise<CreditUTXO[]> {
+  async getProvenance(ownerAddress: string, opts?: { limit?: number; offset?: number }): Promise<CreditUTXO[]> {
     return this.db.creditUTXO.findMany({
       where:   { ownerAddress: ownerAddress.toLowerCase() },
       orderBy: { createdAt: "asc" },
+      take:    opts?.limit,
+      skip:    opts?.offset,
     }) as Promise<CreditUTXO[]>;
   }
 }

@@ -68,14 +68,18 @@ taskCommand
       process.exit(1);
     }
 
-    const walletAddress =
-      userConfig.walletAddress ?? "0x0000000000000000000000000000000000000000";
-
     if (!userConfig.walletAddress) {
-      printWarning(
-        "Aucun wallet configuré. Mode offline — claim simulé.\n" +
+      printError(
+        "Aucun wallet configuré. Impossible de réclamer une tâche sans wallet.\n" +
           chalk.dim("Configurez votre wallet : ptf config set-wallet <address>")
       );
+      process.exit(1);
+    }
+    const walletAddress = userConfig.walletAddress;
+
+    if (!isValidAddress(walletAddress)) {
+      printError(`Adresse wallet invalide : ${walletAddress}`);
+      process.exit(1);
     }
 
     if (task.reward && task.reward.amount > 0) {
@@ -87,12 +91,6 @@ taskCommand
         );
         process.exit(1);
       }
-    }
-
-    const walletValid = !userConfig.walletAddress || isValidAddress(walletAddress);
-    if (!walletValid) {
-      printError(`Adresse wallet invalide : ${walletAddress}`);
-      process.exit(1);
     }
 
     const { default: inquirer } = await import("inquirer");
@@ -145,9 +143,22 @@ taskCommand
     const { default: ora } = await import("ora");
     const spinner = ora("Signature EIP-712 et enregistrement on-chain...").start();
 
-    const { result } = await client.claimTask(taskId, walletAddress);
+    const { result, offline: claimOffline } = await client.claimTask(taskId, walletAddress, conditionsHash);
     await new Promise((r) => setTimeout(r, 800));
     spinner.stop();
+
+    if (claimOffline) {
+      printOfflineBanner();
+      printWarning("Claim en mode offline — non enregistré. Reconnectez-vous pour confirmer.");
+      return;
+    }
+
+    if (result.conditionsHash.toLowerCase() !== conditionsHash.toLowerCase()) {
+      printError("Les conditions ont changé entre la consultation et le claim. Abandon pour sécurité.");
+      printInfo(`Hash local    : ${conditionsHash.slice(0, 16)}...`);
+      printInfo(`Hash serveur  : ${result.conditionsHash.slice(0, 16)}...`);
+      process.exit(1);
+    }
 
     printSuccess(`Tâche réclamée avec succès !\n`);
     console.log(

@@ -1,7 +1,7 @@
 # PTF Project — Summary
 
-**Mis a jour :** 2026-07-31
-**Statut :** En cours de developpement — backend core + auth + licences + worker on-chain + audit 11 rounds (78/80 findings corrigés)
+**Mis a jour :** 2026-08-01
+**Statut :** En cours de developpement — frontend MVP V0.1.0 terminé + backend core + auth + licences + workers on-chain (dépôts + réconciliation) + audit 14 rounds (101/101 findings corrigés, 0 ouvert)
 
 ---
 
@@ -89,12 +89,17 @@ PTF_project/
 │   │       └── api.ts                 ← Client GraphQL PTF
 │   └── package.json
 │
-├── frontend/                          ← Dashboard Next.js (a implementer)
+├── frontend/                          ← Dashboard Next.js (V0.1.0 MVP ✅)
 │   ├── app/
-│   │   ├── projects/                  ← Vue projets + arbre taches
-│   │   ├── tasks/                     ← Liste taches + filtres
-│   │   ├── profile/                   ← Credits + reputation + historique
-│   │   └── enterprise/                ← Creation projets + suivi escrow
+│   │   ├── tasks/                     ← Marketplace taches + filtres (200)
+│   │   ├── tasks/[id]/                ← Detail tache (200)
+│   │   ├── dashboard/                 ← Dev dashboard (307→/login via middleware)
+│   │   ├── profile/[address]/         ← Profil public developpeur (200)
+│   │   ├── login/                     ← Connexion (200)
+│   │   ├── register/                  ← Inscription (200)
+│   │   └── onboarding/                ← Wizard OTP → GitHub → wallet (200)
+│   ├── middleware.ts                  ← Edge middleware (protection /dashboard)
+│   ├── mocks/                         ← MSW 2 handlers + fixtures (10+ taches mock)
 │   └── package.json
 │
 ├── .claude/
@@ -562,15 +567,27 @@ npm init && npm install typescript apollo-server prisma ethers @solana/web3.js r
                             (appelle documentGenerator.service pour corriger les erreurs détectées)
 ```
 
-### Phase 4 — Frontend Next.js (semaines 15-20)
+### Phase 4 — Frontend Next.js (semaines 15-20) — V0.1.0 TERMINÉ ✅
 
 ```bash
-# Ordre d'implementation
-1. Auth pages   ← GitHub OAuth + wallet connect (wagmi)
-2. /tasks       ← Marketplace taches avec filtres
-3. /profile     ← Credits, reputation, historique soumissions
-4. /projects    ← Arbre de taches interactif (visualisation Merkle)
-5. /enterprise  ← Creation projet, depot escrow, suivi avancement
+# V0.1.0 MVP — implémenté
+✅ /login + /register       ← Auth pages (email + mot de passe)
+✅ /onboarding              ← Wizard OTP (123456) → GitHub OAuth → wallet EIP-712 RainbowKit
+✅ /tasks                   ← Marketplace taches avec filtres (statut/priorité/reward)
+✅ /tasks/[id]              ← Detail tache complet
+✅ /dashboard               ← Dashboard dev protégé (middleware Edge → /login)
+✅ /profile/[address]       ← Profil public developpeur
+
+# V0.5.0 — restant à faire
+🔴 /project/new             ← Wizard creation projet + depot escrow
+🔴 /project/:id             ← Suivi projet createur (taches, devs, escrow)
+🔴 /wallet                  ← Solde PTF, soft-locks, depot, retrait, bridge
+🔴 /leaderboard             ← Top devs par reputation
+
+# Stack frontend V0.1.0
+# Next.js 14.2.5 App Router + TailwindCSS dark theme
+# Apollo Client 3 + wagmi v2 + RainbowKit + Zustand + MSW 2
+# http://localhost:3000 (npm run dev depuis frontend/)
 ```
 
 ---
@@ -687,12 +704,19 @@ npm init && npm install typescript apollo-server prisma ethers @solana/web3.js r
 - [ ] Tests CLI end-to-end
 
 ### Frontend
-- [ ] Auth (GitHub + wallet wagmi)
-- [ ] Page marketplace taches
-- [ ] Page profil developpeur (credits + reputation)
-- [ ] Visualisation arbre de taches projet
-- [ ] Dashboard entreprise (escrow + avancement)
-- [ ] Integration wallet (MetaMask / WalletConnect)
+- [x] Auth — login / register (email + mot de passe) ✅ V0.1.0
+- [x] Onboarding wizard — OTP (123456) → GitHub OAuth → wallet EIP-712 RainbowKit ✅ V0.1.0
+- [x] Page marketplace taches (`/tasks`) ✅ V0.1.0
+- [x] Detail tache (`/tasks/[id]`) ✅ V0.1.0
+- [x] Dashboard developpeur (`/dashboard`) protégé Edge middleware ✅ V0.1.0
+- [x] Page profil developpeur public (`/profile/[address]`) ✅ V0.1.0
+- [x] Design system dark mode crypto (violet/amber/vert) ✅ V0.1.0
+- [x] Hooks : useAuth, usePTFBalance, useReputationScore, useTaskCountdown, useTaskStatusSubscription, useClaimEligibility ✅ V0.1.0
+- [x] MSW 2 — 10+ taches mock, fixtures auth/profil, handlers GraphQL ✅ V0.1.0
+- [ ] Page wallet (`/wallet`) — solde PTF, soft-locks, depot, retrait, bridge
+- [ ] Dashboard createur (`/project/new`, `/project/:id`) — escrow + suivi avancement
+- [ ] Visualisation arbre de taches projet (Merkle interactif)
+- [ ] Leaderboard (`/leaderboard`) — top devs par reputation
 
 ### Infrastructure
 - [ ] CI/CD GitHub Actions (test + deploy)
@@ -726,9 +750,13 @@ SIGNER_PRIVATE_KEY=0x<hex64>               # obligatoire en prod — clé de sig
 PTF_OPERATOR_PRIVATE_KEY=0x<hex64>         # obligatoire en prod — signe les change UTXOs (S9)
 PTF_OPERATOR_ADDRESS=0x<address>           # adresse publique de l'opérateur (pour logs)
 
-# ── Worker on-chain (dépôts N1) ─────────────────────────────────────
+# ── Workers on-chain (dépôts N1 + réconciliation N3) ────────────────
 RPC_WS_URL=wss://polygon-mainnet.infura.io/ws/v3/<key>  # WebSocket RPC — active le DepositWorker
+RPC_HTTP_URL=https://polygon-rpc.com                    # HTTP RPC — active le ReconciliationWorker
 ESCROW_VAULT_ADDRESS=0x<address>           # adresse du contrat EscrowVault déployé
+RECONCILIATION_INTERVAL_MS=60000           # intervalle scan réconciliation (défaut: 60s)
+RECONCILIATION_BATCH_SIZE=2000             # blocs par batch (défaut: 2000)
+RECONCILIATION_START_BLOCK=0               # bloc de départ si pas de checkpoint
 
 # ── Email (OTP nouvel appareil) ──────────────────────────────────────
 SMTP_HOST=smtp.example.com
@@ -804,6 +832,6 @@ LAYERZERO_ENDPOINT_ETHEREUM=0x...
 
 ---
 
-**Statut :** Phase de conception terminée — prêt pour l'implémentation des smart contracts.
+**Statut :** Phase de conception terminée — backend opérationnel (90%), audit sécurité complet (101/101 corrigés), frontend MVP terminé. Prochaine étape : EscrowService + ValidationService + déploiement testnet.
 
 **PTF est un écosystème cryptographique — pas seulement une plateforme. Il récompense la qualité, punit les manquements, et garantit l'intégrité de chaque transaction.**

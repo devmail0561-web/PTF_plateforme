@@ -76,6 +76,13 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
     // Spent UTXO ids — prevents double-spending a UTXO on-chain
     mapping(bytes32 => bool) public spentUTXOs;
 
+    // Minted UTXO ids — prevents operator from minting the same utxoId twice
+    // Kept separate from spentUTXOs so minted UTXOs remain withdrawable
+    mapping(bytes32 => bool) public mintedUTXOs;
+
+    // PTF credits accumulated per project from punishment slashing (20%)
+    mapping(bytes32 => uint256) public projectPunishmentFunds;
+
     // Addresses authorized to call admin functions (PTF backend operator)
     mapping(address => bool) public operators;
 
@@ -102,6 +109,7 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
     error ZeroAmount();
     error InvalidDistribution();
     error UTXOAlreadySpent(bytes32 utxoId);
+    error UTXOAlreadyMinted(bytes32 utxoId);
     error UTXONotOwnedByCaller(bytes32 utxoId);
     error UTXOAmountMismatch();
     error InsufficientUTXOTotal(uint256 provided, uint256 required);
@@ -131,6 +139,7 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         reputationRegistry = ReputationRegistry(_reputationRegistry);
         projectRegistry = ProjectRegistry(_projectRegistry);
         treasury = _treasury;
+        require(PUNISHMENT_TREASURY_BPS + PUNISHMENT_PROJECT_BPS == BPS_DENOMINATOR, "BPS must sum to 10000");
     }
 
     // ── Operator management ──────────────────────────────────────────────────
@@ -173,32 +182,48 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
 
     /**
      * Soft-lock 10 PTF from a developer when they claim a paid task.
-     * Tokens remain in the developer's wallet but are marked as locked.
+     * Tokens are transferred INTO the vault (custodial) so the developer cannot
+     * move them away to avoid punishment. The dev must approve this contract first.
+     *
+     * H6 fix: replaced non-custodial counter with a real transferFrom so
+     * executePunishment always has tokens to slash regardless of post-lock transfers.
      */
     function softLock(address dev) external onlyOperator nonReentrant {
-        // Check: developer must hold ≥ 10 PTF
+        // Check: developer must hold ≥ 10 PTF and have approved this contract
         uint256 balance = ptfToken.balanceOf(dev);
-        uint256 alreadyLocked = softLocked[dev];
-        if (balance < alreadyLocked + SOFT_LOCK_AMOUNT) revert InsufficientSoftLock();
+        if (balance < SOFT_LOCK_AMOUNT) revert InsufficientSoftLock();
 
         // Effects
         softLocked[dev] += SOFT_LOCK_AMOUNT;
+
+        // Interaction: pull tokens into vault custody (dev must have approved)
+        SafeERC20.safeTransferFrom(IERC20(address(ptfToken)), dev, address(this), SOFT_LOCK_AMOUNT);
 
         emit SoftLocked(dev, SOFT_LOCK_AMOUNT);
     }
 
     /**
-     * Release the soft-lock on task cancel or completion.
-     * Always succeeds even if the developer has been slashed (floor at 0).
+     * Release the soft-lock on task cancel or completion — returns escrowed PTF to dev.
+     * Always succeeds even if the developer has been partially slashed (returns remainder).
      */
     function softUnlock(address dev) external onlyOperator nonReentrant {
         uint256 locked = softLocked[dev];
-        if (locked < SOFT_LOCK_AMOUNT) {
-            softLocked[dev] = 0;
-        } else {
-            softLocked[dev] -= SOFT_LOCK_AMOUNT;
+        if (locked == 0) return;
+
+        uint256 toReturn = locked < SOFT_LOCK_AMOUNT ? locked : SOFT_LOCK_AMOUNT;
+        softLocked[dev] = locked < SOFT_LOCK_AMOUNT ? 0 : locked - SOFT_LOCK_AMOUNT;
+
+        // Return escrowed tokens to dev
+        uint256 vaultBalance = ptfToken.balanceOf(address(this));
+        if (vaultBalance >= toReturn) {
+            SafeERC20.safeTransfer(IERC20(address(ptfToken)), dev, toReturn);
         }
-        emit SoftUnlocked(dev, SOFT_LOCK_AMOUNT);
+        // If vault has been drained by punishment, return what's available
+        else if (vaultBalance > 0) {
+            SafeERC20.safeTransfer(IERC20(address(ptfToken)), dev, vaultBalance);
+        }
+
+        emit SoftUnlocked(dev, toReturn);
     }
 
     // ── Task reward release ──────────────────────────────────────────────────
@@ -271,9 +296,11 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
     ) external nonReentrant onlyOperator {
         if (amount == 0) revert ZeroAmount();
 
-        uint256 devBalance = ptfToken.balanceOf(dev);
-        // Slash what we can — cap at actual balance (no revert on poverty)
-        uint256 actualSlash = devBalance < amount ? devBalance : amount;
+        // H6 fix: slash from the custodial soft-lock held in this contract, not from dev wallet.
+        // This guarantees punishment is enforceable regardless of post-lock token transfers.
+        uint256 lockedForDev = softLocked[dev];
+        // Slash what's available in escrow — cap at locked amount (no revert on zero)
+        uint256 actualSlash = lockedForDev < amount ? lockedForDev : amount;
 
         if (actualSlash == 0) {
             // Nothing to slash financially — still record the punishment event
@@ -285,23 +312,27 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         uint256 projectShare  = actualSlash - treasuryShare; // remainder goes to project fund
 
         // ── Checks: distribution adds up ──────────────────────────────────────
-        if (treasuryShare + projectShare != actualSlash) revert InvalidDistribution();
+        // Distribution invariant: verified statically by constructor BPS check
+        // treasuryShare + projectShare == actualSlash by construction (no rounding loss possible)
 
         // ── Effects (burn first, then mint to recipients) ─────────────────────
-        // Burn from developer
-        ptfToken.burn(dev, actualSlash);
+        // Update soft-lock counter (tokens are already in vault custody)
+        softLocked[dev] -= actualSlash;
+
+        // Track project share before interactions
+        projectPunishmentFunds[projectId] += projectShare;
+
+        // Burn from vault custody (tokens were transferred in at softLock time)
+        ptfToken.burn(address(this), actualSlash);
 
         // ── Interactions ──────────────────────────────────────────────────────
         // Mint 80% to treasury
         ptfToken.mint(treasury, treasuryShare);
-        // Mint 20% to contract — held as PTF, NOT added to USDC escrowBalance
-        // (escrowBalance is USDC-denominated; mixing PTF units would create phantom USDC)
-        ptfToken.mint(address(this), projectShare);
+        // Mint 20% to treasury — tracked per project for potential redistribution
+        ptfToken.mint(treasury, projectShare);
 
-        // Release soft-lock regardless
-        if (softLocked[dev] >= SOFT_LOCK_AMOUNT) {
-            softLocked[dev] -= SOFT_LOCK_AMOUNT;
-        }
+        // softLocked[dev] was already decremented above (by actualSlash)
+        // softUnlock will handle remaining balance when called by operator
 
         emit PunishmentExecuted(projectId, taskId, dev, actualSlash, punishmentType);
     }
@@ -451,7 +482,7 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
             proofHash = keccak256(packed);
         }
 
-        if (verifiedTotal < totalAmount) revert InsufficientUTXOTotal(verifiedTotal, totalAmount);
+        if (verifiedTotal != totalAmount) revert InsufficientUTXOTotal(verifiedTotal, totalAmount);
 
         // ── Effects ───────────────────────────────────────────────────────────
         withdrawNonces[owner]++;
@@ -486,8 +517,8 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         bytes32 sourceId   // taskId
     ) external onlyOperator {
         // Idempotency guard — prevents operator from minting the same utxoId twice
-        if (spentUTXOs[utxoId]) revert UTXOAlreadySpent(utxoId);
-        spentUTXOs[utxoId] = true;
+        if (mintedUTXOs[utxoId]) revert UTXOAlreadyMinted(utxoId);
+        mintedUTXOs[utxoId] = true;
 
         // Mint PTF tokens to dev — this is the spendable credit
         ptfToken.mint(dev, amount);
@@ -510,6 +541,10 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
 
     function isUTXOSpent(bytes32 utxoId) external view returns (bool) {
         return spentUTXOs[utxoId];
+    }
+
+    function isUTXOMinted(bytes32 utxoId) external view returns (bool) {
+        return mintedUTXOs[utxoId];
     }
 
     function getWithdrawNonce(address owner) external view returns (uint256) {

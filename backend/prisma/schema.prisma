@@ -393,3 +393,15 @@ model NetworkBroadcast {
   @@index([type])
   @@index([projectId])
 }
+
+// Tracks the last on-chain block processed per chain/contract pair.
+// The reconciliation worker resumes from this checkpoint after a crash or restart.
+model SyncCheckpoint {
+  id              String   @id @default(cuid())
+  chain           String
+  contractAddress String
+  lastBlock       Int
+  updatedAt       DateTime @updatedAt
+
+  @@unique([chain, contractAddress])
+}

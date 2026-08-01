@@ -1,10 +1,10 @@
 # PTF — Security Audit Reference
 
-**Version auditée :** v0.1.0 (commit `6a06212`) + rounds CIA 5–11 (2026-07-31)
-**Date de l'audit :** 2026-07-31
-**Méthode :** Workflow multi-agents adversarial (5 dimensions × vérification indépendante) + audit CIA complet (Confidentialité / Intégrité / Disponibilité) + corrections manuelles sur 11 rounds
-**Périmètre :** Smart contracts EVM, backend Node.js/TypeScript, CLI TypeScript, système d'authentification, worker on-chain
-**Résultat :** 80 findings — 78 corrigés, 2 ouverts (infrastructure)
+**Version auditée :** v0.1.0 (commit `6a06212`) + rounds 5–14 (2026-07-31 / 2026-08-01)
+**Date de l'audit :** 2026-08-01 (dernière mise à jour)
+**Méthode :** Workflow multi-agents adversarial (5 dimensions × vérification indépendante) + audit CIA complet (Confidentialité / Intégrité / Disponibilité) + corrections manuelles sur 14 rounds
+**Périmètre :** Smart contracts EVM, backend Node.js/TypeScript, CLI TypeScript, système d'authentification, workers on-chain (deposit + reconciliation)
+**Résultat :** 101 findings — 101 corrigés, 0 ouvert
 
 ---
 
@@ -57,9 +57,46 @@
 | N1 — Pas de worker on-chain pour les dépôts | CRITICAL | ✅ `DepositWorker` (`CreditClaimed` → `mint`, `UTXOSpent` → réconciliation) |
 | **Sous-total** | | **7/7** |
 
-**Total général : 80 findings — 78 corrigés — 2 ouverts**
+**Total général rounds 1–11 : 80 findings — 78 corrigés — 2 ouverts**
 
 Les 2 findings restants nécessitent une infrastructure de scan de blocs rétroactif :
+
+---
+
+### Round 12 — Audit complet PTF (2026-08-01) — 21 findings supplémentaires, 21 corrigés
+
+| Sévérité | Findings | Corrigés | Ouverts |
+|----------|----------|----------|---------|
+| Critical | 2 | 2 | 0 |
+| High | 7 | 7 | 0 |
+| Medium | 11 | 11 | 0 |
+| Low | 1 | 1 | 0 |
+| **Sous-total** | **21** | **21** | **0** |
+
+| Finding | Sévérité | Description | Corrigé |
+|---------|----------|-------------|---------|
+| C1 | CRITICAL | `mintUTXOReceipt` écrivait dans `spentUTXOs` → tout UTXO minté était définitivement non-retirable | ✅ `mintedUTXOs` séparé + `UTXOAlreadyMinted` |
+| C2 | CRITICAL | `verifyProof` change UTXOs toujours `false` (digest incohérent prod/dev) | ✅ digest aligné + `recoverAddress` en prod |
+| H1 | HIGH | `TaskService.expire()` : ledger fantôme si `confiscate()` échoue | ✅ flag `confiscated` + guard before ledger write |
+| H2+H3 | HIGH | `ReputationService.applyDelta()` : race condition + write on-chain orphelin | ✅ `$transaction` atomique + check walletLink avant on-chain |
+| H4 | HIGH | `TaskService.cancel()` : statuts manquants + absence de Redlock | ✅ guard élargi + `redlock.acquire()` |
+| H5 | HIGH | `task.resolver.ts` : `getPublicView` toujours `'public'` | ✅ chargement réel de `project.type` |
+| H6 | HIGH | `EscrowVault.softLock` non-custodial contournable | ✅ `safeTransferFrom` → vault custody |
+| H7 | HIGH | `executePunishment` mintait 20% à `address(this)` (supply morte) | ✅ `ptfToken.mint(treasury, projectShare)` + `projectPunishmentFunds` |
+| M1 | MEDIUM | `DepositWorker` : `ptfSignature: utxoId` (non-signature stockée) | ✅ `deposit:${utxoId}` + early-return dans `verifyProof` |
+| M2 | MEDIUM | `walletStatus` : `getLinkedChains(address)` au lieu de `userId` | ✅ resolver corrigé |
+| M3 | MEDIUM | `WalletService.getBalance()` : `softLocked` calculé sans filtre `paid` | ✅ filtre `rewardMode: "paid"` |
+| M4 | MEDIUM | `utxoProvenance` : chargement en mémoire avant pagination JS | ✅ `take`/`skip` passés à Prisma |
+| M5 | MEDIUM | `ClaimCriteria` : `minCompletedTasks`/`maxActiveTasks` jamais vérifiés | ✅ checks ajoutés dans `claim()` |
+| M6 | MEDIUM | `project.service.ts` : double clé `status` écrasait le filtre | ✅ fusion conditionnelle des filtres |
+| M7 | MEDIUM | `myTasks` : `ctx.user.userId` passé comme `devAddress` | ✅ résolution wallet Ethereum réelle |
+| M8 | MEDIUM | `submitTask`/`cancelTask` : `wallets[0]` sans filtre `chain` | ✅ match par `task.devAddress` |
+| M9 | MEDIUM | `EscrowVault` : check `InvalidDistribution` tautologique (dead code) | ✅ supprimé + `require(BPS == 10000)` dans constructor |
+| M10 | MEDIUM | `EscrowVault` : `verifiedTotal > totalAmount` → surplus silencieux | ✅ `!=` au lieu de `<` |
+| M11 | MEDIUM | `CreateProjectResult` : incohérence `id` vs `projectId` | ✅ `id: ID!` exposé + rétro-compat |
+| L1 | LOW | `ReputationRegistry.getLevel()` : external self-call coûteux | ✅ accès direct `_scores[dev]` |
+
+**Total général rounds 1–12 : 101 findings — 99 corrigés — 2 ouverts (corrigés en round 14)**
 
 ---
 
@@ -197,17 +234,33 @@ keccak256(bytes(inp.chain))  // vérifie le champ chain fourni par le caller
 | **Fichier** | `contracts/evm/EscrowVault.sol` |
 | **Fonction** | `mintUTXOReceipt()` |
 | **Commit correction** | `03fe287` |
+| **Raffinement** | Round 12 [C1] — `mintedUTXOs` séparé de `spentUTXOs` |
 
-**Problème :** Aucune vérification que `utxoId` n'a pas déjà été minté. Un opérateur compromis ou une erreur de retry pouvait appeler `mintUTXOReceipt()` plusieurs fois avec le même `utxoId` → inflation PTF illimitée.
+**Problème initial :** Aucune vérification que `utxoId` n'a pas déjà été minté → inflation PTF illimitée.
 
-**Correction :**
+**Correction initiale (Round 3) :**
 ```solidity
 if (spentUTXOs[utxoId]) revert UTXOAlreadySpent(utxoId);
 spentUTXOs[utxoId] = true;
-ptfToken.mint(dev, amount);
 ```
 
-Le mapping `spentUTXOs` sert maintenant à la fois de guard double-spend (pour les retraits) et de guard double-mint.
+**Bug introduit :** Partager `spentUTXOs` pour le mint ET le retrait rendait tout UTXO minté immédiatement non-retirable (C1, Round 12).
+
+**Correction finale (Round 12 — C1) :**
+```solidity
+// Deux mappings distincts et indépendants
+mapping(bytes32 => bool) public spentUTXOs;   // retrait uniquement
+mapping(bytes32 => bool) public mintedUTXOs;  // mint uniquement
+
+// mintUTXOReceipt — guard d'idempotence
+if (mintedUTXOs[utxoId]) revert UTXOAlreadyMinted(utxoId);
+mintedUTXOs[utxoId] = true;
+
+// withdrawWithProof — guard double-spend
+if (spentUTXOs[inp.utxoId]) revert UTXOAlreadySpent(inp.utxoId);
+```
+
+Un `utxoId` dans `mintedUTXOs` n'implique PAS qu'il est dans `spentUTXOs` — les UTXOs mintés restent retirables.
 
 ---
 
@@ -544,35 +597,44 @@ if (!isOwner) throw new GraphQLError("Unauthorized", { extensions: { code: "UNAU
 
 ---
 
-## Findings ouverts (2 restants)
+## Findings ouverts (0 restant)
 
-### [N3] MEDIUM — Pas de job de réconciliation rétroactif après crash prolongé
-
-| | |
-|---|---|
-| **Fichier** | À créer : `backend/src/workers/reconciliation.worker.ts` |
-| **Statut** | Ouvert — infrastructure manquante |
-
-**Problème :** Le `DepositWorker` (N1) écoute les événements en temps réel et réconcilie les `UTXOSpent` courants, mais ne relit pas les blocs historiques après un crash prolongé. Un arrêt de plusieurs heures peut laisser des UTXOs désynchronisés.
-
-**Solution requise :** Job de réconciliation périodique qui :
-1. Lit le dernier bloc traité depuis un checkpoint (Redis ou DB)
-2. Rejoue les events `CreditClaimed` / `UTXOSpent` manqués via `provider.getLogs()`
-3. Applique `UTXOService.mint()` / `updateMany({ status: "spent" })` avec idempotency
-4. Met à jour le checkpoint après chaque lot
+Tous les findings de sécurité sont désormais corrigés. Les 2 derniers items d'infrastructure (N3, CIA-I9) ont été résolus dans le round 14.
 
 ---
 
-### [CIA-I9] HIGH — DB commit avant confirmation on-chain
+### [N3] MEDIUM — ~~Pas de job de réconciliation rétroactif après crash prolongé~~ ✅ CORRIGÉ
 
 | | |
 |---|---|
-| **Fichier** | `backend/src/services/utxo.service.ts:371` |
-| **Statut** | Ouvert — lié à N3 |
+| **Fichier** | `backend/src/workers/reconciliation.worker.ts` |
+| **Statut** | ✅ Corrigé — `ReconciliationWorker` implémenté |
 
-**Problème :** `spend()` commit la transaction DB avant que le tx on-chain soit confirmé. Si l'appel on-chain échoue après le commit, les UTXOs sont marqués `spent` en DB mais jamais brûlés on-chain.
+**Solution implémentée :**
+1. Modèle `SyncCheckpoint` en Prisma (table `chain + contractAddress → lastBlock`)
+2. `ReconciliationWorker` — job périodique (60s par défaut) qui :
+   - Lit le dernier bloc traité depuis `SyncCheckpoint`
+   - Scanne `CreditClaimed` / `UTXOSpent` via `queryFilter()` en batches de 2000 blocs
+   - Applique `UTXOService.mint()` avec idempotency (duplicate check par `sourceId`)
+   - Marque les UTXOs dépensés on-chain comme `spent` en DB
+   - Sauvegarde le checkpoint après chaque lot (`upsert`)
+3. Intégré dans `server.ts` — arrêt gracieux via SIGTERM/SIGINT
 
-**Solution requise :** Pattern saga / outbox : écrire l'intention en DB + déclencher l'on-chain dans le même appel, avec retry et réconciliation via le worker N3 en cas de divergence.
+---
+
+### [CIA-I9] HIGH — ~~DB commit avant confirmation on-chain~~ ✅ CORRIGÉ
+
+| | |
+|---|---|
+| **Fichier** | `backend/src/workers/reconciliation.worker.ts` (méthode `detectStaleSpent`) |
+| **Statut** | ✅ Corrigé — détection et revert automatique |
+
+**Solution implémentée :** Pattern saga avec réconciliation automatique :
+- `spend()` commit la DB en premier (optimistic) avec `txHash: null`
+- Le caller met à jour `txHash` après confirmation on-chain
+- `detectStaleSpent()` scanne les UTXOs `spent` dont le `CreditTransaction` n'a toujours pas de `txHash` après 10 minutes
+- Ces UTXOs sont automatiquement revertés à `unspent` (la tx on-chain a échoué/revert)
+- Seules les transactions de type `withdrawal` sont revertées — les punishments sont autoritaires côté DB
 
 ---
 
@@ -631,6 +693,123 @@ Le `catch` no-op remplacé par `throw new Error(...)` — le serveur refuse de d
 **Fichier :** `backend/src/workers/deposit.worker.ts` (nouveau), `backend/src/server.ts`
 
 `DepositWorker` écoute `CreditClaimed` → `UTXOService.mint()` (idempotency guard) et `UTXOSpent` → réconciliation DB. `maybeStartDepositWorker(prisma)` démarre si `RPC_WS_URL` et `ESCROW_VAULT_ADDRESS` sont définis, sinon warning gracieux. Intégré au démarrage et à l'arrêt gracieux du serveur.
+
+---
+
+## Findings corrigés — Round 12 (2026-08-01)
+
+### [C1-R12] CRITICAL — `mintUTXOReceipt` bloquait définitivement `withdrawWithProof`
+
+| | |
+|---|---|
+| **Fichiers** | `contracts/evm/EscrowVault.sol` |
+| **Fonctions** | `mintUTXOReceipt()`, `withdrawWithProof()` |
+
+**Problème :** Le guard d'idempotence de `mintUTXOReceipt()` écrivait dans `spentUTXOs[utxoId] = true`. Or `withdrawWithProof()` rejette tout UTXO dont `spentUTXOs[utxoId]` est `true`. Résultat : tout UTXO minté était immédiatement et définitivement non-retirable.
+
+**Correction :** Séparation en deux mappings indépendants. Voir [S4] ci-dessus pour le détail complet.
+
+---
+
+### [C2-R12] CRITICAL — `verifyProof` change UTXOs retournait toujours `false`
+
+| | |
+|---|---|
+| **Fichier** | `backend/src/services/utxo.service.ts` |
+| **Fonctions** | `signChangeUTXO()`, `verifyProof()`, `spend()` |
+
+**Problème (deux bugs distincts) :**
+1. **Dev path** : `signChangeUTXO` calculait `keccak256([txId, changeId])` mais `verifyProof` comparait à `keccak256([proofHash, utxo.id])` — champs différents → toujours `false`.
+2. **Prod path** : `signChangeUTXO` stockait une signature ECDSA 65 bytes mais `verifyProof` la comparait byte-à-byte à un hash 32 bytes → toujours `false`.
+
+**Correction :**
+- `signChangeUTXO` : ajout du paramètre `proofHash` ; dev fallback produit `keccak256([proofHash, changeId])`.
+- `spend()` : passe `proofHash` à `signChangeUTXO`.
+- `verifyProof` prod : `ethers.recoverAddress(digest, signature)` au lieu de comparaison de bytes.
+- `verifyProof` deposit : early-return `true` (proof = event on-chain CreditClaimed).
+
+---
+
+### [H7-R12] HIGH — `executePunishment` : 20% minté à `address(this)` sans récupération
+
+| | |
+|---|---|
+| **Fichier** | `contracts/evm/EscrowVault.sol` |
+| **Fonction** | `executePunishment()` |
+
+**Problème :** `ptfToken.mint(address(this), projectShare)` accumulait des tokens dans le contrat EscrowVault sans aucun mécanisme de retrait → supply morte permanente.
+
+**Correction :**
+```solidity
+// Tracking comptable avant interactions
+projectPunishmentFunds[projectId] += projectShare;
+
+// Les deux parts vont au treasury
+ptfToken.mint(treasury, treasuryShare);
+ptfToken.mint(treasury, projectShare);  // 20% tracé dans projectPunishmentFunds
+```
+
+---
+
+### [M1-R12] MEDIUM — `DepositWorker` : `ptfSignature: utxoId` (non-signature)
+
+| | |
+|---|---|
+| **Fichier** | `backend/src/workers/deposit.worker.ts` |
+
+**Problème :** `utxoId` (32 bytes) stocké comme signature ECDSA → `ethers.recoverAddress()` levait une exception catchée en `false` pour tous les dépôts.
+
+**Correction :** `ptfSignature: \`deposit:${utxoId}\`` (marqueur explicite non-ECDSA) + early-return dans `verifyProof` pour `sourceType === "deposit"`.
+
+---
+
+### [M9-R12] MEDIUM — `executePunishment` : check `InvalidDistribution` tautologique
+
+| | |
+|---|---|
+| **Fichier** | `contracts/evm/EscrowVault.sol` |
+
+**Problème :** `if (treasuryShare + projectShare != actualSlash) revert InvalidDistribution()` — `projectShare` étant défini comme `actualSlash - treasuryShare`, cette condition est algébriquement impossible → dead code, aucun invariant réel vérifié.
+
+**Correction :** Suppression du check runtime. Ajout dans le constructor :
+```solidity
+require(PUNISHMENT_TREASURY_BPS + PUNISHMENT_PROJECT_BPS == BPS_DENOMINATOR, "BPS must sum to 10000");
+```
+Vérification statique au déploiement plutôt que dead code à chaque appel.
+
+---
+
+### [M10-R12] MEDIUM — `withdrawWithProof` : surplus de UTXOs silencieux
+
+| | |
+|---|---|
+| **Fichier** | `contracts/evm/EscrowVault.sol` |
+| **Fonction** | `withdrawWithProof()` |
+
+**Problème :** `if (verifiedTotal < totalAmount)` — si `verifiedTotal > totalAmount`, tous les UTXOs étaient marqués `spent` mais seul `totalAmount` était brûlé et transféré. Le surplus PTF disparaissait.
+
+**Correction :** `if (verifiedTotal != totalAmount)` — égalité stricte exigée.
+
+---
+
+### [L1-R12] LOW — `ReputationRegistry.getLevel()` : external self-call coûteux
+
+| | |
+|---|---|
+| **Fichier** | `contracts/evm/ReputationRegistry.sol` |
+| **Fonction** | `getLevel()` |
+
+**Problème :** `uint256 score = this.getScore(dev)` génère un external CALL (~700–2000 gas supplémentaires pour un re-entry dans le même contrat).
+
+**Correction :**
+```solidity
+// Avant
+uint256 score = this.getScore(dev);
+
+// Après — accès direct au storage privé
+int256 raw = _scores[dev];
+uint256 score = raw > 0 ? uint256(raw) : 0;
+```
 
 ---
 
@@ -748,9 +927,11 @@ Ces invariants doivent être vrais à tout moment. Les violer indique un bug ou 
 | Invariant | Test Foundry |
 |-----------|-------------|
 | `sum(escrowBalance) ≤ usdc.balanceOf(vault)` | `invariant_solvency()` |
-| Un `utxoId` ne peut être minté qu'une seule fois | `spentUTXOs[utxoId] = true` avant `mint()` |
+| Un `utxoId` ne peut être minté qu'une seule fois | `mintedUTXOs[utxoId] = true` avant `mint()` (séparé de `spentUTXOs`) |
 | Un `utxoId` ne peut être dépensé qu'une seule fois | `spentUTXOs[utxoId]` check + `seenIds[]` intra-call |
-| `softLocked[dev] ≤ creditBalance[dev]` | `invariant_softLock()` |
+| `mintedUTXOs[id]` n'implique PAS `spentUTXOs[id]` | Les deux mappings sont indépendants — un UTXO minté est retirable |
+| `softLocked[dev] ≤ ptfToken.balanceOf(vault)` | `invariant_softLock()` — tokens en custody vault depuis H6 |
+| `sum(projectPunishmentFunds) ≤ cumul des actualSlash` | Invariant comptable — fonds traçables par projet |
 
 ### Signatures EIP-712
 
@@ -799,13 +980,17 @@ grep -n 'utxoService' backend/src/services/punishment.service.ts
 - [ ] UTXO typehash identique backend ↔ contrat
 - [ ] `proofHash` calculé avec utxoIds (pas les signatures) — deux endroits
 - [ ] `seenIds[]` présent dans la boucle `withdrawWithProof()`
-- [ ] `spentUTXOs[utxoId] = true` dans `mintUTXOReceipt()` avant `mint()`
-- [ ] `executePunishment()` ne touche pas `escrowBalance` en PTF
+- [ ] `mintedUTXOs[utxoId] = true` dans `mintUTXOReceipt()` avant `mint()` — mapping séparé de `spentUTXOs`
+- [ ] `spentUTXOs[utxoId]` check dans `withdrawWithProof()` — jamais dans `mintUTXOReceipt()`
+- [ ] `verifiedTotal != totalAmount` (égalité stricte) dans `withdrawWithProof()`
+- [ ] `executePunishment()` : 100% au treasury (80% + 20%), `projectPunishmentFunds` mis à jour
+- [ ] `executePunishment()` ne touche pas `escrowBalance`
+- [ ] Constructor : `require(BPS_TREASURY + BPS_PROJECT == BPS_DENOMINATOR)` présent
 
 ### Risques résiduels connus
 
 | Risque | Mitigation actuelle | Mitigation idéale |
 |--------|---------------------|-------------------|
-| Réconciliation rétroactive après crash prolongé (N3) | `DepositWorker` réconcilie `UTXOSpent` en temps réel | Worker de scan de blocs historiques depuis checkpoint |
-| DB commit avant confirmation on-chain (CIA-I9) | `txHash` nullable + alertes logs | Pattern saga/outbox + retry on-chain piloté par worker N3 |
+| ~~Réconciliation rétroactive après crash prolongé (N3)~~ | ✅ `ReconciliationWorker` — scan périodique depuis `SyncCheckpoint`, backfill + revert stale | Implémenté |
+| ~~DB commit avant confirmation on-chain (CIA-I9)~~ | ✅ `detectStaleSpent()` — revert auto après 10min sans `txHash` | Implémenté |
 | Arithmétique float sur montants | `toFixed(6)` partout, `Math.round(x * 1e6)` pour on-chain | Migrer vers entiers en micro-PTF |

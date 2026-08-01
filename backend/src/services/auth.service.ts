@@ -153,11 +153,17 @@ function await_sync_crypto() {
   return { createCipheriv, pbkdf2Sync };
 }
 
-/** Generate a cryptographically random 6-digit numeric OTP. */
+/** Generate a cryptographically random 6-digit numeric OTP using rejection sampling to avoid modulo bias. */
 function generateOtp(): string {
-  // Use 3 random bytes → 24-bit integer → modulo 1 000 000 → zero-padded to 6 digits
-  const buf = randomBytes(3);
-  return String(((buf[0] << 16) | (buf[1] << 8) | buf[2]) % 1_000_000).padStart(6, "0");
+  // 24-bit range = 16 777 216. 16 777 216 % 1 000 000 = 777 216 → values 0–777215 are
+  // over-represented with naive modulo. Rejection sampling discards those to get uniform distribution.
+  const LIMIT = 16_000_000; // largest multiple of 1_000_000 that fits in 24 bits
+  let n: number;
+  do {
+    const buf = randomBytes(3);
+    n = (buf[0] << 16) | (buf[1] << 8) | buf[2];
+  } while (n >= LIMIT);
+  return String(n % 1_000_000).padStart(6, "0");
 }
 
 function derivePtfAddress(publicKey: string): string {
@@ -212,7 +218,8 @@ export class AuthService implements IAuthService {
 
     const existing = await this.prisma.user.findUnique({ where: { email: input.email } });
     if (existing) {
-      throw new PtfError(PtfErrorCode.EMAIL_ALREADY_USED, "Un compte existe déjà avec cet email");
+      // Same error code and message as invalid input to prevent email enumeration
+      throw new PtfError(PtfErrorCode.INVALID_INPUT, "Inscription impossible avec ces informations");
     }
 
     // Generate secp256k1 keypair server-side
@@ -254,7 +261,7 @@ export class AuthService implements IAuthService {
       throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Email ou mot de passe incorrect");
     }
     if (user.isBanned) {
-      throw new PtfError(PtfErrorCode.WALLET_BANNED, `Compte banni : ${user.banReason ?? "violation des conditions d'utilisation"}`);
+      throw new PtfError(PtfErrorCode.WALLET_BANNED, "Ce compte a été suspendu. Contactez le support PTF.");
     }
 
     // Check if the device is already trusted
@@ -312,14 +319,34 @@ export class AuthService implements IAuthService {
     }
 
     if (!verifyPassword(input.otp, pending.otpHash)) {
+      // Incrémenter le compteur d'échecs — invalider après 5 tentatives (H6)
+      const updated = await this.prisma.pendingDeviceSession.updateMany({
+        where: { id: pending.id, used: false },
+        data: { attempts: { increment: 1 } } as unknown as Record<string, unknown>,
+      });
+      if (updated.count === 0) {
+        throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Code invalide ou expiré. Recommencez la connexion.");
+      }
+      // Refetch pour vérifier le compteur
+      const refreshed = await this.prisma.pendingDeviceSession.findUnique({ where: { id: pending.id } });
+      const attempts = (refreshed as unknown as { attempts?: number })?.attempts ?? 1;
+      if (attempts >= 5) {
+        await this.prisma.pendingDeviceSession.update({ where: { id: pending.id }, data: { used: true } });
+        throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Trop de tentatives incorrectes. Recommencez la connexion.");
+      }
       throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Code de vérification incorrect");
     }
 
-    // Consume — prevents replay
-    await this.prisma.pendingDeviceSession.update({
-      where: { id: pending.id },
+    // Atomic consume via updateMany — returns count=0 if already consumed by a concurrent request (H7)
+    const consumed = await this.prisma.pendingDeviceSession.updateMany({
+      where: { id: pending.id, used: false },
       data:  { used: true },
     });
+
+    if (consumed.count === 0) {
+      // Another concurrent request already consumed this OTP
+      throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Code déjà utilisé. Recommencez la connexion.");
+    }
 
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: pending.userId } });
 
@@ -425,6 +452,14 @@ export class AuthService implements IAuthService {
     }
 
     await this.prisma.walletLinkChallenge.update({ where: { id: challengeId }, data: { used: true } });
+
+    // Guard against silent wallet re-assignment — symmetric to linkGithub (H5)
+    const existingLink = await this.prisma.walletLink.findUnique({
+      where: { chain_address: { chain: challenge.chain, address: challenge.address } },
+    });
+    if (existingLink && existingLink.userId !== userId) {
+      throw new PtfError(PtfErrorCode.GITHUB_ALREADY_LINKED, "Ce wallet est déjà lié à un autre compte PTF");
+    }
 
     const walletLink = await this.prisma.walletLink.upsert({
       where:  { chain_address: { chain: challenge.chain, address: challenge.address } },

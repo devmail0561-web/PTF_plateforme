@@ -124,6 +124,7 @@ export interface CreditBalance {
 // ─── Project views (public / anonymised) ────────────────────────────────────
 
 export interface PublicProjectView {
+  id?: string;           // alias for projectId — matches Project.id for consistency
   projectId: string;
   type: ProjectType;
   rewardMode: ProjectRewardMode;

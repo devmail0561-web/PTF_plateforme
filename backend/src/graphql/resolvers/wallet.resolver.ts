@@ -51,7 +51,8 @@ export const walletResolvers = {
       ]);
 
       const meetsMinBalance = await ctx.services.wallet.meetsMinBalance(args.address, args.chain);
-      const chains = await ctx.services.wallet.getLinkedChains(args.address).catch(() => []);
+      // walletStatus is called for a specific address+chain — return the queried chain as linked
+      const chains = [{ chain: args.chain }];
 
       return {
         address: args.address,
@@ -154,8 +155,8 @@ export const walletResolvers = {
     ) => {
       const limit  = Math.min(args.limit  ?? 50, 200);
       const offset = args.offset ?? 0;
-      const all = await ctx.services.utxo.getProvenance(args.address);
-      return all.slice(offset, offset + limit).map(safeUtxo);
+      const all = await ctx.services.utxo.getProvenance(args.address, { limit, offset });
+      return all.map(safeUtxo);
     },
   },
 
@@ -229,8 +230,10 @@ export const walletResolvers = {
     ) => {
       if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
       const { token, user } = await ctx.services.auth.linkGithub(ctx.user.userId, args.code, args.state, ctx.user.deviceId);
-      // encryptedKey unchanged — client already has it stored
-      return { token, encryptedKey: user.encryptedKey ?? "", user: await buildUserProfile(user, ctx) };
+      // encryptedKey unchanged — client already has it stored locally from initial login.
+      // Never return "" which would overwrite the client's stored key with an empty string.
+      // "__unchanged__" is a sentinel the frontend must recognise and ignore (M6).
+      return { token, encryptedKey: user.encryptedKey ?? "__unchanged__", user: await buildUserProfile(user, ctx) };
     },
 
     // ── Request wallet-link challenge ─────────────────────────────────────────

@@ -100,9 +100,16 @@ export class DepositWorker {
     chain: string
   ): Promise<void> {
     try {
-      // Idempotency: skip if the UTXO already exists in DB.
-      const existing = await this.db.creditUTXO.findUnique({ where: { id: utxoId } });
-      if (existing) return;
+      // Idempotency: check by sourceId (= on-chain utxoId) rather than DB-generated id.
+      // mint() stores the on-chain utxoId as sourceId; the DB id is a derived keccak256
+      // computed from (owner, sourceId, amount, timestamp) — it won't match utxoId directly.
+      const existing = await this.db.creditUTXO.findFirst({
+        where: { sourceId: utxoId, sourceType: "deposit" },
+      });
+      if (existing) {
+        console.log(`[DepositWorker] Skipping duplicate CreditClaimed for utxoId ${utxoId}`);
+        return;
+      }
 
       // Convert from on-chain fixed-point (1e6) to float PTF amount.
       const amount = Number(amountWei) / 1e6;
@@ -113,9 +120,11 @@ export class DepositWorker {
         sourceType:    "deposit",
         sourceId:      utxoId,
         chain:         chain || this.config.chain,
-        // On-chain deposits carry the on-chain tx hash as their signature proof.
-        // The signature will be verified by verifyProof() using the operator address.
-        ptfSignature:  utxoId, // placeholder — real sig is in the on-chain CreditClaimed event
+        // On-chain deposits: the CreditClaimed event IS the proof (txHash anchored on-chain).
+        // verifyProof() for deposits returns true immediately for DB-resident UTXOs (trusted
+        // DepositWorker origin). The deposit: prefix marks this clearly as a non-ECDSA value
+        // so it cannot be mistaken for a real signature by other code paths.
+        ptfSignature:  `deposit:${utxoId}`,
         txHash:        utxoId,
       });
 

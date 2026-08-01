@@ -11,7 +11,16 @@ export const taskResolvers = {
       ctx: GraphQLContext
     ) => {
       const tasks = await ctx.services.task.list(args.filter ?? {});
-      return tasks.map((t) => ctx.services.task.getPublicView(t, "public"));
+      const projectIds = [...new Set(tasks.map((t) => t.projectId))];
+      const projects = await Promise.all(
+        projectIds.map((id) => ctx.services.project.findById(id))
+      );
+      const projectTypeMap = new Map(
+        projects.filter(Boolean).map((p) => [p!.id, p!.type])
+      );
+      return tasks.map((t) =>
+        ctx.services.task.getPublicView(t, projectTypeMap.get(t.projectId) ?? "public")
+      );
     },
 
     task: async (
@@ -21,7 +30,8 @@ export const taskResolvers = {
     ) => {
       const task = await ctx.services.task.findById(args.id);
       if (!task) return null;
-      return ctx.services.task.getPublicView(task, "public");
+      const project = await ctx.services.project.findById(task.projectId);
+      return ctx.services.task.getPublicView(task, project?.type ?? "public");
     },
 
     myTasks: async (
@@ -30,10 +40,12 @@ export const taskResolvers = {
       ctx: GraphQLContext
     ) => {
       if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
-      // myTasks only requires login, not full linking
+      const wallets = await ctx.services.wallet.getLinkedChains(ctx.user.userId);
+      if (!wallets.length) return [];
+      // Use all linked addresses to find all tasks across chains
       const tasks = await ctx.services.task.list({
         status: args.status as never,
-        devAddress: ctx.user.userId,
+        devAddress: wallets[0].address,
       });
       return tasks.map((t) => ctx.services.task.getPublicView(t, "public"));
     },
@@ -76,12 +88,16 @@ export const taskResolvers = {
         throw new PtfError(PtfErrorCode.WALLET_NOT_ACTIVATED, "Aucun wallet lié");
       }
 
-      // The service verifies ownership against task.devAddress from the DB
+      // Find the task to know which address was used at claim time
+      const task = await ctx.services.task.findById(args.taskId);
+      const callerWallet = task?.devAddress
+        ? wallets.find((w) => w.address.toLowerCase() === task.devAddress!.toLowerCase()) ?? wallets[0]
+        : wallets[0];
       return ctx.services.task.submit(
         args.taskId,
         args.commitHash,
         args.branchRef,
-        wallets[0].address
+        callerWallet.address
       );
     },
 
@@ -97,8 +113,11 @@ export const taskResolvers = {
         throw new PtfError(PtfErrorCode.WALLET_NOT_ACTIVATED, "Aucun wallet lié");
       }
 
-      // The service verifies ownership against task.devAddress from the DB
-      await ctx.services.task.cancel(args.taskId, wallets[0].address);
+      const task = await ctx.services.task.findById(args.taskId);
+      const callerWallet = task?.devAddress
+        ? wallets.find((w) => w.address.toLowerCase() === task.devAddress!.toLowerCase()) ?? wallets[0]
+        : wallets[0];
+      await ctx.services.task.cancel(args.taskId, callerWallet.address);
       return true;
     },
 

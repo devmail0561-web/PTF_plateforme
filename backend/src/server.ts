@@ -12,6 +12,7 @@ import { projectResolvers } from "./graphql/resolvers/project.resolver.js";
 import { walletResolvers } from "./graphql/resolvers/wallet.resolver.js";
 import type { GraphQLContext } from "./graphql/context.js";
 import { maybeStartDepositWorker } from "./workers/deposit.worker.js";
+import { maybeStartReconciliationWorker } from "./workers/reconciliation.worker.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -162,11 +163,16 @@ async function main() {
   // Deposit worker — listens to on-chain EscrowVault events (N1).
   const depositWorker = await maybeStartDepositWorker(prisma);
 
+  // Reconciliation worker (N3) — scans historical blocks from checkpoint,
+  // backfills missed CreditClaimed events, reconciles spent UTXOs (CIA-I9).
+  const reconciliationWorker = await maybeStartReconciliationWorker(prisma);
+
   // Graceful shutdown
   process.on("SIGTERM", async () => {
     console.log("[Server] SIGTERM reçu — arrêt gracieux");
     await timerService.stop();
     await depositWorker?.stop();
+    await reconciliationWorker?.stop();
     await prisma.$disconnect();
     await redis.disconnect();
     httpServer.close(() => process.exit(0));
@@ -175,6 +181,7 @@ async function main() {
   process.on("SIGINT", async () => {
     await timerService.stop();
     await depositWorker?.stop();
+    await reconciliationWorker?.stop();
     await prisma.$disconnect();
     await redis.disconnect();
     process.exit(0);

@@ -198,11 +198,13 @@ function mockProjects(): PublicProject[] {
 export class PtfApiClient {
   private readonly apiUrl: string;
   private offline: boolean;
+  private readonly apiToken: string | undefined;
 
   constructor(config: PtfUserConfig) {
     this.apiUrl = config.ptfApiUrl ?? "https://api.ptf.dev";
     // Offline when no URL is configured; try to connect otherwise (network errors fall back gracefully)
     this.offline = !config.ptfApiUrl;
+    this.apiToken = (config as unknown as { ptfApiToken?: string }).ptfApiToken;
   }
 
   isOffline(): boolean {
@@ -215,7 +217,10 @@ export class PtfApiClient {
   async query<T>(queryString: string, variables?: Record<string, unknown>): Promise<T> {
     const res = await fetch(this.apiUrl + "/graphql", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(this.apiToken ? { "Authorization": `Bearer ${this.apiToken}` } : {}),
+      },
       body: JSON.stringify({ query: queryString, variables: variables ?? {} }),
     });
     const json = (await res.json()) as { data?: T; errors?: { message: string }[] };
@@ -274,53 +279,48 @@ export class PtfApiClient {
 
   async claimTask(
     taskId: string,
-    devAddress: string
+    devAddress: string,
+    conditionsHash: string
   ): Promise<{ result: ClaimResult; offline: boolean }> {
-    const claimedAt = new Date().toISOString();
-    const deadline = new Date(Date.now() + 30 * 86400000).toISOString();
-
     if (this.isOffline()) {
       return {
         result: {
           taskId,
           devAddress,
-          claimedAt,
-          deadline,
-          conditionsHash: "0x" + "a".repeat(64),
+          claimedAt: new Date().toISOString(),
+          deadline: new Date(Date.now() + 30 * 86400000).toISOString(),
+          conditionsHash,
           signature: "0x" + "b".repeat(130),
         },
         offline: true,
       };
     }
 
-    try {
-      const mutation = `
-        mutation ClaimTask($taskId: String!, $devAddress: String!) {
-          claimTask(taskId: $taskId, devAddress: $devAddress) {
-            taskId devAddress claimedAt deadline conditionsHash signature
-          }
+    // Note: conditionsHash is computed client-side and compared after the server responds.
+    // The server computes its own hash independently; we pass it here only for the post-call check.
+    const mutation = `
+      mutation ClaimTask($taskId: String!, $devAddress: String!) {
+        claimTask(taskId: $taskId, devAddress: $devAddress) {
+          taskId devAddress claimedAt deadline conditionsHash signature
         }
-      `;
-      const res = await fetch(this.apiUrl + "/graphql", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: mutation, variables: { taskId, devAddress } }),
-      });
-      const data = (await res.json()) as { data?: { claimTask: ClaimResult } };
-      return { result: data.data!.claimTask, offline: false };
-    } catch {
-      return {
-        result: {
-          taskId,
-          devAddress,
-          claimedAt,
-          deadline,
-          conditionsHash: "0x" + "a".repeat(64),
-          signature: "0x" + "b".repeat(130),
-        },
-        offline: true,
-      };
+      }
+    `;
+    const res = await fetch(this.apiUrl + "/graphql", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(this.apiToken ? { "Authorization": `Bearer ${this.apiToken}` } : {}),
+      },
+      body: JSON.stringify({ query: mutation, variables: { taskId, devAddress } }),
+    });
+    const data = (await res.json()) as {
+      data?: { claimTask: ClaimResult };
+      errors?: { message: string }[];
+    };
+    if (!data.data?.claimTask) {
+      throw new Error(data.errors?.[0]?.message ?? "Claim échoué — réponse vide du serveur");
     }
+    return { result: data.data.claimTask, offline: false };
   }
 
   async submitTask(
@@ -343,27 +343,29 @@ export class PtfApiClient {
       };
     }
 
-    try {
-      const mutation = `
-        mutation SubmitTask($taskId: String!, $branch: String!, $commitHash: String!) {
-          submitTask(taskId: $taskId, branch: $branch, commitHash: $commitHash) {
-            taskId commitHash branch submittedAt validationJobId
-          }
+    const mutation = `
+      mutation SubmitTask($taskId: String!, $branch: String!, $commitHash: String!) {
+        submitTask(taskId: $taskId, branch: $branch, commitHash: $commitHash) {
+          taskId commitHash branch submittedAt validationJobId
         }
-      `;
-      const res = await fetch(this.apiUrl + "/graphql", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: mutation, variables: { taskId, branch, commitHash } }),
-      });
-      const data = (await res.json()) as { data?: { submitTask: SubmitResult } };
-      return { result: data.data!.submitTask, offline: false };
-    } catch {
-      return {
-        result: { taskId, commitHash, branch, submittedAt, validationJobId: "job_mock" },
-        offline: true,
-      };
+      }
+    `;
+    const res = await fetch(this.apiUrl + "/graphql", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(this.apiToken ? { "Authorization": `Bearer ${this.apiToken}` } : {}),
+      },
+      body: JSON.stringify({ query: mutation, variables: { taskId, branch, commitHash } }),
+    });
+    const data = (await res.json()) as {
+      data?: { submitTask: SubmitResult };
+      errors?: { message: string }[];
+    };
+    if (!data.data?.submitTask) {
+      throw new Error(data.errors?.[0]?.message ?? "Submit échoué — réponse vide du serveur");
     }
+    return { result: data.data.submitTask, offline: false };
   }
 
   async getWalletStatus(
@@ -377,11 +379,21 @@ export class PtfApiClient {
       const query = `query WalletStatus($address: String!) { walletStatus(address: $address) { address ptfBalance softLocked available reputationScore reputationLevel } }`;
       const res = await fetch(this.apiUrl + "/graphql", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(this.apiToken ? { "Authorization": `Bearer ${this.apiToken}` } : {}),
+        },
         body: JSON.stringify({ query, variables: { address } }),
       });
-      const data = (await res.json()) as { data?: { walletStatus: WalletStatus } };
-      return { status: data.data!.walletStatus, offline: false };
+      const data = (await res.json()) as {
+        data?: { walletStatus: WalletStatus };
+        errors?: { message: string }[];
+      };
+      if (!data.data?.walletStatus) {
+        if (data.errors?.length) throw new Error(data.errors[0].message);
+        return { status: mockWalletStatus(address), offline: true };
+      }
+      return { status: data.data.walletStatus, offline: false };
     } catch {
       return { status: mockWalletStatus(address), offline: true };
     }
@@ -446,7 +458,10 @@ export class PtfApiClient {
       `;
       const res = await fetch(this.apiUrl + "/graphql", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(this.apiToken ? { "Authorization": `Bearer ${this.apiToken}` } : {}),
+        },
         body: JSON.stringify({
           query: mutation,
           variables: { projectId, architecture: archContent, planAction: planContent },
@@ -454,8 +469,14 @@ export class PtfApiClient {
       });
       const data = (await res.json()) as {
         data?: { generateTasks: { tasks: PtfTask[]; estimation: ProjectEstimation } };
+        errors?: { message: string }[];
       };
-      const result = data.data!.generateTasks;
+      if (!data.data?.generateTasks) {
+        if (data.errors?.length) throw new Error(data.errors[0].message);
+        const tasks = generateMockTasks(projectId, 5);
+        return { tasks, estimation, offline: true };
+      }
+      const result = data.data.generateTasks;
       return { tasks: result.tasks, estimation: result.estimation, offline: false };
     } catch {
       const tasks = generateMockTasks(projectId, 5);

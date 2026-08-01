@@ -109,6 +109,34 @@ chmod +x /usr/local/bin/ptf
 winget install ptf
 ```
 
+### Lancer le frontend (MVP V0.1.0)
+
+```bash
+cd frontend
+cp .env.local.example .env.local   # copier les variables d'environnement
+npm install
+npm run dev     # → http://localhost:3000
+```
+
+Pages disponibles sans backend (MSW activé) :
+
+| Route | Statut | Description |
+|-------|--------|-------------|
+| `/tasks` | 200 | Marketplace — 10+ tâches mock |
+| `/tasks/[id]` | 200 | Détail tâche |
+| `/login` | 200 | Connexion |
+| `/register` | 200 | Inscription |
+| `/onboarding` | 200 | Wizard OTP (`123456`) → GitHub → wallet |
+| `/dashboard` | 307 → `/login` | Dashboard dev (protégé — middleware Edge) |
+| `/profile/[address]` | 200 | Profil public développeur |
+
+```bash
+# Vérifier les types TypeScript (0 erreurs attendues)
+npm run typecheck
+```
+
+---
+
 ### Créer son compte et se connecter
 
 PTF utilise un système d'authentification à 3 étapes pour sécuriser chaque compte. Ces étapes ne sont requises qu'une seule fois (à l'inscription).
@@ -820,7 +848,7 @@ Cette vérification protège contre toute tentative d'usurpation d'adresse. Aucu
 | **Base de données** | PostgreSQL (données mutables) + Redis |
 | **Indexation** | The Graph (multi-chaîne, un subgraph par chaîne) |
 | **Stockage décentralisé** | Arweave (permanent) + IPFS |
-| **Frontend** | Next.js 14 + TailwindCSS |
+| **Frontend** | Next.js 14.2.5 App Router + TailwindCSS dark theme + Apollo Client 3 + wagmi v2 + RainbowKit + Zustand + MSW 2 — MVP V0.1.0 ✅ |
 | **Sandbox** | Docker + gVisor (projets prives) |
 | **Auth** | Email + mot de passe + clé secp256k1 générée côté serveur + OTP email nouvel appareil + OAuth GitHub CSRF-safe (state nonce) |
 | **Sécurité API** | Rate limiting `express-rate-limit` (300 req/15min global, 20 req/15min auth) + depth limit GraphQL (max 6) |
@@ -954,7 +982,7 @@ Les projets OSS existants apportent une communauté et des contributions réelle
 - **Indexation :** The Graph (subgraph par chaîne) + agrégation backend
 - **Stockage décentralisé :** Arweave (ARCHITECTURE.md, PLAN_ACTION.md — permanent) + IPFS
 - **Base de donnees :** PostgreSQL 16 (données mutables : statuts, sessions, locks, logs) + Redis 7
-- **Frontend :** Next.js 14 + TailwindCSS + wagmi (wallet multi-chaîne)
+- **Frontend :** Next.js 14.2.5 App Router + TailwindCSS dark theme + wagmi v2 + RainbowKit + Apollo Client 3 + Zustand + MSW 2 — MVP V0.1.0 ✅
 - **CLI :** Node.js + TypeScript (pkg pour binaires statiques Linux/macOS/Windows)
 - **Blockchain :** Multi-chaîne EVM (Polygon, Ethereum, BSC, Avalanche, Arbitrum, Base) + Solana
 - **Bridge :** LayerZero (ou équivalent) pour PTF Credits cross-chaîne
