@@ -102,6 +102,23 @@ PTF_project/
 │   ├── mocks/                         ← MSW 2 handlers + fixtures (10+ taches mock)
 │   └── package.json
 │
+├── infra/                             ← Déploiement production (Hetzner CX21)
+│   ├── setup-vps.sh                   ← Provisionning initial : Docker, UFW, Certbot, user ptf
+│   ├── docker-compose.prod.yml        ← Stack framework : Postgres, Redis, backend, Nginx
+│   ├── docker-compose.service.prod.yml ← Stack service : Postgres, Redis, backend, frontend
+│   ├── nginx.conf                     ← Reverse proxy TLS — 3 vhosts (api.framework, api.service, app.service)
+│   ├── .env.framework.example         ← Variables prod framework (DB, Redis, JWT, RPC, contrats)
+│   └── .env.service.example           ← Variables prod service (DB, Redis, SMTP, JWT)
+│
+├── subgraph/                          ← The Graph — indexation on-chain (Polygon / Amoy)
+│   ├── subgraph.yaml                  ← Manifest : 4 dataSources (ProjectRegistry, EscrowVault, Reputation, Credit)
+│   ├── schema.graphql                 ← 10 entités GraphQL (Project, Task, Developer, UTXO, GlobalStats...)
+│   ├── package.json                   ← @graphprotocol/graph-cli + graph-ts
+│   ├── abis/                          ← ABI JSON des 4 contrats
+│   ├── src/                           ← Handlers AssemblyScript (4 fichiers)
+│   └── scripts/
+│       └── update-addresses.sh        ← Met à jour les adresses contrats après deploy
+│
 ├── .claude/
 │   └── commands/
 │       └── ptf-architect.md           ← Skill PTF pour IA (Claude Code, Cursor, Copilot...)

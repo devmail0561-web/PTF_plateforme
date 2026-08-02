@@ -41,6 +41,31 @@ PTF_project/
 │   └── oseye-example/                 # Exemple d'utilisation sur OSEye
 │       └── README.md                  # Case study complet
 │
+├── infra/                             # Déploiement production (Hetzner CX21)
+│   ├── setup-vps.sh                   # Provisionning initial : Docker, UFW, Certbot, user ptf
+│   ├── docker-compose.prod.yml        # Stack framework : Postgres, Redis, ptf-backend, Nginx
+│   ├── docker-compose.service.prod.yml # Stack service : Postgres, Redis, backend, frontend
+│   ├── nginx.conf                     # Reverse proxy TLS — 3 vhosts (api.framework, api.service, app.service)
+│   ├── .env.framework.example         # Variables prod framework (DB, Redis, JWT, RPC, contrats)
+│   └── .env.service.example           # Variables prod service (DB, Redis, SMTP, JWT)
+│
+├── subgraph/                          # The Graph — indexation on-chain (Polygon / Amoy)
+│   ├── subgraph.yaml                  # Manifest : 4 dataSources (ProjectRegistry, EscrowVault, Reputation, Credit)
+│   ├── schema.graphql                 # 10 entités : Project, Task, TaskReward, Punishment, Withdrawal, UTXO, Developer, Rep/Credit Events, GlobalStats
+│   ├── package.json                   # @graphprotocol/graph-cli + graph-ts
+│   ├── abis/                          # ABI JSON des 4 contrats
+│   │   ├── ProjectRegistry.json
+│   │   ├── EscrowVault.json
+│   │   ├── ReputationRegistry.json
+│   │   └── CreditToken.json
+│   ├── src/                           # Handlers AssemblyScript
+│   │   ├── projectRegistry.ts         # ProjectRegistered, MerkleRootUpdated, TaskClaimed, Lock, Deactivate
+│   │   ├── escrowVault.ts             # Funded, RewardReleased, Punishment, Withdrawal, UTXO Mint/Spent, Refund
+│   │   ├── reputationRegistry.ts      # ReputationUpdated → Developer score + historique
+│   │   └── creditToken.ts             # CreditClaimed, Transfer (in/out, ignore mint/burn)
+│   └── scripts/
+│       └── update-addresses.sh        # Met à jour les adresses contrats dans subgraph.yaml après deploy
+│
 └── .github/                           # GitHub Actions du framework lui-même
     ├── workflows/
     │   ├── ci.yml

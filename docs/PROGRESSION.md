@@ -17,11 +17,11 @@
 | Documentation | ✅ À jour | 100% |
 | CLI (framework) | ✅ Terminé | 100% |
 | Smart contracts EVM | ✅ Terminé | 100% |
-| Audit sécurité (17 rounds) | ✅ Terminé | 100% |
+| Audit sécurité (17 rounds — 195 findings) | ✅ Terminé | 100% |
 | Backend framework (réseau) | ⚠️ En cours | 95% |
 | ptf_service_plateforme — backend | ⚠️ En cours | 90% |
-| ptf_service_plateforme — frontend | ⚠️ En cours | 85% |
-| Infrastructure | ⚠️ En cours | 80% |
+| ptf_service_plateforme — frontend | ⚠️ En cours | 70% |
+| Infrastructure | ⚠️ En cours | 70% |
 | Blockchain réelle (testnet) | 🔴 À faire | 0% |
 | Solana / Anchor | 🔴 À faire | 0% |
 
@@ -165,7 +165,7 @@ Le projet est désormais séparé en deux dépôts distincts :
 
 ---
 
-### ⚠️ Infrastructure — 20%
+### ⚠️ Infrastructure — 70%
 
 | Composant | Statut | Priorité |
 |---|---|---|
@@ -183,7 +183,7 @@ Le projet est désormais séparé en deux dépôts distincts :
 | Déploiement VPS (Hetzner CX21) | 🔴 À faire — créer le serveur + pointer les DNS | 🔴 Haute |
 | Secrets GitHub Actions | 🔴 À faire — `VPS_HOST`, `VPS_SSH_KEY`, `GHCR_TOKEN` | 🔴 Haute |
 | Contrats testnet Polygon Amoy | 🔴 À faire — besoin de `DEPLOYER_PK` + MATIC Amoy | 🔴 Haute |
-| The Graph subgraph | ⚠️ Corrigé partiellement — compile (imports fixés), handlers manquants | — |
+| The Graph subgraph | ✅ Complet — 4 dataSources, 10 entités, handlers corrigés (audit round 16) | — |
 | Monitoring (Grafana Cloud) | 🔴 À faire | 🟠 Basse |
 
 ---
@@ -199,8 +199,8 @@ Le projet est désormais séparé en deux dépôts distincts :
 | TypeScript errors | **0** (typecheck passe sur les deux projets) |
 | CI GitHub Actions | ✅ Corrigé (`a9313ca`) — Foundry deps installées dans le CI |
 | Commits framework | 16 |
-| Findings sécurité corrigés | **152** (16 rounds d'audit) |
-| Findings ouverts | **7** (non bloquants — voir `AUDIT_CORRECTIONS.md`) |
+| Findings sécurité corrigés | **152 + 43 = 195** (17 rounds d'audit) |
+| Findings ouverts | **0** (7 derniers corrigés commit `353eb30`) |
 
 ---
 
@@ -278,12 +278,12 @@ Le projet est désormais séparé en deux dépôts distincts :
 
 ### ✅ Priorité 6 — The Graph subgraph COMPLÉTÉ
 
-**Structure :** `subgraph/` — 4 dataSources, 12 entités GraphQL, 4 handlers AssemblyScript
+**Structure :** `subgraph/` — 4 dataSources, 10 entités GraphQL, 4 handlers AssemblyScript
 
 | Fichier | Rôle |
 |---------|------|
 | `subgraph/subgraph.yaml` | Config : 4 contrats, network matic, event handlers |
-| `subgraph/schema.graphql` | 12 entités : Project, Task, TaskReward, Punishment, Withdrawal, UTXORecord, Developer, ReputationEvent, CreditEvent, GlobalStats |
+| `subgraph/schema.graphql` | 10 entités : Project, Task, TaskReward, Punishment, Withdrawal, UTXORecord, Developer, ReputationEvent, CreditEvent, GlobalStats |
 | `subgraph/src/projectRegistry.ts` | ProjectRegistered, MerkleRootUpdated, TaskClaimed, ProjectLocked |
 | `subgraph/src/escrowVault.ts` | ProjectFunded, TaskRewardReleased, PunishmentExecuted, WithdrawalExecuted, UTXOSpent |
 | `subgraph/src/reputationRegistry.ts` | ReputationUpdated → historique immuable par dev |
