@@ -154,7 +154,7 @@ async function main() {
   });
 
   // Démarrage du TimerService (expiration tâches + alertes deadline)
-  await redis.connect();
+  if (redis.status === "wait") await redis.connect();
   await timerService.start();
 
   // Graceful shutdown

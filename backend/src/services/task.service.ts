@@ -17,6 +17,7 @@ import type {
 } from "../types/index.js";
 import { PtfError, PtfErrorCode } from "../types/errors.js";
 import { ethers } from "ethers";
+import Redlock from "redlock";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRedis = any;
 
@@ -102,20 +103,7 @@ export class TaskService implements ITaskService {
     private readonly walletService: IWalletService,
     redis: AnyRedis
   ) {
-    // Dynamic import pour compatibilité ESM/CJS avec redlock v5 beta
-    // Le fallback throws pour éviter le no-op silencieux (CIA-I7) :
-    // si Redis ou Redlock est indisponible, la contention de task.claim() n'est pas protégée.
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const RedlockCtor = require("redlock");
-      const Ctor = RedlockCtor.default ?? RedlockCtor;
-      this.redlock = new Ctor([redis], { retryCount: 3, retryDelay: 200 });
-    } catch (err) {
-      throw new Error(
-        `[TaskService] Impossible d'initialiser Redlock — vérifiez que Redis est accessible et que "redlock" est installé. ` +
-        `Cause : ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
+    this.redlock = new Redlock([redis], { retryCount: 3, retryDelay: 200 });
   }
 
   async create(projectId: string, draft: TaskDraft): Promise<Task> {
