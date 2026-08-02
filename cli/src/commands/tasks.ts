@@ -154,6 +154,7 @@ tasksCommand
   .command("preview")
   .description("Revoir les tâches générées avant publication")
   .action(async () => {
+    requireAuth();
     const config = requireProjectConfig();
     const drafts = loadDraftTasks();
 

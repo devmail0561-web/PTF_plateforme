@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import chalk from "chalk";
-import { requireProjectConfig, loadUserConfig, saveDraftTasks } from "../utils/config.js";
+import { requireProjectConfig, requireAuth, saveDraftTasks } from "../utils/config.js";
 import { validateBothDocs } from "../utils/docs-validator.js";
 import { PtfApiClient } from "../utils/api.js";
 import {
@@ -26,7 +26,7 @@ export const generateCommand = new Command("generate")
   .option("--skip-validation", "Passer la validation des docs (non recommandé)")
   .action(async (options) => {
     const config = requireProjectConfig();
-    const userConfig = loadUserConfig();
+    const userConfig = requireAuth();
 
     const cwd = process.cwd();
     const archPath = options.architecture.startsWith("/")

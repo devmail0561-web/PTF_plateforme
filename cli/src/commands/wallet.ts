@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadUserConfig, saveUserConfig } from "../utils/config.js";
+import { loadUserConfig, saveUserConfig, requireAuth } from "../utils/config.js";
 import { PtfApiClient } from "../utils/api.js";
 import {
   printError,
@@ -310,7 +310,7 @@ walletCommand
   .option("--limit <n>", "Nombre d'entrées à afficher", "20")
   .option("--type <type>", "Filtrer par type : reward_earned | punishment_deducted | soft_locked | soft_unlocked")
   .action(async (options) => {
-    const userConfig = loadUserConfig();
+    const userConfig = requireAuth();
     const address = options.address ?? userConfig.walletAddress;
 
     if (!address) {
@@ -392,7 +392,7 @@ walletCommand
   .option("--address <address>", "Adresse wallet (défaut : wallet configuré)")
   .option("--limit <n>", "Nombre d'entrées à afficher", "20")
   .action(async (options) => {
-    const userConfig = loadUserConfig();
+    const userConfig = requireAuth();
     const address = options.address ?? userConfig.walletAddress;
 
     if (!address) {
@@ -469,7 +469,7 @@ walletCommand
   .option("--status <status>", "Filtrer par statut : unspent | spent | locked", "unspent")
   .option("--chain <chain>", "Filtrer par chaîne")
   .action(async (options) => {
-    const userConfig = loadUserConfig();
+    const userConfig = requireAuth();
     const address = options.address ?? userConfig.walletAddress;
 
     if (!address) {

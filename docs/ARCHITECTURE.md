@@ -4874,24 +4874,49 @@ dev: ptf task claim <taskId>
 
 Le réseau PTF est accessible sans authentification pour toutes les opérations de lecture publique. Seules les opérations qui écrivent on-chain ou mutent l'état du serveur requièrent un JWT de session valide (obtenu via `ptf auth login`).
 
-| Opération | Auth requise | Raison |
-|---|---|---|
-| `ptf tasks list` | Non | Lecture publique |
-| `ptf task show <id>` | Non | Lecture publique |
-| `ptf projects list` | Non | Lecture publique |
-| `ptf contributors list` | Non | Lecture publique |
-| `ptf status` | Non | Lecture locale uniquement |
-| `ptf wallet status --address` | Non | Lecture on-chain publique |
-| `ptf tasks mine` | **Oui** | Requête filtrée par identité |
-| `ptf task claim` | **Oui** | Écriture on-chain + soft-lock PTF |
-| `ptf task cancel` | **Oui** | Écriture on-chain |
-| `ptf submit` | **Oui** | Push + enregistrement on-chain |
-| `ptf tasks publish` | **Oui** | Dépôt escrow + Merkle root on-chain |
-| `ptf report` | **Oui** | Mutation serveur protégée |
-| `ptf wallet history` | **Oui** | Données privées de l'utilisateur |
-| `ptf wallet reputation-history` | **Oui** | Données privées de l'utilisateur |
+**Commandes locales (aucun réseau) :**
 
-**Règle d'implémentation (CLI et backend) :** toute commande marquée "Oui" vérifie la présence d'un `sessionToken` valide **avant** toute autre opération. Le CLI retourne `ptf auth login` immédiatement si absent. Le backend rejette la requête avec `UNAUTHORIZED` si le JWT est absent ou expiré.
+| Commande | Description |
+|---|---|
+| `ptf scaffold` | Génère les templates ARCHITECTURE.md + PLAN_ACTION.md |
+| `ptf validate-docs` | Valide le format des docs |
+| `ptf config get/set-*` | Configuration locale |
+| `ptf wallet create/restore/list/delete` | Gestion des keystores locaux |
+| `ptf auth logout / auth status` | Session locale |
+
+**Commandes publiques (réseau, sans auth) :**
+
+| Commande | Description |
+|---|---|
+| `ptf tasks list` | Liste les tâches disponibles |
+| `ptf task show <id>` | Détail d'une tâche |
+| `ptf task template <id>` | Template de soumission |
+| `ptf projects list` | Liste les projets |
+| `ptf project info` | Info du projet courant |
+| `ptf contributors list/verify` | Contributeurs d'un projet public |
+| `ptf wallet status` | Statut wallet (lecture on-chain publique) |
+| `ptf status` | État de la tâche active (local + lecture réseau) |
+
+**Commandes privées (auth requise — `ptf auth login` obligatoire) :**
+
+| Commande | Raison |
+|---|---|
+| `ptf init` | Enregistre le projet on-chain |
+| `ptf generate` | Appelle le backend avec le projectId |
+| `ptf tasks preview` | Mute les drafts liés au projet |
+| `ptf tasks mine` | Données filtrées par identité |
+| `ptf tasks publish` | Dépôt escrow + Merkle root on-chain |
+| `ptf task claim` | Écriture on-chain + soft-lock PTF |
+| `ptf task cancel` | Écriture on-chain |
+| `ptf submit` | Push + enregistrement on-chain |
+| `ptf commit` | Commit lié à une tâche claimée |
+| `ptf report` | Mutation serveur protégée |
+| `ptf project claimed-tasks` | Vue créateur privée |
+| `ptf wallet history` | Données financières privées |
+| `ptf wallet reputation-history` | Données de réputation privées |
+| `ptf wallet utxos` | UTXOs privés de l'utilisateur |
+
+**Règle d'implémentation (CLI et backend) :** toute commande privée vérifie la présence d'un `sessionToken` valide **avant** toute autre opération. Le CLI affiche `ptf auth login` immédiatement si absent. Le backend rejette la requête avec `UNAUTHORIZED` si le JWT est absent ou expiré.
 
 ---
 

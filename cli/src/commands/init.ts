@@ -5,7 +5,7 @@ import chalk from "chalk";
 import {
   loadProjectConfig,
   saveProjectConfig,
-  loadUserConfig,
+  requireAuth,
   ensureGitignore,
 } from "../utils/config.js";
 import { generateProjectId, shortHash } from "../utils/crypto.js";
@@ -47,7 +47,7 @@ export const initCommand = new Command("init")
       return;
     }
 
-    const userConfig = loadUserConfig();
+    const userConfig = requireAuth();
 
     const { default: inquirer } = await import("inquirer");
 

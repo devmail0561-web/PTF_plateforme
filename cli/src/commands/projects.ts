@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadUserConfig, requireProjectConfig } from "../utils/config.js";
+import { loadUserConfig, requireProjectConfig, requireAuth } from "../utils/config.js";
 import { PtfApiClient } from "../utils/api.js";
 import {
   printTable,
@@ -103,7 +103,7 @@ projectCommand
   .description("Voir les tâches réclamées de mon projet (dev, réputation, deadline)")
   .requiredOption("--project <projectId>", "ID du projet")
   .action(async (options) => {
-    const userConfig = loadUserConfig();
+    const userConfig = requireAuth();
     const client = new PtfApiClient(userConfig);
 
     const { tasks, offline } = await client.getTasks({
