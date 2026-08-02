@@ -1436,10 +1436,29 @@ Gère l'identité des utilisateurs sur la plateforme. Le système d'authentifica
 
 #### Couche 1 — Compte PTF (email + mot de passe + clé secp256k1)
 
-- À l'inscription : le serveur génère une paire de clés secp256k1 et dérive `ptfAddress = keccak256(pubKey[1:])[12:]`
-- La clé privée est **chiffrée avec le mot de passe de l'utilisateur** (AES-256-GCM + PBKDF2 100 000 itérations) et renvoyée **une seule fois** au client
-- Le client stocke la clé chiffrée localement (localStorage / keychain) — le serveur ne la stocke jamais en clair
-- Mot de passe haché avec `scrypt` (N=32768) + `timingSafeEqual` pour la vérification
+**Principe non-custodial : le keypair est généré localement, jamais par le serveur.**
+
+Le serveur PTF ne génère, ne voit et ne stocke jamais de clé privée. Toute compromission de l'infrastructure PTF est sans effet sur les fonds des utilisateurs.
+
+**Génération du keypair (CLI — `ptf wallet create`) :**
+
+- Le CLI génère localement une seed phrase BIP-39 (12 mots, 128 bits d'entropie) via `ethers.Wallet.createRandom()`
+- Le keypair secp256k1 est dérivé selon BIP-44 chemin `m/44'/60'/0'/0/0` (coin type Ethereum — standard EVM universel)
+- L'adresse PTF est dérivée : `ptfAddress = EIP-55(keccak256(uncompressed_pubkey)[12:])` — format `0x...` standard EVM
+- La clé privée est chiffrée localement (AES-256-GCM + PBKDF2 600 000 itérations) et stockée dans `~/.ptf/keystore/<address>.json` (format compatible Web3 Secret Storage V3)
+- La seed phrase est affichée **une seule fois** à l'écran — c'est la seule façon de récupérer le wallet si le keystore est perdu
+- Le serveur PTF ne reçoit que l'adresse publique (`ptfAddress`) — jamais la clé privée ni la seed
+
+**Interopérabilité :** le wallet PTF étant un keypair BIP-44 standard, il est importable dans MetaMask, Ledger, Trezor ou tout wallet EVM depuis la seed phrase. L'utilisateur peut vérifier son solde sur Etherscan/Polygonscan indépendamment de PTF.
+
+**Authentification (challenge-response) :**
+
+- À chaque connexion, le serveur émet un nonce signé
+- Le CLI déchiffre le keystore local avec le mot de passe, signe le nonce localement (`personal_sign` EIP-191), efface immédiatement la clé privée de la mémoire
+- Le serveur vérifie la signature via `ethers.verifyMessage()` → retourne un JWT de session
+- La clé privée n'a jamais transité sur le réseau
+
+**Mot de passe serveur (compte PTF) :** haché avec `scrypt` (N=32768) + `timingSafeEqual` pour la vérification — distinct du mot de passe de chiffrement du keystore local.
 
 #### Couche 2 — Vérification des nouveaux appareils (OTP email)
 
@@ -1464,15 +1483,24 @@ Gère l'identité des utilisateurs sur la plateforme. Le système d'authentifica
 #### Flux d'onboarding (nouvelles inscriptions uniquement)
 
 ```
+[Pré-requis — à faire en local avant inscription]
+ptf wallet create
+  → seed phrase BIP-39 générée localement (12 mots)
+  → keypair secp256k1 dérivé m/44'/60'/0'/0/0
+  → keystore chiffré sauvegardé dans ~/.ptf/keystore/<address>.json
+  → ptfAddress affiché (ex: 0xAbCd...)
+
 register(email, password, deviceName)
-  → JWT (githubLinked=false, walletLinked=false) + encryptedKey (stocker localement)
+  → JWT (githubLinked=false, walletLinked=false)
     ↓
 linkGithub(code)
   → JWT mis à jour (githubLinked=true)
     ↓
-requestWalletChallenge(chain, address) → nonce
-wallet.signTypedData(nonce) → signature
-confirmLinkWallet(challengeId, signature)
+ptf auth login
+  → CLI déchiffre keystore local avec mot de passe
+  → requestWalletChallenge(ptfAddress) → nonce
+  → signature locale du nonce (clé privée effacée immédiatement après)
+  → verifyChallenge(ptfAddress, nonce, signature) → JWT de session
   → JWT mis à jour (walletLinked=true)
     ↓
 claimTask / createProject débloqués ✓
