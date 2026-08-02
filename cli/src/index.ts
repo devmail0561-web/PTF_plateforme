@@ -152,7 +152,7 @@ async function startRepl(): Promise<void> {
 
   const PROMPT = chalk.cyan.bold("ptf") + chalk.dim(" › ");
   let rl: ReturnType<typeof createInterface>;
-  let pendingLine: Promise<void> | null = null;
+  let exiting = false;
 
   function createRl(): ReturnType<typeof createInterface> {
     const iface = createInterface({
@@ -171,6 +171,7 @@ async function startRepl(): Promise<void> {
       }
 
       if (input === "exit" || input === "quit") {
+        exiting = true;
         console.log(chalk.dim("\n   Au revoir.\n"));
         iface.close();
         return;
@@ -182,7 +183,7 @@ async function startRepl(): Promise<void> {
         return;
       }
 
-      pendingLine = (async () => {
+      (async () => {
         const argv = ["node", "ptf", ...input.split(/\s+/)];
         const prog = buildProgram(true);
 
@@ -220,9 +221,8 @@ async function startRepl(): Promise<void> {
       })();
     });
 
-    iface.on("close", async () => {
-      if (pendingLine) await pendingLine;
-      else process.exit(0);
+    iface.on("close", () => {
+      if (exiting) process.exit(0);
     });
 
     return iface;

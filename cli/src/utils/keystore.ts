@@ -229,7 +229,10 @@ export function listLocalWallets(): string[] {
 
   return readdirSync(dir)
     .filter((f) => f.endsWith(".json"))
-    .map((f) => "0x" + f.replace(".json", ""));
+    .map((f) => {
+      const name = f.replace(".json", "");
+      return name.startsWith("0x") ? name : "0x" + name;
+    });
 }
 
 /**
