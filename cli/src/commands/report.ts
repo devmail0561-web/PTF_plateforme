@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { loadUserConfig } from "../utils/config.js";
+import { requireAuth } from "../utils/config.js";
 import { PtfApiClient } from "../utils/api.js";
 import { printError, printSuccess, printInfo, printWarning, printOfflineBanner } from "../utils/display.js";
 
@@ -70,7 +70,7 @@ export const reportCommand = new Command("report")
         return;
       }
 
-      const userConfig = loadUserConfig();
+      const userConfig = requireAuth();
       const client = new PtfApiClient(userConfig);
 
       if (client.isOffline()) {

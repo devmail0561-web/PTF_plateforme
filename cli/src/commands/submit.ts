@@ -3,7 +3,7 @@ import { execSync } from "child_process";
 import { writeFileSync } from "fs";
 import { join } from "path";
 import chalk from "chalk";
-import { loadUserConfig } from "../utils/config.js";
+import { loadUserConfig, requireAuth } from "../utils/config.js";
 import { PtfApiClient } from "../utils/api.js";
 import { resolveTaskFromCwd, getTrackedTaskById, getAllTrackedTasks, addVerification, untrackTask, type TrackedTask } from "../utils/tracker.js";
 import { gitCmd, shellEscape } from "../utils/shell.js";
@@ -15,6 +15,7 @@ export const submitCommand = new Command("submit")
   .option("--skip-checks", "Skip les vérifications pré-soumission")
   .option("--commit <hash>", "Override le commit à soumettre")
   .action(async (taskIdArg?: string, options?: { skipChecks?: boolean; commit?: string }) => {
+    requireAuth();
     const { default: inquirer } = await import("inquirer");
 
     // --- 1. Resolve which task to submit ---

@@ -6,6 +6,7 @@ import {
   loadDraftTasks,
   saveDraftTasks,
   requireProjectConfig,
+  requireAuth,
 } from "../utils/config.js";
 import { PtfApiClient } from "../utils/api.js";
 import {
@@ -91,7 +92,7 @@ tasksCommand
   .option("--status <status>", "Filtrer par statut")
   .option("--project <projectId>", "Filtrer par projet")
   .action(async (options) => {
-    const userConfig = loadUserConfig();
+    const userConfig = requireAuth();
     const client = new PtfApiClient(userConfig);
 
     const address = userConfig.walletAddress;
@@ -236,7 +237,7 @@ tasksCommand
   .description("Publier les tâches dans le réseau PTF (escrow requis si projet paid)")
   .action(async () => {
     const config = requireProjectConfig();
-    const userConfig = loadUserConfig();
+    const userConfig = requireAuth();
     const drafts = loadDraftTasks();
 
     if (!drafts || drafts.length === 0) {

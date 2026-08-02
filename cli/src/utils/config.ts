@@ -86,6 +86,20 @@ export function saveProjectConfig(
   writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
 }
 
+// Throws with a user-facing message if no active session token is found.
+// Call at the top of any command that writes on-chain or mutates server state.
+export function requireAuth(): PtfUserConfig {
+  const cfg = loadUserConfig();
+  if (!cfg.sessionToken) {
+    const msg =
+      "Vous devez être connecté pour effectuer cette action.\n" +
+      "Connectez-vous : ptf auth login";
+    console.error(msg);
+    throw new Error(msg);
+  }
+  return cfg;
+}
+
 export function requireProjectConfig(dir?: string): PtfProjectConfig {
   const config = loadProjectConfig(dir);
   if (!config) {

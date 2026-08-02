@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { existsSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
-import { loadUserConfig } from "../utils/config.js";
+import { loadUserConfig, requireAuth } from "../utils/config.js";
 import { PtfApiClient } from "../utils/api.js";
 import { buildTaskTemplate } from "../utils/template.js";
 import { trackTask, getTrackedTaskByProject, untrackTask } from "../utils/tracker.js";
@@ -108,7 +108,7 @@ taskCommand
   .command("claim <taskId>")
   .description("Réclamer une tâche (vérification wallet + conditions + confirmation)")
   .action(async (taskId: string) => {
-    const userConfig = loadUserConfig();
+    const userConfig = requireAuth();
     const client = new PtfApiClient(userConfig);
 
     const { task, offline } = await client.getTask(taskId);
@@ -318,7 +318,7 @@ taskCommand
   .command("cancel <taskId>")
   .description("Abandonner une tâche réclamée")
   .action(async (taskId: string) => {
-    const userConfig = loadUserConfig();
+    const userConfig = requireAuth();
     const client = new PtfApiClient(userConfig);
 
     const { task, offline } = await client.getTask(taskId);

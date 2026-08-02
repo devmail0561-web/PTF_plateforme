@@ -4870,6 +4870,31 @@ dev: ptf task claim <taskId>
 
 ---
 
+## Matrice d'accès — authentification requise
+
+Le réseau PTF est accessible sans authentification pour toutes les opérations de lecture publique. Seules les opérations qui écrivent on-chain ou mutent l'état du serveur requièrent un JWT de session valide (obtenu via `ptf auth login`).
+
+| Opération | Auth requise | Raison |
+|---|---|---|
+| `ptf tasks list` | Non | Lecture publique |
+| `ptf task show <id>` | Non | Lecture publique |
+| `ptf projects list` | Non | Lecture publique |
+| `ptf contributors list` | Non | Lecture publique |
+| `ptf status` | Non | Lecture locale uniquement |
+| `ptf wallet status --address` | Non | Lecture on-chain publique |
+| `ptf tasks mine` | **Oui** | Requête filtrée par identité |
+| `ptf task claim` | **Oui** | Écriture on-chain + soft-lock PTF |
+| `ptf task cancel` | **Oui** | Écriture on-chain |
+| `ptf submit` | **Oui** | Push + enregistrement on-chain |
+| `ptf tasks publish` | **Oui** | Dépôt escrow + Merkle root on-chain |
+| `ptf report` | **Oui** | Mutation serveur protégée |
+| `ptf wallet history` | **Oui** | Données privées de l'utilisateur |
+| `ptf wallet reputation-history` | **Oui** | Données privées de l'utilisateur |
+
+**Règle d'implémentation (CLI et backend) :** toute commande marquée "Oui" vérifie la présence d'un `sessionToken` valide **avant** toute autre opération. Le CLI retourne `ptf auth login` immédiatement si absent. Le backend rejette la requête avec `UNAUTHORIZED` si le JWT est absent ou expiré.
+
+---
+
 ## APIs GraphQL principales
 
 ### Queries
