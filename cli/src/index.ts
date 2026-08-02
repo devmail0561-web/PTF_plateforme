@@ -183,6 +183,8 @@ async function startRepl(): Promise<void> {
       const argv = ["node", "ptf", ...input.split(/\s+/)];
       const prog = buildProgram(true);
 
+      rl.pause();
+
       try {
         await prog.parseAsync(argv);
       } catch (err: unknown) {
@@ -207,6 +209,8 @@ async function startRepl(): Promise<void> {
         } else if (err instanceof Error) {
           console.log(chalk.red("  ✗") + "  " + err.message);
         }
+      } finally {
+        rl.resume();
       }
 
       console.log();
