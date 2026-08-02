@@ -17,6 +17,8 @@ import type {
 } from "../types/index.js";
 import { PtfError, PtfErrorCode } from "../types/errors.js";
 import { ethers } from "ethers";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore — redlock exports are not resolved via package.json "exports"
 import Redlock from "redlock";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRedis = any;
@@ -155,11 +157,7 @@ export class TaskService implements ITaskService {
   }
 
   async bulkCreate(projectId: string, drafts: TaskDraft[]): Promise<Task[]> {
-    const tasks: Task[] = [];
-    for (const draft of drafts) {
-      tasks.push(await this.create(projectId, draft));
-    }
-    return tasks;
+    return Promise.all(drafts.map((draft) => this.create(projectId, draft)));
   }
 
   async findById(id: string): Promise<Task | null> {
@@ -294,11 +292,12 @@ export class TaskService implements ITaskService {
         )
       );
 
-      // Mise à jour DB atomique
+      // Mark as claim_pending before any on-chain call so a crash mid-flight
+      // leaves the task in a recoverable state instead of silently claimed.
       await this.prisma.task.update({
         where: { id: taskId, status: "open" },
         data: {
-          status: "claimed",
+          status: "claim_pending",
           claimedAt,
           deadline,
           devAddress: devAddress.toLowerCase(),
@@ -306,18 +305,38 @@ export class TaskService implements ITaskService {
         },
       });
 
-      // Soft-lock 10 PTF (projets paid) — on-chain uniquement
-      if (project.rewardMode === "paid") {
-        await this.walletService.softLock(devAddress, chain, 10);
+      let signature: string;
+      try {
+        // Soft-lock 10 PTF (projets paid) — on-chain uniquement
+        if (project.rewardMode === "paid") {
+          await this.walletService.softLock(devAddress, chain, 10);
+        }
+
+        // Enregistrement on-chain
+        const adapter = this.chainRegistry.get(chain);
+        signature = await adapter.claimTask(taskId, devAddress, conditionsHash);
+      } catch (onChainErr) {
+        // Compensate: roll the task back to "open" so it can be claimed again.
+        await this.prisma.task.update({
+          where: { id: taskId },
+          data: {
+            status: "open",
+            claimedAt: null,
+            deadline: null,
+            devAddress: null,
+            conditionsHash: null,
+          },
+        }).catch((rollbackErr: unknown) => {
+          // Log but don't swallow — operator must reconcile manually.
+          console.error(`[TaskService] CRITICAL: rollback failed for task ${taskId}`, rollbackErr);
+        });
+        throw onChainErr;
       }
 
-      // Enregistrement on-chain
-      const adapter = this.chainRegistry.get(chain);
-      const signature = await adapter.claimTask(taskId, devAddress, conditionsHash);
-
+      // On-chain succeeded — finalize the DB record.
       await this.prisma.task.update({
         where: { id: taskId },
-        data: { eip712Signature: signature },
+        data: { status: "claimed", eip712Signature: signature },
       });
 
       return {
@@ -511,7 +530,7 @@ export class TaskService implements ITaskService {
       priority: task.priority as import("../types/index.js").TaskPriority,
       title: task.title,
       reward: task.rewardAmount
-        ? { amount: task.rewardAmount, token: task.rewardToken ?? "PTF" }
+        ? { amount: Number(task.rewardAmount), token: task.rewardToken ?? "PTF" }
         : null,
       duration: task.duration,
       deadline: task.deadline?.toISOString(),

@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { Redis, type Redis as RedisType } from "ioredis";
+import { Redis, Cluster, type Redis as RedisType, type Cluster as ClusterType } from "ioredis";
 import { ChainRegistry } from "./bal/chain.registry.js";
 import { MockChainAdapter } from "./bal/adapters/mock.adapter.js";
 import { PolygonAdapter } from "./bal/adapters/polygon.adapter.js";
@@ -19,18 +19,89 @@ import { EscrowService } from "./services/escrow.service.js";
 import { ValidationService } from "./services/validation.service.js";
 import type { IServiceContainer } from "./graphql/context.js";
 
+// ── Redis factory ──────────────────────────────────────────────────────────────
+// Redis A — Sentinel: Redlock + rate-limit counters + auth nonces
+// Redis B — Cluster:  BullMQ queues + cache
+// Falls back to a single standalone Redis when sentinel/cluster env vars are absent
+// (dev / CI). Never silently falls back in production.
+
+function buildRedisSentinel(): RedisType {
+  const sentinels = [
+    process.env["REDIS_SENTINEL_1"],
+    process.env["REDIS_SENTINEL_2"],
+    process.env["REDIS_SENTINEL_3"],
+  ].filter(Boolean) as string[];
+
+  if (sentinels.length >= 2) {
+    return new Redis({
+      sentinels: sentinels.map((h) => {
+        const [host, port] = h.split(":");
+        return { host, port: parseInt(port ?? "26379") };
+      }),
+      name: process.env["REDIS_SENTINEL_MASTER_NAME"] ?? "ptf-sentinel-master",
+      maxRetriesPerRequest: null,
+      lazyConnect: true,
+    });
+  }
+
+  if (process.env["NODE_ENV"] === "production") {
+    throw new Error(
+      "[PTF] REDIS_SENTINEL_1/2/3 are required in production — refusing to start with a single Redis instance (SPOF)."
+    );
+  }
+
+  return new Redis(process.env["REDIS_URL"] ?? "redis://localhost:6379", {
+    maxRetriesPerRequest: null,
+    lazyConnect: true,
+  });
+}
+
+function buildRedisCluster(): RedisType | ClusterType {
+  const nodes = [
+    process.env["REDIS_CLUSTER_1"],
+    process.env["REDIS_CLUSTER_2"],
+    process.env["REDIS_CLUSTER_3"],
+  ].filter(Boolean) as string[];
+
+  if (nodes.length >= 2) {
+    return new Cluster(
+      nodes.map((h) => {
+        const [host, port] = h.split(":");
+        return { host, port: parseInt(port ?? "6380") };
+      }),
+      {
+        redisOptions: { maxRetriesPerRequest: null },
+        lazyConnect: true,
+      }
+    );
+  }
+
+  if (process.env["NODE_ENV"] === "production") {
+    throw new Error(
+      "[PTF] REDIS_CLUSTER_1/2/3 are required in production — refusing to start with a single Redis instance (SPOF)."
+    );
+  }
+
+  // Dev fallback: reuse the same standalone instance for BullMQ
+  return new Redis(process.env["REDIS_URL"] ?? "redis://localhost:6379", {
+    maxRetriesPerRequest: null,
+    lazyConnect: true,
+  });
+}
+
 export function buildContainer(): {
   services: IServiceContainer;
   prisma: PrismaClient;
-  redis: RedisType;
+  redisSentinel: RedisType;
+  redisQueue: RedisType | ClusterType;
   timerService: TimerService;
 } {
   const prisma = new PrismaClient();
 
-  const redis = new Redis(process.env["REDIS_URL"] ?? "redis://localhost:6379", {
-    maxRetriesPerRequest: null,
-    lazyConnect: true,
-  });
+  // Redis A — Sentinel (locks, rate-limit, nonces)
+  const redisSentinel = buildRedisSentinel();
+  // Redis B — Cluster (BullMQ queues, cache listings)
+  const redisQueue = buildRedisCluster();
 
   // ── Chain Registry ──────────────────────────────────────────────────────────
   const chainRegistry = new ChainRegistry(
@@ -65,9 +136,9 @@ export function buildContainer(): {
     chainRegistry,
     reputationService,
     walletService,
-    redis
+    redisSentinel   // Redlock runs on Sentinel
   );
-  const timerService      = new TimerService(prisma, punishmentService, redis);
+  const timerService      = new TimerService(prisma, punishmentService, redisQueue);  // BullMQ on Cluster
   const escrowService     = new EscrowService(prisma, chainRegistry, reputationService);
   const validationService = new ValidationService(prisma);
 
@@ -88,5 +159,5 @@ export function buildContainer(): {
     github:        githubService,
   };
 
-  return { services, prisma, redis, timerService };
+  return { services, prisma, redisSentinel, redisQueue, timerService };
 }

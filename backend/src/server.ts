@@ -7,6 +7,7 @@ import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { buildContainer } from "./container.js";
+import type { Redis as RedisType } from "ioredis";
 import { taskResolvers } from "./graphql/resolvers/task.resolver.js";
 import { projectResolvers } from "./graphql/resolvers/project.resolver.js";
 import { walletResolvers } from "./graphql/resolvers/wallet.resolver.js";
@@ -34,7 +35,7 @@ const resolvers = {
 };
 
 async function main() {
-  const { services, prisma, redis, timerService } = buildContainer();
+  const { services, prisma, redisSentinel, redisQueue, timerService } = buildContainer();
 
   const isProd = process.env["NODE_ENV"] === "production";
 
@@ -92,13 +93,45 @@ async function main() {
   app.use(cors({ origin: corsOrigin ?? "*" }));
   app.use(express.json());
 
-  // Rate limiting — applies to all routes including /graphql (CIA-D2).
-  // Sensitive auth mutations are further rate-limited by the stricter limiter below.
+  // Rate limiting — shared Redis store so counters survive across all Node instances.
+  // Without a shared store each instance tracks counts independently, letting an
+  // attacker hit N×max requests when load-balanced across N instances.
+  //
+  // Redis sliding-window store: INCR key (TTL = windowMs) so counters reset together.
+  // In dev (no Sentinel) express-rate-limit falls back to its default in-memory store.
+  function makeRedisStore(prefix: string, windowMs: number): import("express-rate-limit").Store | undefined {
+    try {
+      // redisSentinel.status exists on standalone Redis; Cluster has no .status
+      const canUse = "status" in redisSentinel;
+      if (!canUse) return undefined;
+    } catch {
+      return undefined;
+    }
+
+    const windowSec = Math.ceil(windowMs / 1000);
+    return {
+      async increment(key: string) {
+        const rKey = `rl:${prefix}:${key}`;
+        const count = await (redisSentinel as unknown as { incr: (k: string) => Promise<number>; expire: (k: string, s: number) => Promise<void> }).incr(rKey);
+        await (redisSentinel as unknown as { expire: (k: string, s: number) => Promise<void> }).expire(rKey, windowSec);
+        return { totalHits: count, resetTime: new Date(Date.now() + windowMs) };
+      },
+      async decrement(key: string) {
+        const rKey = `rl:${prefix}:${key}`;
+        await (redisSentinel as unknown as { decr: (k: string) => Promise<void> }).decr(rKey);
+      },
+      async resetKey(key: string) {
+        await (redisSentinel as unknown as { del: (k: string) => Promise<void> }).del(`rl:${prefix}:${key}`);
+      },
+    };
+  }
+
   const globalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
+    windowMs: 15 * 60 * 1000,
     max: 300,
     standardHeaders: true,
     legacyHeaders: false,
+    store: makeRedisStore("global", 15 * 60 * 1000),
     message: { errors: [{ message: "Too many requests — retry after 15 minutes" }] },
   });
   const authLimiter = rateLimit({
@@ -106,6 +139,7 @@ async function main() {
     max: 20,
     standardHeaders: true,
     legacyHeaders: false,
+    store: makeRedisStore("auth", 15 * 60 * 1000),
     message: { errors: [{ message: "Too many auth attempts — retry after 15 minutes" }] },
   });
 
@@ -154,22 +188,26 @@ async function main() {
   });
 
   // Démarrage du TimerService (expiration tâches + alertes deadline)
-  if (redis.status === "wait") await redis.connect();
+  if ("status" in redisSentinel && redisSentinel.status === "wait") await redisSentinel.connect();
+  if ("status" in redisQueue   && redisQueue.status   === "wait") await (redisQueue as RedisType).connect();
   await timerService.start();
+
+  async function shutdown(): Promise<void> {
+    await timerService.stop();
+    await prisma.$disconnect();
+    await redisSentinel.disconnect();
+    await redisQueue.disconnect();
+  }
 
   // Graceful shutdown
   process.on("SIGTERM", async () => {
     console.log("[Server] SIGTERM reçu — arrêt gracieux");
-    await timerService.stop();
-    await prisma.$disconnect();
-    await redis.disconnect();
+    await shutdown();
     httpServer.close(() => process.exit(0));
   });
 
   process.on("SIGINT", async () => {
-    await timerService.stop();
-    await prisma.$disconnect();
-    await redis.disconnect();
+    await shutdown();
     process.exit(0);
   });
 }

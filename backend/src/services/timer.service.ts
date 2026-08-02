@@ -3,7 +3,8 @@ import type { IPunishmentService } from "./punishment.service.js";
 import { Queue, Worker, type Job } from "bullmq";
 import type { Redis } from "ioredis";
 
-const QUEUE_NAME = "task-expiry";
+const QUEUE_NAME   = "task-expiry";
+const ALERT_JOB_ID = "deadline-alerts-recurring";
 
 export interface ITimerService {
   scheduleExpiry(taskId: string, deadline: Date, chain: string): Promise<void>;
@@ -84,9 +85,13 @@ export class TimerService implements ITimerService {
   async start(): Promise<void> {
     this.worker = new Worker(
       QUEUE_NAME,
-      async (job: Job<{ taskId: string; chain: string }>) => {
-        const { taskId, chain } = job.data;
+      async (job: Job<{ taskId: string; chain: string } | { type: "deadline-alerts" }>) => {
+        if ("type" in job.data && job.data.type === "deadline-alerts") {
+          await this.checkDeadlineAlerts();
+          return;
+        }
 
+        const { taskId, chain } = job.data as { taskId: string; chain: string };
         const task = await this.prisma.task.findUnique({
           where: { id: taskId },
           select: {
@@ -122,12 +127,25 @@ export class TimerService implements ITimerService {
       console.error(`[TimerService] Job échoué : ${job?.id}`, err);
     });
 
-    // Cron check alertes deadline toutes les heures
-    setInterval(() => this.checkDeadlineAlerts(), 3600000);
+    // Recurring deadline-alert check via BullMQ (replaces setInterval).
+    // BullMQ persists the schedule in Redis so it survives restarts and is
+    // de-duplicated across multiple server instances (jobId collision = no duplicate).
+    await this.queue.add(
+      "deadline-alerts",
+      { type: "deadline-alerts" },
+      {
+        jobId: ALERT_JOB_ID,
+        repeat: { every: 3600000 },
+        removeOnComplete: 1,
+        removeOnFail: 10,
+      }
+    );
+
     console.log("[TimerService] Démarré");
   }
 
   async stop(): Promise<void> {
+    await this.queue.removeRepeatableByKey(ALERT_JOB_ID).catch(() => { /* ignore if not present */ });
     await this.worker?.close();
     await this.queue.close();
   }

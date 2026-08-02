@@ -154,7 +154,7 @@ export class EscrowService implements IEscrowService {
     return {
       taskId,
       devAddress: task.devAddress,
-      amount: task.rewardAmount ?? 0,
+      amount: Number(task.rewardAmount ?? 0),
       txHash,
       utxoId,
       releasedAt,
