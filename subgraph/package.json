@@ -1,0 +1,16 @@
+{
+  "name": "@ptf/subgraph",
+  "version": "0.1.0",
+  "description": "PTF — The Graph subgraph (Polygon)",
+  "scripts": {
+    "codegen": "graph codegen",
+    "build":   "graph build",
+    "deploy:studio": "graph deploy --studio ptf-polygon",
+    "deploy:hosted": "graph deploy --product hosted-service $GRAPH_HOSTED_ACCOUNT/ptf-polygon",
+    "deploy:amoy":   "graph deploy --studio ptf-polygon-amoy --network matic-amoy"
+  },
+  "dependencies": {
+    "@graphprotocol/graph-cli": "^0.79.0",
+    "@graphprotocol/graph-ts":  "^0.35.0"
+  }
+}

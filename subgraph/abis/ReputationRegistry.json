@@ -1,0 +1,5 @@
+[
+  {"type":"event","name":"ReputationUpdated","inputs":[{"name":"dev","type":"address","indexed":true},{"name":"delta","type":"int256","indexed":false},{"name":"newTotal","type":"int256","indexed":false},{"name":"taskId","type":"bytes32","indexed":true},{"name":"reason","type":"string","indexed":false}]},
+  {"type":"event","name":"WriterAdded","inputs":[{"name":"writer","type":"address","indexed":true}]},
+  {"type":"event","name":"WriterRemoved","inputs":[{"name":"writer","type":"address","indexed":true}]}
+]

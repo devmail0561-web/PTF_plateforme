@@ -1,6 +1,6 @@
 # PTF — Progression du projet
 
-> Version : **V0.2.4-alpha** — Dernière mise à jour : **2026-08-02**
+> Version : **V0.2.5-alpha** — Dernière mise à jour : **2026-08-02**
 >
 > Commits récents : `a9313ca` fix CI Foundry + backend P1 → `b8d2e73` docs V0.2.2 → `79bb0a8` docs V0.2.3 → `(en cours)` Priorité 4 frontend + Priorité 5 infra VPS
 
@@ -9,7 +9,7 @@
 ## Avancement global
 
 ```
-██████████████████████████████████░░░░░░  85%
+███████████████████████████████████░░░░░  88%
 ```
 
 | Module | Statut | Progression |
@@ -21,7 +21,7 @@
 | Backend framework (réseau) | ⚠️ En cours | 95% |
 | ptf_service_plateforme — backend | ⚠️ En cours | 90% |
 | ptf_service_plateforme — frontend | ⚠️ En cours | 85% |
-| Infrastructure | ⚠️ En cours | 60% |
+| Infrastructure | ⚠️ En cours | 70% |
 | Blockchain réelle (testnet) | 🔴 À faire | 0% |
 | Solana / Anchor | 🔴 À faire | 0% |
 
@@ -183,7 +183,7 @@ Le projet est désormais séparé en deux dépôts distincts :
 | Déploiement VPS (Hetzner CX21) | 🔴 À faire — créer le serveur + pointer les DNS | 🔴 Haute |
 | Secrets GitHub Actions | 🔴 À faire — `VPS_HOST`, `VPS_SSH_KEY`, `GHCR_TOKEN` | 🔴 Haute |
 | Contrats testnet Polygon Amoy | 🔴 À faire — besoin de `DEPLOYER_PK` + MATIC Amoy | 🔴 Haute |
-| The Graph subgraph | 🔴 À faire | 🟠 Basse |
+| The Graph subgraph | ✅ Présent — 4 contrats, 12 entities, deploy script | — |
 | Monitoring (Grafana Cloud) | 🔴 À faire | 🟠 Basse |
 
 ---
@@ -276,11 +276,37 @@ Le projet est désormais séparé en deux dépôts distincts :
 
 ---
 
-### 🟠 Priorité 6 — Indexation + monitoring
+### ✅ Priorité 6 — The Graph subgraph COMPLÉTÉ
 
-- The Graph subgraph Polygon (indexation events on-chain)
+**Structure :** `subgraph/` — 4 dataSources, 12 entités GraphQL, 4 handlers AssemblyScript
+
+| Fichier | Rôle |
+|---------|------|
+| `subgraph/subgraph.yaml` | Config : 4 contrats, network matic, event handlers |
+| `subgraph/schema.graphql` | 12 entités : Project, Task, TaskReward, Punishment, Withdrawal, UTXORecord, Developer, ReputationEvent, CreditEvent, GlobalStats |
+| `subgraph/src/projectRegistry.ts` | ProjectRegistered, MerkleRootUpdated, TaskClaimed, ProjectLocked |
+| `subgraph/src/escrowVault.ts` | ProjectFunded, TaskRewardReleased, PunishmentExecuted, WithdrawalExecuted, UTXOSpent |
+| `subgraph/src/reputationRegistry.ts` | ReputationUpdated → historique immuable par dev |
+| `subgraph/src/creditToken.ts` | CreditClaimed + Transfer (in/out) |
+| `subgraph/abis/*.json` | ABIs extraits pour les 4 contrats |
+| `subgraph/scripts/update-addresses.sh` | Patch subgraph.yaml depuis `backend/.env.testnet` |
+
+**Déploiement (après deploy Amoy) :**
+```bash
+bash subgraph/scripts/update-addresses.sh   # injecte les adresses
+cd subgraph && npm install
+npm run codegen && npm run build
+npm run deploy:amoy                         # ou deploy:studio pour mainnet
+```
+
+**Reste à faire :** déployer sur The Graph Studio après les contrats Amoy
+
+---
+
+### 🟠 Priorité 7 — Monitoring + Arweave
+
+- Monitoring Grafana Cloud (métriques backend + alertes)
 - Arweave : stockage permanent ARCHITECTURE.md + PLAN_ACTION.md
-- Monitoring Grafana Cloud
 
 ---
 

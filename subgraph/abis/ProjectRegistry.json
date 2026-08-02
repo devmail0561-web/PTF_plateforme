@@ -1,0 +1,7 @@
+[
+  {"type":"event","name":"ProjectRegistered","inputs":[{"name":"projectId","type":"bytes32","indexed":true},{"name":"owner","type":"address","indexed":true},{"name":"projectType","type":"uint8","indexed":false},{"name":"rewardMode","type":"uint8","indexed":false}]},
+  {"type":"event","name":"MerkleRootUpdated","inputs":[{"name":"projectId","type":"bytes32","indexed":true},{"name":"merkleRoot","type":"bytes32","indexed":false}]},
+  {"type":"event","name":"TaskClaimed","inputs":[{"name":"projectId","type":"bytes32","indexed":true},{"name":"taskId","type":"bytes32","indexed":true}]},
+  {"type":"event","name":"ProjectLocked","inputs":[{"name":"projectId","type":"bytes32","indexed":true}]},
+  {"type":"event","name":"ProjectDeactivated","inputs":[{"name":"projectId","type":"bytes32","indexed":true}]}
+]

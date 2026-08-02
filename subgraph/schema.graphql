@@ -1,0 +1,112 @@
+# PTF Subgraph — schéma GraphQL
+# Indexe les 4 contrats : ProjectRegistry, EscrowVault, ReputationRegistry, CreditToken
+
+type Project @entity {
+  id: ID!                        # bytes32 projectId (hex)
+  owner: Bytes!                  # address
+  projectType: String!           # "Public" | "Private"
+  rewardMode: String!            # "Free" | "Paid"
+  merkleRoot: Bytes              # dernière racine Merkle
+  escrowBalance: BigDecimal!     # USDC en escrow (6 décimales)
+  locked: Boolean!               # true dès qu'une tâche est claimée
+  active: Boolean!
+  createdAt: BigInt!             # block.timestamp
+  tasks: [Task!]! @derivedFrom(field: "project")
+  rewards: [TaskReward!]! @derivedFrom(field: "project")
+  punishments: [Punishment!]! @derivedFrom(field: "project")
+}
+
+type Task @entity {
+  id: ID!                        # bytes32 taskId (hex)
+  project: Project!
+  claimedBy: Bytes               # address du développeur
+  claimedAt: BigInt              # block.timestamp du claim
+  reward: TaskReward             @derivedFrom(field: "task")
+}
+
+type TaskReward @entity {
+  id: ID!                        # txHash-logIndex
+  project: Project!
+  task: Task!
+  dev: Bytes!                    # address
+  amount: BigDecimal!            # PTF (6 décimales)
+  txHash: Bytes!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+}
+
+type Punishment @entity {
+  id: ID!                        # txHash-logIndex
+  project: Project!
+  taskId: Bytes!
+  dev: Bytes!
+  amount: BigDecimal!
+  punishmentType: String!
+  txHash: Bytes!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+}
+
+type Withdrawal @entity {
+  id: ID!                        # txHash-logIndex
+  owner: Bytes!
+  amount: BigDecimal!
+  destination: Bytes!
+  proofHash: Bytes!
+  txHash: Bytes!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+}
+
+type UTXORecord @entity {
+  id: ID!                        # utxoId (bytes32)
+  owner: Bytes!
+  spent: Boolean!
+  spentAt: BigInt
+  txHash: Bytes!
+}
+
+type Developer @entity {
+  id: ID!                        # address (lowercase)
+  reputationTotal: BigInt!       # score on-chain (peut être négatif — affiché floored à 0)
+  reputationEvents: [ReputationEvent!]! @derivedFrom(field: "dev")
+  creditEvents: [CreditEvent!]! @derivedFrom(field: "dev")
+  tasksClaimed: [Task!]! @derivedFrom(field: "claimedBy")
+  rewardsReceived: [TaskReward!]! @derivedFrom(field: "dev")
+}
+
+type ReputationEvent @entity {
+  id: ID!                        # txHash-logIndex
+  dev: Developer!
+  delta: BigInt!
+  newTotal: BigInt!
+  taskId: Bytes!
+  reason: String!
+  txHash: Bytes!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+}
+
+type CreditEvent @entity {
+  id: ID!                        # txHash-logIndex
+  dev: Developer!
+  eventType: String!             # "claimed" | "transfer_in" | "transfer_out"
+  amount: BigDecimal!
+  taskId: Bytes
+  from: Bytes
+  to: Bytes
+  txHash: Bytes!
+  blockNumber: BigInt!
+  timestamp: BigInt!
+}
+
+# Stats globales — entité singleton (id = "global")
+type GlobalStats @entity {
+  id: ID!
+  totalProjects: BigInt!
+  totalTasksClaimed: BigInt!
+  totalRewardsPaid: BigDecimal!  # USDC total distribué
+  totalPunishments: BigInt!
+  totalWithdrawals: BigDecimal!  # PTF total retiré
+  lastUpdatedBlock: BigInt!
+}
