@@ -208,7 +208,9 @@ tasksCommand
       }
     }
 
-    saveDraftTasks(approved);
+    // skipped tasks are preserved in the draft so a second ptf tasks preview
+    // can revisit them — only rejected tasks are permanently removed.
+    saveDraftTasks([...approved, ...skipped]);
 
     console.log(
       "\n" +

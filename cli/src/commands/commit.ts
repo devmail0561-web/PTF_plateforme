@@ -3,7 +3,7 @@ import { execSync } from "child_process";
 import chalk from "chalk";
 import { loadUserConfig } from "../utils/config.js";
 import { resolveTaskFromCwd, addCommit, addVerification, type TrackedTask } from "../utils/tracker.js";
-import { gitCmd } from "../utils/shell.js";
+import { gitCmd, shellEscape } from "../utils/shell.js";
 import { printError, printInfo, printSuccess, printWarning } from "../utils/display.js";
 import { PtfApiClient } from "../utils/api.js";
 
@@ -87,9 +87,10 @@ export const commitCommand = new Command("commit")
       await runQuickChecks(tracked, repoPath);
     }
 
-    // Commit
+    // shellEscape (single-quotes) instead of JSON.stringify (double-quotes) to
+    // prevent backtick / $() shell injection from user-supplied commit messages.
     try {
-      execSync(gitCmd(repoPath, `commit -m ${JSON.stringify(fullMessage)}`), { stdio: "pipe" });
+      execSync(gitCmd(repoPath, `commit -m ${shellEscape(fullMessage)}`), { stdio: "pipe" });
     } catch (err) {
       const error = err as { stderr?: Buffer };
       printError("Commit échoué.");
@@ -101,7 +102,8 @@ export const commitCommand = new Command("commit")
 
     // Track the commit
     const hash = execSync(gitCmd(repoPath, "rev-parse HEAD"), { encoding: "utf-8" }).trim();
-    const filesChanged = staged.split("\n").length - 1;
+    // The last line of git diff --stat is a summary ("N files changed…") — exclude it.
+    const filesChanged = staged.split("\n").filter((l, i, arr) => l && i < arr.length - 1).length;
 
     addCommit(tracked.projectId, {
       hash,

@@ -8,9 +8,11 @@ const userConf = new Conf<PtfUserConfig>({
   projectVersion: "0.1.0",
 });
 
+// ptfApiUrl is left undefined when not explicitly set so PtfApiClient.isOffline()
+// returns true correctly instead of defaulting to the production API URL.
 export function loadUserConfig(): PtfUserConfig {
   return {
-    ptfApiUrl:    userConf.get("ptfApiUrl") ?? "https://api.ptf.dev",
+    ptfApiUrl:    userConf.get("ptfApiUrl"),
     ptfNodeUrl:   userConf.get("ptfNodeUrl"),
     walletAddress: userConf.get("walletAddress"),
     sessionToken: userConf.get("sessionToken"),
@@ -22,10 +24,14 @@ export function loadUserConfig(): PtfUserConfig {
   };
 }
 
+// undefined values are deleted from the store so callers can clear a key
+// (e.g. saveUserConfig({ sessionToken: undefined }) on logout).
 export function saveUserConfig(partial: Partial<PtfUserConfig>): void {
   for (const [key, value] of Object.entries(partial)) {
     if (value !== undefined) {
       userConf.set(key, value);
+    } else {
+      userConf.delete(key as keyof PtfUserConfig);
     }
   }
 }
@@ -34,16 +40,19 @@ export function getUserConfigPath(): string {
   return userConf.path;
 }
 
+// Walks up the full directory tree until .ptf/config.json is found or FS root
+// is reached — allows running PTF commands from any subdirectory of the project.
 function findPtfRoot(startDir: string): string | null {
   let current = startDir;
-  const root = dirname(current);
 
-  while (current !== root) {
+  while (true) {
     const configPath = join(current, ".ptf", "config.json");
     if (existsSync(configPath)) {
       return current;
     }
-    current = dirname(current);
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
   }
   return null;
 }

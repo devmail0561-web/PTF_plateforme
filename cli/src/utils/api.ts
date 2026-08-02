@@ -79,10 +79,15 @@ export class PtfApiClient {
     }
 
     try {
+      // All filter fields declared as variables so the server receives devAddress,
+      // rewardMode and skills (previously omitted — caused mine/filter commands to
+      // return unfiltered results on the online path).
+      // rewardMode and reputationPoints added to selection so tasks list displays
+      // correct reward type instead of falling back to "? rep".
       const query = `
-        query ListTasks($status: String, $projectId: String, $minReward: Float) {
-          tasks(filter: { status: $status, projectId: $projectId, minReward: $minReward }) {
-            id projectId title status reward { amount token }
+        query ListTasks($status: String, $projectId: String, $minReward: Float, $devAddress: String, $rewardMode: String, $skills: [String]) {
+          tasks(filter: { status: $status, projectId: $projectId, minReward: $minReward, devAddress: $devAddress, rewardMode: $rewardMode, skills: $skills }) {
+            id projectId title status rewardMode reputationPoints reward { amount token }
             priority duration deadline claimCriteria { requiredSkills minReputation }
           }
         }

@@ -11,7 +11,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { randomBytes, createCipheriv, createDecipheriv, pbkdf2Sync, createHash } from "crypto";
+import { randomBytes, createCipheriv, createDecipheriv, pbkdf2Sync } from "crypto";
 import { ethers } from "ethers";
 
 // ── Paths ──────────────────────────────────────────────────────────────────────
@@ -263,13 +263,14 @@ export function deleteKeystore(address: string): boolean {
 /**
  * Dérive l'adresse PTF depuis une clé publique (sans keystore).
  * Utile pour vérifier une adresse avant un dépôt.
+ *
+ * Algorithme : keccak256(uncompressed pubkey without 04 prefix) → last 20 bytes
+ * — standard Ethereum (EIP-55 checksum via ethers.getAddress).
  */
 export function addressFromPublicKey(publicKeyHex: string): string {
   const pub = ethers.getBytes(publicKeyHex);
   const uncompressed = pub.length === 33
     ? ethers.SigningKey.computePublicKey(publicKeyHex, false).slice(2)  // remove 04 prefix
     : Buffer.from(pub.slice(1)).toString("hex");
-  const hash = createHash("sha3-256").update(Buffer.from(uncompressed, "hex")).digest("hex");
-  // Ethereum-style: take last 20 bytes of keccak256(pubkey)
   return ethers.getAddress("0x" + ethers.keccak256("0x" + uncompressed).slice(-40));
 }
