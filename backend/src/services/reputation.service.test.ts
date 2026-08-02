@@ -7,8 +7,8 @@ describe("ReputationService — logique pure", () => {
   let service: ReputationService;
 
   beforeEach(() => {
-    // Prisma et chainRegistry ne sont pas appelés dans calculatePoints/getLevel
-    service = new ReputationService(null as never, null as never);
+    // chainRegistry n'est pas appelé dans calculatePoints/getLevel
+    service = new ReputationService(null as never);
   });
 
   describe("calculatePoints", () => {

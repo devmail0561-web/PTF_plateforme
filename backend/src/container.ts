@@ -13,12 +13,7 @@ import {
   LLMTaskGeneratorService,
   MockLLMProvider,
 } from "./services/taskGenerator.service.js";
-import { NotificationService } from "./services/notification.service.js";
-import { ReportService } from "./services/report.service.js";
-import { EmailService } from "./services/email.service.js";
 import { GithubService } from "./services/github.service.js";
-import { CreditLedgerService } from "./services/creditLedger.service.js";
-import { UTXOService } from "./services/utxo.service.js";
 import type { IServiceContainer } from "./graphql/context.js";
 
 export function buildContainer(): {
@@ -54,44 +49,34 @@ export function buildContainer(): {
   }
 
   // ── Services (ordre strict par dépendances) ─────────────────────────────────
-  const reputationService = new ReputationService(prisma, chainRegistry);
-  const emailService   = new EmailService();
-  const githubService  = new GithubService();
-  const authService    = new AuthService(prisma, chainRegistry, emailService);
-  const walletService  = new WalletService(prisma, chainRegistry, authService);
-  const projectService = new ProjectService(prisma, chainRegistry, githubService);
-  const creditLedger = new CreditLedgerService(prisma);
-  const utxoService  = new UTXOService(prisma);
-  const punishmentService = new PunishmentService(prisma, chainRegistry, reputationService, creditLedger, utxoService);
-  const taskService = new TaskService(
+  const authService       = new AuthService();
+  const githubService     = new GithubService();
+  const reputationService = new ReputationService(chainRegistry);
+  const walletService     = new WalletService(chainRegistry);
+  const projectService    = new ProjectService(prisma, chainRegistry, githubService);
+  const punishmentService = new PunishmentService(prisma, chainRegistry, reputationService);
+  const taskService       = new TaskService(
     prisma,
     chainRegistry,
     reputationService,
     walletService,
-    redis,
-    creditLedger,
-    utxoService
+    redis
   );
   const timerService = new TimerService(prisma, punishmentService, redis);
-  const notificationService = new NotificationService(prisma);
-  const reportService = new ReportService(prisma, chainRegistry);
 
   // LLM : MockLLMProvider en dev, à remplacer par un provider réel configuré par l'utilisateur
   const llmProvider = new MockLLMProvider();
   const taskGeneratorService = new LLMTaskGeneratorService(llmProvider);
 
   const services: IServiceContainer = {
-    auth: authService,
-    project: projectService,
-    task: taskService,
-    reputation: reputationService,
-    wallet: walletService,
-    punishment: punishmentService,
+    auth:          authService,
+    project:       projectService,
+    task:          taskService,
+    reputation:    reputationService,
+    wallet:        walletService,
+    punishment:    punishmentService,
     taskGenerator: taskGeneratorService,
-    report: reportService,
-    creditLedger,
-    utxo: utxoService,
-    github: githubService,
+    github:        githubService,
   };
 
   return { services, prisma, redis, timerService };

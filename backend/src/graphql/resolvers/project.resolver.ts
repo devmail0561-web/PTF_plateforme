@@ -1,5 +1,5 @@
 import type { GraphQLContext } from "../context.js";
-import { assertFullyLinked } from "../context.js";
+import { assertAuthenticated } from "../context.js";
 import type { ProjectFilter } from "../../types/index.js";
 import { PtfError, PtfErrorCode } from "../../types/errors.js";
 import { LICENSE_CATALOG } from "../../services/licenses.js";
@@ -45,7 +45,7 @@ export const projectResolvers = {
 
     myProjects: async (_: unknown, __: unknown, ctx: GraphQLContext) => {
       if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
-      return ctx.services.project.list({ mine: true, ownerAddress: ctx.user.userId });
+      return ctx.services.project.list({ mine: true, ownerAddress: ctx.user.ptfAddress });
     },
 
     projectContributors: async (
@@ -71,7 +71,7 @@ export const projectResolvers = {
       args: { input: Record<string, unknown> },
       ctx: GraphQLContext
     ) => {
-      assertFullyLinked(ctx.user);
+      assertAuthenticated(ctx.user);
 
       const { project, licenseStatus, licenseInstruction } = await ctx.services.project.create({
         name: args.input["name"] as string,
@@ -84,8 +84,7 @@ export const projectResolvers = {
         language: args.input["language"] as string | undefined,
         stack: args.input["stack"] as string[] | undefined,
         description: args.input["description"] as string | undefined,
-        ownerAddress: ctx.user.userId,
-        ownerId: ctx.user.userId,
+        ownerAddress: ctx.user.ptfAddress,
       });
 
       return {
@@ -100,10 +99,10 @@ export const projectResolvers = {
       args: { projectId: string; spdxId: string; authorName: string; userToken: string },
       ctx: GraphQLContext
     ) => {
-      assertFullyLinked(ctx.user);
+      assertAuthenticated(ctx.user);
       return ctx.services.project.createProjectLicense({
         projectId:  args.projectId,
-        callerId:   ctx.user.userId,
+        callerId:   ctx.user.ptfAddress,
         spdxId:     args.spdxId,
         authorName: args.authorName,
         userToken:  args.userToken,
@@ -115,8 +114,8 @@ export const projectResolvers = {
       args: { projectId: string },
       ctx: GraphQLContext
     ) => {
-      assertFullyLinked(ctx.user);
-      const project = await ctx.services.project.activate(args.projectId, ctx.user.userId);
+      assertAuthenticated(ctx.user);
+      const project = await ctx.services.project.activate(args.projectId, ctx.user.ptfAddress);
       return ctx.services.project.getPublicView(project);
     },
   },

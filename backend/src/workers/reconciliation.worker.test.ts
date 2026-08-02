@@ -5,11 +5,6 @@ import { ReconciliationWorker, maybeStartReconciliationWorker } from "./reconcil
 
 function makeMockPrisma() {
   return {
-    creditUTXO: {
-      findFirst: jest.fn<() => Promise<unknown>>().mockResolvedValue(null),
-      findMany: jest.fn<() => Promise<unknown[]>>().mockResolvedValue([]),
-      update: jest.fn<() => Promise<unknown>>().mockResolvedValue({}),
-    },
     syncCheckpoint: {
       findUnique: jest.fn<() => Promise<unknown>>().mockResolvedValue(null),
       upsert: jest.fn<() => Promise<unknown>>().mockResolvedValue({}),
@@ -66,124 +61,6 @@ describe("ReconciliationWorker", () => {
           update: { lastBlock: 4500 },
         })
       );
-    });
-  });
-
-  describe("detectStaleSpent — CIA-I9", () => {
-    it("reverts stale withdrawal UTXOs to unspent", async () => {
-      prisma.creditUTXO.findMany.mockResolvedValue([
-        {
-          id: "utxo-stale-1",
-          status: "spent",
-          spentInTxId: "tx-1",
-          spendingTx: { id: "tx-1", type: "withdrawal", txHash: null, createdAt: new Date(0) },
-        },
-      ]);
-
-      await (worker as any).detectStaleSpent();
-
-      expect(prisma.creditUTXO.update).toHaveBeenCalledWith({
-        where: { id: "utxo-stale-1" },
-        data: { status: "unspent", spentInTxId: null },
-      });
-    });
-
-    it("does NOT revert punishment transactions", async () => {
-      prisma.creditUTXO.findMany.mockResolvedValue([
-        {
-          id: "utxo-punishment",
-          status: "spent",
-          spentInTxId: "tx-p",
-          spendingTx: { id: "tx-p", type: "punishment", txHash: null, createdAt: new Date(0) },
-        },
-      ]);
-
-      await (worker as any).detectStaleSpent();
-
-      expect(prisma.creditUTXO.update).not.toHaveBeenCalled();
-    });
-
-    it("does NOT revert if spendingTx is null", async () => {
-      prisma.creditUTXO.findMany.mockResolvedValue([
-        {
-          id: "utxo-no-tx",
-          status: "spent",
-          spentInTxId: "tx-x",
-          spendingTx: null,
-        },
-      ]);
-
-      await (worker as any).detectStaleSpent();
-
-      expect(prisma.creditUTXO.update).not.toHaveBeenCalled();
-    });
-
-    it("handles multiple stale UTXOs", async () => {
-      prisma.creditUTXO.findMany.mockResolvedValue([
-        {
-          id: "utxo-a",
-          status: "spent",
-          spentInTxId: "tx-a",
-          spendingTx: { id: "tx-a", type: "withdrawal", txHash: null, createdAt: new Date(0) },
-        },
-        {
-          id: "utxo-b",
-          status: "spent",
-          spentInTxId: "tx-b",
-          spendingTx: { id: "tx-b", type: "withdrawal", txHash: null, createdAt: new Date(0) },
-        },
-      ]);
-
-      await (worker as any).detectStaleSpent();
-
-      expect(prisma.creditUTXO.update).toHaveBeenCalledTimes(2);
-      expect(prisma.creditUTXO.update).toHaveBeenCalledWith({
-        where: { id: "utxo-a" },
-        data: { status: "unspent", spentInTxId: null },
-      });
-      expect(prisma.creditUTXO.update).toHaveBeenCalledWith({
-        where: { id: "utxo-b" },
-        data: { status: "unspent", spentInTxId: null },
-      });
-    });
-
-    it("leaves empty result untouched", async () => {
-      prisma.creditUTXO.findMany.mockResolvedValue([]);
-
-      await (worker as any).detectStaleSpent();
-
-      expect(prisma.creditUTXO.update).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("handleUTXOSpent", () => {
-    it("skips if UTXO not found in DB (parseLog returns null)", async () => {
-      const fakeEvent = {
-        topics: ["0x01", "0x02", "0x03"],
-        data: "0x",
-        transactionHash: "0xdef",
-      };
-
-      // parseLog returns null → early return
-      await (worker as any).handleUTXOSpent(fakeEvent);
-
-      expect(prisma.creditUTXO.update).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("handleCreditClaimed", () => {
-    it("exits early when parseLog returns null", async () => {
-      const fakeEvent = {
-        topics: ["0x01", "0x02", "0x03"],
-        data: "0x",
-        transactionHash: "0xabc",
-      };
-
-      // parseLog returns null in the real code when event doesn't match
-      await (worker as any).handleCreditClaimed(fakeEvent);
-
-      // Should not attempt any DB operation since parseLog returns null
-      expect(prisma.creditUTXO.findFirst).not.toHaveBeenCalled();
     });
   });
 

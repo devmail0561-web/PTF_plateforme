@@ -11,8 +11,6 @@ import { taskResolvers } from "./graphql/resolvers/task.resolver.js";
 import { projectResolvers } from "./graphql/resolvers/project.resolver.js";
 import { walletResolvers } from "./graphql/resolvers/wallet.resolver.js";
 import type { GraphQLContext } from "./graphql/context.js";
-import { maybeStartDepositWorker } from "./workers/deposit.worker.js";
-import { maybeStartReconciliationWorker } from "./workers/reconciliation.worker.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -113,12 +111,10 @@ async function main() {
 
   app.use(globalLimiter);
 
-  // Stricter rate limit on the auth-heavy GraphQL mutations.
-  // Apollo doesn't expose operation name in time for Express middleware, so we key
-  // on the raw request body: if it mentions register/login/linkGithub, apply authLimiter.
+  // Stricter rate limit on auth mutations (requestChallenge / verifyChallenge).
   app.use("/graphql", (req, res, next) => {
     const body = (req.body?.query ?? "") as string;
-    const AUTH_OPS = /\b(register|login|verifyNewDevice|linkGithub|requestGithubOAuthState|requestWalletChallenge|confirmLinkWallet)\b/;
+    const AUTH_OPS = /\b(requestChallenge|verifyChallenge)\b/;
     if (AUTH_OPS.test(body)) return authLimiter(req, res, next);
     next();
   });
@@ -133,13 +129,14 @@ async function main() {
     "/graphql",
     expressMiddleware(server, {
       context: async ({ req }) => {
-        let user = null;
+        let user: { ptfAddress: string } | null = null;
         let token: string | null = null;
         const authHeader = req.headers.authorization;
         if (authHeader?.startsWith("Bearer ")) {
           token = authHeader.slice(7);
           try {
-            user = await services.auth.verifyJwt(token);
+            const payload = await services.auth.verifyJwt(token);
+            user = { ptfAddress: payload.ptfAddress };
           } catch {
             // Token invalide — requête anonyme
             token = null;
@@ -160,19 +157,10 @@ async function main() {
   await redis.connect();
   await timerService.start();
 
-  // Deposit worker — listens to on-chain EscrowVault events (N1).
-  const depositWorker = await maybeStartDepositWorker(prisma);
-
-  // Reconciliation worker (N3) — scans historical blocks from checkpoint,
-  // backfills missed CreditClaimed events, reconciles spent UTXOs (CIA-I9).
-  const reconciliationWorker = await maybeStartReconciliationWorker(prisma);
-
   // Graceful shutdown
   process.on("SIGTERM", async () => {
     console.log("[Server] SIGTERM reçu — arrêt gracieux");
     await timerService.stop();
-    await depositWorker?.stop();
-    await reconciliationWorker?.stop();
     await prisma.$disconnect();
     await redis.disconnect();
     httpServer.close(() => process.exit(0));
@@ -180,8 +168,6 @@ async function main() {
 
   process.on("SIGINT", async () => {
     await timerService.stop();
-    await depositWorker?.stop();
-    await reconciliationWorker?.stop();
     await prisma.$disconnect();
     await redis.disconnect();
     process.exit(0);

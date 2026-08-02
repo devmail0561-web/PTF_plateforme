@@ -17,20 +17,7 @@ type Query {
   projectContributors(projectId: ID!): [Contributor!]!
 
   # Reputation
-  reputationScore(address: String!): ReputationScore!
-  reputationHistory(address: String!, limit: Int, offset: Int): [ReputationEvent!]!
-
-  # Credit ledger
-  creditHistory(address: String!, limit: Int, offset: Int, type: String): [CreditEvent!]!
-  creditBalance(address: String!): CreditLedgerBalance!
-
-  # UTXO provenance
-  utxos(address: String!, status: String, chain: String, limit: Int, offset: Int): [CreditUTXO!]!
-  utxoBalance(address: String!): UTXOBalance!
-  utxoProvenance(address: String!, limit: Int, offset: Int): [CreditUTXO!]!
-
-  # Device management (requires JWT)
-  myDevices: [DeviceSession!]!
+  reputationScore(address: String!, chain: String): ReputationScore!
 
   # License helpers (public — no auth required)
   verifyRepoLicense(repoUrl: String!): RepoLicenseInfo!
@@ -41,19 +28,11 @@ type Query {
 }
 
 type Mutation {
-  # Auth — Challenge-response (auth primaire, pas de mot de passe côté serveur)
-  # Step 1: le serveur génère un nonce pour l'adresse PTF donnée (TTL 5 min).
+  # Auth — Challenge-response (auth primaire, stateless, pas de mot de passe côté serveur)
+  # Step 1: le serveur génère un nonce en mémoire pour l'adresse PTF donnée (TTL 5 min).
   # Step 2: le client signe le nonce localement et envoie la signature.
   requestChallenge(ptfAddress: String!): ChallengeResult!
   verifyChallenge(input: VerifyChallengeInput!): AuthResult!
-
-  # Auth — GitHub linking (optionnel, 2-step CSRF-safe, requires JWT)
-  requestGithubOAuthState: GithubOAuthState!
-  linkGithub(code: String!, state: String!): AuthResult!
-
-  # Device management
-  revokeDevice(deviceId: ID!): Boolean!
-  revokeAllOtherDevices: Boolean!
 
   # Projects
   createProject(input: CreateProjectInput!): CreateProjectResult!
@@ -70,12 +49,6 @@ type Mutation {
   claimTask(taskId: ID!, chain: String!, signedNonce: String): ClaimResult!
   submitTask(taskId: ID!, commitHash: String!, branchRef: String!): SubmitResult!
   cancelTask(taskId: ID!): Boolean!
-
-  # UTXO withdrawal
-  withdrawCredits(input: WithdrawInput!): WithdrawResult!
-
-  # Reports
-  reportUser(input: ReportInput!): Report!
 }
 
 type Subscription {
@@ -295,13 +268,6 @@ type CreditBalance {
   available: Float!
 }
 
-type WalletLink {
-  id: ID!
-  chain: String!
-  address: String!
-  isPrimary: Boolean!
-}
-
 # ─── Auth ────────────────────────────────────────────────────────────────────
 
 # Retourné par requestChallenge — le client signe le nonce avec sa clé privée locale.
@@ -318,47 +284,9 @@ input VerifyChallengeInput {
   userAgent:  String
 }
 
-# Retourné par verifyChallenge et linkGithub.
+# Retourné par verifyChallenge — token JWT uniquement, pas de données utilisateur.
 type AuthResult {
   token: String!        # JWT de session (30 jours)
-  user:  UserProfile!
-}
-
-# Step 1 of GitHub OAuth: server-issued state nonce to prevent CSRF.
-# Include state in the GitHub OAuth redirect URL; pass it back in linkGithub().
-type GithubOAuthState {
-  state: String!   # keccak256 nonce — expires in 10 minutes
-}
-
-# Step 1 of wallet-link: the client receives a nonce to sign with the wallet key.
-type WalletChallenge {
-  challengeId: ID!
-  nonce:       String!
-}
-
-# Result of confirmLinkWallet: updated JWT + the newly created WalletLink.
-type WalletLinkResult {
-  token:      String!
-  walletLink: WalletLink!
-}
-
-type UserProfile {
-  id:           ID!
-  ptfAddress:   String!   # adresse PTF = identité principale
-  ptfPublicKey: String    # clé publique compressée (optionnelle)
-  githubHandle: String
-  githubLinked: Boolean!
-  wallets:      [WalletLink!]!
-}
-
-# One entry per connected device — visible in account settings.
-type DeviceSession {
-  id:         ID!
-  deviceName: String
-  userAgent:  String
-  lastSeenAt: String!
-  createdAt:  String!
-  isCurrent:  Boolean!
 }
 
 # ─── Reputation ──────────────────────────────────────────────────────────────
@@ -367,81 +295,6 @@ type ReputationScore {
   address: String!
   total: Int!
   level: String!
-  completedTasks: Int!
-}
-
-type ReputationEvent {
-  id: ID!
-  delta: Int!
-  reason: String!
-  taskId: String
-  chain: String
-  txHash: String
-  createdAt: String!
-}
-
-# ─── Credit ledger ────────────────────────────────────────────────────────────
-
-type CreditEvent {
-  id: ID!
-  devAddress: String!
-  type: String!
-  direction: String!
-  amount: Float!
-  balanceAfter: Float
-  taskId: String
-  projectId: String
-  chain: String!
-  txHash: String
-  note: String
-  createdAt: String!
-}
-
-type CreditLedgerBalance {
-  address: String!
-  totalCredits: Float!
-  totalDebits: Float!
-  net: Float!
-}
-
-# ─── UTXO provenance ─────────────────────────────────────────────────────────
-
-type CreditUTXO {
-  id:          ID!
-  ownerAddress: String!
-  amount:       Float!
-  sourceType:   String!   # task_reward | deposit | bridge_in | change
-  sourceId:     String    # taskId for rewards, deposit txHash for deposits
-  projectId:    String
-  chain:        String!
-  txHash:       String
-  status:       String!   # unspent | spent | locked
-  spentInTxId:  String
-  createdAt:    String!
-  # eip712Signature is intentionally omitted from the public schema (CIA-C4).
-  # Exposing raw EIP-712 signatures lets any client forge withdrawal proofs off-chain.
-  # Retrieve signatures via the authenticated /api/utxo/:id/proof endpoint instead.
-}
-
-type UTXOBalance {
-  address:   String!
-  available: Float!
-  locked:    Float!
-  total:     Float!
-}
-
-input WithdrawInput {
-  amount:      Float!
-  destination: String!   # target wallet address
-  chain:       String!
-}
-
-type WithdrawResult {
-  txId:        String!
-  netAmount:   Float!
-  proofHash:   String!   # keccak256 of all input UTXO signatures — independently verifiable
-  consumed:    [CreditUTXO!]!
-  change:      CreditUTXO
 }
 
 # ─── Contributors ────────────────────────────────────────────────────────────
@@ -497,20 +350,4 @@ type ProjectEstimation {
   commissionRate: Float!
   commissionAmount: Float!
   totalDeposit: Float!
-}
-
-# ─── Reports ─────────────────────────────────────────────────────────────────
-
-type Report {
-  id: ID!
-  reason: String!
-  status: String!
-  createdAt: String!
-}
-
-input ReportInput {
-  reportedAddress: String!
-  taskId: String
-  reason: String!
-  evidence: String!
 }

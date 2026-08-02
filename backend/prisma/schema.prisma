@@ -7,94 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id           String   @id @default(cuid())
-  // PTF identity — keypair généré côté client, serveur ne stocke que l'adresse publique.
-  ptfAddress   String?  @unique  // adresse dérivée du keypair secp256k1 (lowercase)
-  ptfPublicKey String?  @unique  // clé publique compressée (optionnelle, fournie par le client)
-  // GitHub (liaison optionnelle)
-  githubId     String?  @unique
-  githubHandle String?
-  // Modération
-  isBanned     Boolean  @default(false)
-  banReason    String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  wallets        WalletLink[]
-  projects       Project[]
-  submissions    Submission[]
-  reputation     Reputation?
-  reports        Report[]          @relation("ReportedUser")
-  reportsFiled   Report[]          @relation("ReporterUser")
-  deviceSessions DeviceSession[]
-  authChallenges AuthChallenge[]
-}
-
-// Une session par appareil/client. Créée après un challenge-response réussi.
-// L'utilisateur peut lister et révoquer ses sessions depuis son profil.
-model DeviceSession {
-  id         String   @id @default(cuid())
-  userId     String
-  token      String   @unique   // JWT — bearer token
-  deviceName String?            // ex : "PTF CLI", "Chrome / Ubuntu"
-  userAgent  String?
-  lastSeenAt DateTime @default(now()) @updatedAt
-  expiresAt  DateTime
-  createdAt  DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([token])
-  @@index([userId])
-}
-
-// Nonce à usage unique pour le challenge-response (auth primaire) et OAuth CSRF state.
-// Créé par requestChallenge(), consommé par verifyChallenge().
-// TTL : 5 min pour auth, 10 min pour OAuth state.
-model AuthChallenge {
-  id        String   @id @default(cuid())
-  userId    String
-  nonce     String   @unique
-  expiresAt DateTime
-  used      Boolean  @default(false)
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([nonce])
-  @@index([userId])
-}
-
-// Pending nonce for wallet-link challenge-response (fixes CIA-I4).
-model WalletLinkChallenge {
-  id        String   @id @default(cuid())
-  userId    String
-  chain     String
-  address   String
-  nonce     String   @unique
-  expiresAt DateTime
-  used      Boolean  @default(false)
-  createdAt DateTime @default(now())
-
-  @@index([nonce])
-  @@index([userId])
-}
-
-model WalletLink {
-  id        String   @id @default(cuid())
-  userId    String
-  chain     String
-  address   String
-  isPrimary Boolean  @default(false)
-  linkedAt  DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([chain, address])
-  @@index([userId])
-}
-
 model Project {
   id           String   @id
   networkId    String?  @unique
@@ -114,8 +26,7 @@ model Project {
   language     String?
   stack        String[]
   description  String?
-  ownerAddress       String
-  ownerId            String?
+  ownerAddress String
   // Open-source verification — populated at create() and re-checked at activate().
   isOpenSource       Boolean  @default(false) // true only after GitHub API confirms public + OSI license
   license            String?                  // SPDX identifier, e.g. "MIT", "GPL-3.0"
@@ -123,7 +34,6 @@ model Project {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  owner        User?              @relation(fields: [ownerId], references: [id])
   tasks        Task[]
   contributors ContributorRecord[]
 
@@ -180,7 +90,6 @@ model Submission {
   id              String    @id @default(cuid())
   taskId          String
   devAddress      String
-  userId          String?
   commitHash      String
   branchRef       String
   status          String    @default("pending")
@@ -189,38 +98,10 @@ model Submission {
   submittedAt     DateTime  @default(now())
   completedAt     DateTime?
 
-  task Task  @relation(fields: [taskId], references: [id])
-  user User? @relation(fields: [userId], references: [id])
+  task Task @relation(fields: [taskId], references: [id])
 
   @@index([taskId])
   @@index([devAddress])
-}
-
-model Reputation {
-  id             String   @id @default(cuid())
-  userId         String   @unique
-  totalPoints    Int      @default(0)
-  level          String   @default("Unranked")
-  completedTasks Int      @default(0)
-  updatedAt      DateTime @updatedAt
-
-  user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  history ReputationEvent[]
-}
-
-model ReputationEvent {
-  id           String   @id @default(cuid())
-  reputationId String
-  delta        Int
-  reason       String
-  taskId       String?
-  chain        String?
-  txHash       String?
-  createdAt    DateTime @default(now())
-
-  reputation Reputation @relation(fields: [reputationId], references: [id])
-
-  @@index([reputationId])
 }
 
 model PunishmentRecord {
@@ -251,98 +132,6 @@ model ContributorRecord {
 
   @@unique([projectId, devAddress])
   @@index([projectId])
-}
-
-model Report {
-  id             String   @id @default(cuid())
-  reporterId     String
-  reportedUserId String
-  taskId         String?
-  reason         String
-  evidence       String   @db.Text
-  status         String   @default("pending")
-  resolution     String?
-  createdAt      DateTime @default(now())
-
-  reporter     User @relation("ReporterUser", fields: [reporterId], references: [id])
-  reportedUser User @relation("ReportedUser", fields: [reportedUserId], references: [id])
-
-  @@index([reportedUserId])
-  @@index([status])
-}
-
-
-// UTXO model — each PTF credit is a discrete, cryptographically-signed spendable unit.
-// Inspired by Bitcoin UTXO: spending 200 PTF = selecting unspent outputs that sum to >=200,
-// each carrying an EIP-712 signature from PTF proving its origin (task, project, chain).
-model CreditUTXO {
-  id              String   @id            // keccak256(owner + sourceId + amount_hex + createdAt_ms)
-  ownerAddress    String
-  amount          Float                   // PTF amount (6 decimal precision, e.g. 150.000000)
-  sourceType      String                  // task_reward | deposit | bridge_in | change
-  sourceId        String?                 // taskId for rewards; deposit txHash for deposits
-  projectId       String?
-  chain           String
-  eip712Signature String                  // PTF-signed: (utxoId, owner, amount, sourceId, chain) — proves origin
-  txHash          String?                 // on-chain tx that created this UTXO (if applicable)
-  status          String   @default("unspent")  // unspent | spent | locked
-  spentInTxId     String?                 // FK → CreditTransaction that consumed this UTXO
-  createdInTxId   String?                 // FK → CreditTransaction that produced this UTXO (change outputs)
-  createdAt       DateTime @default(now())
-
-  spendingTx      CreditTransaction? @relation("inputs",  fields: [spentInTxId],   references: [id])
-  creationTx      CreditTransaction? @relation("outputs", fields: [createdInTxId], references: [id])
-
-  @@index([ownerAddress, status])
-  @@index([sourceId])
-  @@index([spentInTxId])
-  @@index([createdInTxId])
-  @@index([createdAt])
-}
-
-// A PTF credit transaction: consumes N input UTXOs, produces M output UTXOs (change).
-// The proofHash = keccak256(utxoId_1 || utxoId_2 || …) — independently verifiable, matches on-chain.
-model CreditTransaction {
-  id          String   @id            // keccak256(devAddress + inputIds[] + createdAt_ms)
-  type        String                  // withdrawal | punishment | bridge_out
-  devAddress  String
-  inputTotal  Float                   // sum of all inputs
-  outputTotal Float                   // sum of change outputs
-  netAmount   Float                   // inputTotal - outputTotal (what actually left)
-  chain       String
-  destination String?                 // target wallet for withdrawal
-  txHash      String?                 // on-chain burn tx
-  proofHash   String                  // keccak256(utxoId_1 || … || utxoId_n) — matches EscrowVault
-  createdAt   DateTime @default(now())
-
-  inputs      CreditUTXO[] @relation("inputs")   // UTXOs consumed by this tx
-  outputs     CreditUTXO[] @relation("outputs")  // change UTXOs created by this tx
-
-  @@index([devAddress])
-  @@index([createdAt])
-}
-
-// Chronological ledger — kept alongside UTXOs for accounting display.
-// Written by TaskService, PunishmentService, WalletService.
-model CreditEvent {
-  id           String   @id @default(cuid())
-  devAddress   String
-  type         String   // reward_earned | punishment_deducted | soft_locked | soft_unlocked | deposit | withdrawal | bridge_out | bridge_in
-  direction    String   // credit | debit
-  amount       Float
-  balanceAfter Float?   // running balance snapshot after this event (optional, for display)
-  utxoId       String?  // CreditUTXO.id this event created or consumed
-  taskId       String?
-  projectId    String?
-  chain        String
-  txHash       String?
-  note         String?
-  createdAt    DateTime @default(now())
-
-  @@index([devAddress])
-  @@index([utxoId])
-  @@index([taskId])
-  @@index([createdAt])
 }
 
 model NetworkBroadcast {

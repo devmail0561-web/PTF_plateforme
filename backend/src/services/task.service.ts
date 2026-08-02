@@ -2,8 +2,6 @@ import type { PrismaClient, Task } from "@prisma/client";
 import type { IChainRegistry } from "../bal/chain.registry.js";
 import type { IReputationService } from "./reputation.service.js";
 import type { IWalletService } from "./wallet.service.js";
-import type { ICreditLedgerService } from "./creditLedger.service.js";
-import type { IUTXOService } from "./utxo.service.js";
 import type {
   TaskFilter,
   PublicTaskView,
@@ -102,9 +100,7 @@ export class TaskService implements ITaskService {
     private readonly chainRegistry: IChainRegistry,
     private readonly reputationService: IReputationService,
     private readonly walletService: IWalletService,
-    redis: AnyRedis,
-    private readonly creditLedger: ICreditLedgerService,
-    private readonly utxoService: IUTXOService
+    redis: AnyRedis
   ) {
     // Dynamic import pour compatibilité ESM/CJS avec redlock v5 beta
     // Le fallback throws pour éviter le no-op silencieux (CIA-I7) :
@@ -240,21 +236,11 @@ export class TaskService implements ITaskService {
     // Vérification claimCriteria
     const criteria = task.claimCriteria as unknown as ClaimCriteria;
     if (criteria.minReputation) {
-      const score = await this.reputationService.getScore(devAddress);
+      const score = await this.reputationService.getScore(devAddress, chain);
       if (score.total < criteria.minReputation) {
         throw new PtfError(
           PtfErrorCode.INSUFFICIENT_PTF_BALANCE,
           `Réputation insuffisante : ${score.total}/${criteria.minReputation}`
-        );
-      }
-    }
-
-    if (criteria.minCompletedTasks) {
-      const score = await this.reputationService.getScore(devAddress);
-      if (score.completedTasks < criteria.minCompletedTasks) {
-        throw new PtfError(
-          PtfErrorCode.INSUFFICIENT_PTF_BALANCE,
-          `Tâches complétées insuffisantes : ${score.completedTasks}/${criteria.minCompletedTasks}`
         );
       }
     }
@@ -273,7 +259,7 @@ export class TaskService implements ITaskService {
         );
       }
     }
-    // requiredSkills : pas de compétences stockées sur le user pour l'instant — skip silencieux documenté
+    // requiredSkills, minCompletedTasks : pas de données on-chain pour l'instant — skip silencieux documenté
 
     // Vérification dépendances
     if (task.dependencies.length > 0) {
@@ -332,19 +318,9 @@ export class TaskService implements ITaskService {
         },
       });
 
-      // Soft-lock 10 PTF (projets paid) — UTXOService.lock() keeps UTXO state in sync
+      // Soft-lock 10 PTF (projets paid) — on-chain uniquement
       if (project.rewardMode === "paid") {
         await this.walletService.softLock(devAddress, chain, 10);
-        await this.utxoService.lock(devAddress, 10);
-        await this.creditLedger.record({
-          devAddress,
-          type: "soft_locked",
-          amount: 10,
-          taskId,
-          projectId: task.projectId,
-          chain,
-          note: "10 PTF guarantee locked on task claim",
-        });
       }
 
       // Enregistrement on-chain
@@ -455,30 +431,11 @@ export class TaskService implements ITaskService {
 
       if (project.rewardMode === "paid" && task.devAddress) {
         const forfeit = shouldForfeitGuarantee(task.claimedAt, task.deadline);
+        // Soft-unlock on-chain regardless (cancel releases the lock)
+        await this.walletService.softUnlock(task.devAddress, project.chain, 10).catch(() => {});
         if (forfeit) {
-          await this.utxoService.confiscate(task.devAddress, 10, taskId);
-          await this.walletService.softUnlock(task.devAddress, project.chain, 10);
-          await this.creditLedger.record({
-            devAddress: task.devAddress,
-            type: "punishment_deducted",
-            amount: 10,
-            taskId,
-            projectId: task.projectId,
-            chain: project.chain,
-            note: "10 PTF guarantee confiscated — cancel after 15% of deadline elapsed",
-          });
-        } else {
-          await this.walletService.softUnlock(task.devAddress, project.chain, 10);
-          await this.utxoService.unlock(task.devAddress, 10);
-          await this.creditLedger.record({
-            devAddress: task.devAddress,
-            type: "soft_unlocked",
-            amount: 10,
-            taskId,
-            projectId: task.projectId,
-            chain: project.chain,
-            note: "10 PTF guarantee released on task cancel (within grace period)",
-          });
+          // The on-chain penalty is handled by the contract — the guarantee is forfeited
+          console.log(`[TaskService] Cancel after grace period: 10 PTF forfeited for task ${taskId}`);
         }
       }
 
@@ -506,25 +463,9 @@ export class TaskService implements ITaskService {
         where: { id: task.projectId },
       });
       if (project?.rewardMode === "paid") {
-        let confiscated = false;
-        try {
-          await this.utxoService.confiscate(task.devAddress, 10, taskId);
-          confiscated = true;
-        } catch {
-          // UTXOs already consumed or insufficient — no ledger entry
-        }
         await this.walletService.softUnlock(task.devAddress, project.chain, 10).catch(() => {});
-        if (confiscated) {
-          await this.creditLedger.record({
-            devAddress: task.devAddress,
-            type: "punishment_deducted",
-            amount: 10,
-            taskId,
-            projectId: task.projectId,
-            chain: project.chain,
-            note: "10 PTF guarantee confiscated — task expired without submission",
-          });
-        }
+        // The on-chain contract handles penalty — no UTXO/ledger needed
+        console.log(`[TaskService] Expired: guarantee forfeited on-chain for task ${taskId}`);
       }
     }
 

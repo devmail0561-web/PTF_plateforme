@@ -1,5 +1,5 @@
 import type { GraphQLContext } from "../context.js";
-import { assertFullyLinked } from "../context.js";
+import { assertAuthenticated } from "../context.js";
 import type { TaskFilter } from "../../types/index.js";
 import { PtfError, PtfErrorCode } from "../../types/errors.js";
 
@@ -40,12 +40,9 @@ export const taskResolvers = {
       ctx: GraphQLContext
     ) => {
       if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
-      const wallets = await ctx.services.wallet.getLinkedChains(ctx.user.userId);
-      if (!wallets.length) return [];
-      // Use all linked addresses to find all tasks across chains
       const tasks = await ctx.services.task.list({
         status: args.status as never,
-        devAddress: wallets[0].address,
+        devAddress: ctx.user.ptfAddress,
       });
       return tasks.map((t) => ctx.services.task.getPublicView(t, "public"));
     },
@@ -57,20 +54,11 @@ export const taskResolvers = {
       args: { taskId: string; chain: string; signedNonce?: string },
       ctx: GraphQLContext
     ) => {
-      assertFullyLinked(ctx.user);
-
-      const wallet = await ctx.services.wallet.getLinkedChains(ctx.user.userId);
-      const chainWallet = wallet.find((w) => w.chain === args.chain);
-      if (!chainWallet) {
-        throw new PtfError(
-          PtfErrorCode.WALLET_NOT_ACTIVATED,
-          `Aucun wallet lié pour la chaîne ${args.chain}`
-        );
-      }
+      assertAuthenticated(ctx.user);
 
       return ctx.services.task.claim(
         args.taskId,
-        chainWallet.address,
+        ctx.user.ptfAddress,
         args.chain,
         args.signedNonce
       );
@@ -81,23 +69,13 @@ export const taskResolvers = {
       args: { taskId: string; commitHash: string; branchRef: string },
       ctx: GraphQLContext
     ) => {
-      assertFullyLinked(ctx.user);
+      assertAuthenticated(ctx.user);
 
-      const wallets = await ctx.services.wallet.getLinkedChains(ctx.user.userId);
-      if (!wallets.length) {
-        throw new PtfError(PtfErrorCode.WALLET_NOT_ACTIVATED, "Aucun wallet lié");
-      }
-
-      // Find the task to know which address was used at claim time
-      const task = await ctx.services.task.findById(args.taskId);
-      const callerWallet = task?.devAddress
-        ? wallets.find((w) => w.address.toLowerCase() === task.devAddress!.toLowerCase()) ?? wallets[0]
-        : wallets[0];
       return ctx.services.task.submit(
         args.taskId,
         args.commitHash,
         args.branchRef,
-        callerWallet.address
+        ctx.user.ptfAddress
       );
     },
 
@@ -108,16 +86,7 @@ export const taskResolvers = {
     ) => {
       if (!ctx.user) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
 
-      const wallets = await ctx.services.wallet.getLinkedChains(ctx.user.userId);
-      if (!wallets.length) {
-        throw new PtfError(PtfErrorCode.WALLET_NOT_ACTIVATED, "Aucun wallet lié");
-      }
-
-      const task = await ctx.services.task.findById(args.taskId);
-      const callerWallet = task?.devAddress
-        ? wallets.find((w) => w.address.toLowerCase() === task.devAddress!.toLowerCase()) ?? wallets[0]
-        : wallets[0];
-      await ctx.services.task.cancel(args.taskId, callerWallet.address);
+      await ctx.services.task.cancel(args.taskId, ctx.user.ptfAddress);
       return true;
     },
 
@@ -130,7 +99,7 @@ export const taskResolvers = {
       },
       ctx: GraphQLContext
     ) => {
-      assertFullyLinked(ctx.user);
+      assertAuthenticated(ctx.user);
 
       const result = await ctx.services.taskGenerator.generate(
         args.projectId,

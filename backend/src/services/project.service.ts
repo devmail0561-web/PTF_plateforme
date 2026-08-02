@@ -24,7 +24,6 @@ export interface CreateProjectInput {
   stack?: string[];
   description?: string;
   ownerAddress: string;
-  ownerId?: string;
 }
 
 export interface CreateProjectResult {
@@ -109,7 +108,6 @@ export class ProjectService implements IProjectService {
         stack: input.stack ?? [],
         description: input.description,
         ownerAddress: input.ownerAddress.toLowerCase(),
-        ownerId: input.ownerId,
         status: "draft",
         syncStatus: input.repoType === "ptf-temp" ? "pending" : "synced",
         isOpenSource,
@@ -249,7 +247,7 @@ export class ProjectService implements IProjectService {
   }): Promise<{ fileUrl: string; commitSha: string; isOpenSource: boolean; license: string }> {
     const project = await this.prisma.project.findUnique({ where: { id: params.projectId } });
     if (!project) throw new PtfError(PtfErrorCode.PROJECT_NOT_FOUND, `Projet introuvable : ${params.projectId}`);
-    if (project.ownerId !== params.callerId) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Seul le propriétaire peut modifier la licence");
+    if (project.ownerAddress.toLowerCase() !== params.callerId.toLowerCase()) throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Seul le propriétaire peut modifier la licence");
     if (project.repoType !== "github" || !project.repoUrl) {
       throw new PtfError(PtfErrorCode.INVALID_INPUT, "La création automatique de licence n'est disponible que pour les dépôts GitHub.");
     }
@@ -282,7 +280,7 @@ export class ProjectService implements IProjectService {
     if (!project) {
       throw new PtfError(PtfErrorCode.PROJECT_NOT_FOUND, `Projet introuvable : ${projectId}`);
     }
-    if (project.ownerId !== callerId) {
+    if (project.ownerAddress.toLowerCase() !== callerId.toLowerCase()) {
       throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Seul le propriétaire peut publier ce projet");
     }
 

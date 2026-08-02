@@ -6,9 +6,6 @@ import type { IReputationService } from "../services/reputation.service.js";
 import type { IWalletService } from "../services/wallet.service.js";
 import type { IPunishmentService } from "../services/punishment.service.js";
 import type { ITaskGeneratorService } from "../services/taskGenerator.service.js";
-import type { IReportService } from "../services/report.service.js";
-import type { ICreditLedgerService } from "../services/creditLedger.service.js";
-import type { IUTXOService } from "../services/utxo.service.js";
 import type { IGithubService } from "../services/github.service.js";
 import { PtfError, PtfErrorCode } from "../types/errors.js";
 
@@ -20,39 +17,30 @@ export interface IServiceContainer {
   wallet: IWalletService;
   punishment: IPunishmentService;
   taskGenerator: ITaskGeneratorService;
-  report: IReportService;
-  creditLedger: ICreditLedgerService;
-  utxo: IUTXOService;
   github: IGithubService;
 }
 
 export interface GraphQLContext {
   services: IServiceContainer;
-  user: JwtPayload | null;
-  // Raw JWT token — passed through to touch DeviceSession.lastSeenAt
+  user: { ptfAddress: string } | null;
   token: string | null;
 }
 
 /**
- * Assert that the caller is authenticated with a fully-linked account
- * (wallet + GitHub both linked).
- * Throws with a specific error code so the client can redirect to the
- * appropriate linking step.
+ * Assert that the caller is authenticated.
+ * Throws UNAUTHORIZED if user is null.
  */
-export function assertFullyLinked(user: JwtPayload | null): asserts user is JwtPayload {
+export function assertAuthenticated(user: { ptfAddress: string } | null): asserts user is { ptfAddress: string } {
   if (!user) {
     throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Non authentifié");
   }
-  if (!user.walletLinked) {
-    throw new PtfError(
-      PtfErrorCode.WALLET_NOT_LINKED,
-      "Vous devez lier un wallet avant de pouvoir effectuer cette action"
-    );
-  }
-  if (!user.githubLinked) {
-    throw new PtfError(
-      PtfErrorCode.GITHUB_NOT_LINKED,
-      "Vous devez lier votre compte GitHub avant de pouvoir effectuer cette action"
-    );
-  }
 }
+
+/**
+ * Backward-compatible alias — all resolvers now only need authentication, no wallet/github linking.
+ * @deprecated Use assertAuthenticated instead.
+ */
+export { assertAuthenticated as assertFullyLinked };
+
+// Re-export JwtPayload for use elsewhere
+export type { JwtPayload };

@@ -1,8 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import type { IChainRegistry } from "../bal/chain.registry.js";
 import type { IReputationService } from "./reputation.service.js";
-import type { ICreditLedgerService } from "./creditLedger.service.js";
-import type { IUTXOService } from "./utxo.service.js";
 import type { PunishmentType, Punishments } from "../types/index.js";
 
 export interface IPunishmentService {
@@ -30,9 +28,7 @@ export class PunishmentService implements IPunishmentService {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly chainRegistry: IChainRegistry,
-    private readonly reputationService: IReputationService,
-    private readonly creditLedger: ICreditLedgerService,
-    private readonly utxoService: IUTXOService
+    private readonly reputationService: IReputationService
   ) {}
 
   async execute(
@@ -60,32 +56,6 @@ export class PunishmentService implements IPunishmentService {
       const adapter = this.chainRegistry.get(chain);
       // EscrowVault distribue : 80% trésorerie PTF / 20% fonds projet
       txHash = await adapter.deductPenalty(devAddress, amountRaw, type, projectId);
-
-      // Spend UTXOs to reflect the on-chain burn in the UTXO ledger
-      try {
-        await this.utxoService.spend({
-          ownerAddress: devAddress,
-          amount: rule.credits,
-          type: "punishment",
-          chain,
-          txHash,
-        });
-      } catch {
-        // If UTXOs are insufficient (e.g. dev already spent them), log but continue —
-        // the on-chain burn is canonical; the UTXO ledger will diverge until reconciliation.
-      }
-
-      // Journalisation traçabilité crédits
-      await this.creditLedger.record({
-        devAddress,
-        type: "punishment_deducted",
-        amount: rule.credits,
-        taskId,
-        projectId,
-        chain,
-        txHash,
-        note: `punishment:${type}`,
-      });
     }
 
     // Pénalité réputation (tous projets)
