@@ -1,8 +1,8 @@
 # PTF — Progression du projet
 
-> Version : **V0.2.1-alpha** — Dernière mise à jour : **2026-08-02**
+> Version : **V0.2.2-alpha** — Dernière mise à jour : **2026-08-02**
 >
-> Commits récents : `fb647b7` tokenomics flottant → `1ea8e65` wallet BIP-39 + challenge-response → `a26cd79` séparation données utilisateurs → `848c4e1` suppression frontend + nettoyage services → `eaaf912` fix logique free/paid CLI → `EscrowService + ValidationService + docker-compose`
+> Commits récents : `848c4e1` séparation framework/service → `eaaf912` fix logique free/paid CLI → `0c3b8fc` docs progression → `a9313ca` fix CI Foundry + EscrowService + ValidationService + tests service + docker-compose
 
 ---
 
@@ -117,7 +117,7 @@ Le projet est désormais séparé en deux dépôts distincts :
 |---|---|
 | `MockChainAdapter` | ✅ Opérationnel (dev/test) |
 | `EvmAdapterBase` | ✅ Classe de base ethers.js |
-| `PolygonAdapter` | ⚠️ Structure présente — throw si `SIGNER_PRIVATE_KEY` absent |
+| `PolygonAdapter` | ✅ Activé automatiquement si `SIGNER_PRIVATE_KEY` présent |
 | `EthereumAdapter` | ⚠️ Structure présente — throw si `SIGNER_PRIVATE_KEY` absent |
 
 #### Tests : 25 (Jest — 2 suites)
@@ -127,7 +127,7 @@ Le projet est désormais séparé en deux dépôts distincts :
 
 ---
 
-### ⚠️ ptf_service_plateforme — Backend — 75%
+### ⚠️ ptf_service_plateforme — Backend — 90%
 
 **7 services — Apollo GraphQL — Prisma — 10 modèles DB**
 
@@ -164,16 +164,18 @@ Le projet est désormais séparé en deux dépôts distincts :
 
 ---
 
-### ⚠️ Infrastructure — 5%
+### ⚠️ Infrastructure — 20%
 
 | Composant | Statut | Priorité |
 |---|---|---|
 | `docker-compose.yml` ptf_service | ✅ Présent | — |
-| GitHub Actions CI — framework | ✅ Présent | — |
+| `docker-compose.yml` framework (PostgreSQL 16 + Redis 7 + backend) | ✅ Présent | — |
+| GitHub Actions CI — framework | ✅ Corrigé (`a9313ca`) — Foundry deps + typecheck + tests | — |
 | GitHub Actions CI — service | ✅ Présent | — |
-| `docker-compose.yml` framework (PostgreSQL + Redis + backend) | ✅ Présent | — |
+| `contracts/evm/Makefile` | ✅ Présent — `make test`, `make deploy-amoy`, `make coverage` | — |
+| `contracts/evm/scripts/deploy-amoy.sh` | ✅ Présent — déploiement one-shot + génération `.env.testnet` | — |
 | Déploiement VPS (Hetzner CX21) | 🔴 À faire | 🟡 Moyenne |
-| Contrats testnet Polygon Amoy | 🔴 À faire | 🟡 Moyenne |
+| Contrats testnet Polygon Amoy | 🔴 À faire — besoin de `DEPLOYER_PK` + MATIC Amoy | 🔴 Haute |
 | The Graph subgraph | 🔴 À faire | 🟠 Basse |
 | Monitoring (Grafana Cloud) | 🔴 À faire | 🟠 Basse |
 
@@ -183,12 +185,13 @@ Le projet est désormais séparé en deux dépôts distincts :
 
 | Métrique | Valeur |
 |---|---|
-| Fichiers source totaux (framework) | 69 fichiers |
-| Lignes TypeScript (backend + CLI) | ~8 500 lignes |
+| Fichiers source totaux (framework) | 71 fichiers |
+| Lignes TypeScript (backend + CLI) | ~8 700 lignes |
 | Lignes Solidity | ~640 lignes |
-| Tests : CLI (Vitest) + Backend (Jest) + Contracts (Foundry) | 13 + 25 + ~60 = **~98 tests** |
+| Tests : CLI (Vitest) + Backend Jest (framework) + Service Jest + Contracts (Foundry) | 13 + 25 + 20 + ~60 = **~118 tests** |
 | TypeScript errors | **0** (typecheck passe sur les deux projets) |
-| Commits framework | 15 |
+| CI GitHub Actions | ✅ Corrigé (`a9313ca`) — Foundry deps installées dans le CI |
+| Commits framework | 16 |
 | Findings sécurité corrigés | **119** (15 rounds d'audit) |
 | Findings ouverts | **0** |
 
