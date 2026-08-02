@@ -51,10 +51,10 @@ export class ReputationService implements IReputationService {
     chain: string,
     delta: number,
     reason: string,
-    _taskId?: string
+    taskId?: string
   ): Promise<void> {
     const adapter = this.chainRegistry.get(chain);
-    await adapter.setReputation(devAddress, BigInt(delta), reason);
+    await adapter.applyReputationDelta(devAddress, BigInt(delta), taskId ?? "", reason);
   }
 
   async isEligibleReviewer(devAddress: string, chain: string): Promise<boolean> {

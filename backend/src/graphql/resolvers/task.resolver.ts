@@ -96,7 +96,8 @@ export const taskResolvers = {
       ctx: GraphQLContext
     ) => {
       assertAuthenticated(ctx.user);
-      return ctx.services.validation.validateSubmission(args.submissionId);
+      // F8 — Passer l'adresse du caller pour vérification ownership dans le service.
+      return ctx.services.validation.validateSubmission(args.submissionId, ctx.user.ptfAddress);
     },
 
     releaseTaskReward: async (
@@ -105,7 +106,8 @@ export const taskResolvers = {
       ctx: GraphQLContext
     ) => {
       assertAuthenticated(ctx.user);
-      return ctx.services.escrow.releaseTaskReward(args.taskId, args.chain);
+      // F3 — Passer l'adresse du caller pour vérification ownership dans le service.
+      return ctx.services.escrow.releaseTaskReward(args.taskId, args.chain, ctx.user.ptfAddress);
     },
 
     generateTasks: async (

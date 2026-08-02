@@ -1,8 +1,8 @@
 # PTF — Progression du projet
 
-> Version : **V0.2.5-alpha** — Dernière mise à jour : **2026-08-02**
+> Version : **V0.2.6-alpha** — Dernière mise à jour : **2026-08-02**
 >
-> Commits récents : `a9313ca` fix CI Foundry + backend P1 → `b8d2e73` docs V0.2.2 → `79bb0a8` docs V0.2.3 → `(en cours)` Priorité 4 frontend + Priorité 5 infra VPS
+> Commits récents : `47a7e98` subgraph The Graph → `48f7a2c` infra VPS + CD → `(en cours)` audit sécurité 43 findings + corrections 20 fichiers
 
 ---
 
@@ -17,11 +17,11 @@
 | Documentation | ✅ À jour | 100% |
 | CLI (framework) | ✅ Terminé | 100% |
 | Smart contracts EVM | ✅ Terminé | 100% |
-| Audit sécurité (15 rounds) | ✅ Terminé | 100% |
+| Audit sécurité (16 rounds) | ✅ Terminé | 100% |
 | Backend framework (réseau) | ⚠️ En cours | 95% |
 | ptf_service_plateforme — backend | ⚠️ En cours | 90% |
 | ptf_service_plateforme — frontend | ⚠️ En cours | 85% |
-| Infrastructure | ⚠️ En cours | 70% |
+| Infrastructure | ⚠️ En cours | 75% |
 | Blockchain réelle (testnet) | 🔴 À faire | 0% |
 | Solana / Anchor | 🔴 À faire | 0% |
 
@@ -83,7 +83,7 @@ Le projet est désormais séparé en deux dépôts distincts :
 | `ProjectRegistry.sol` | Ancrage Merkle, verrou au premier claim, preuve Merkle |
 | `ReputationRegistry.sol` | Score on-chain immuable, historique, 4 niveaux |
 
-**119 findings sécurité corrigés (15 rounds d'audit)**
+**152 findings sécurité corrigés (16 rounds d'audit)**
 **~60 tests Foundry — 3 invariants EscrowVault**
 
 ---
@@ -172,9 +172,9 @@ Le projet est désormais séparé en deux dépôts distincts :
 | `docker-compose.yml` ptf_service (dev) | ✅ Présent | — |
 | `docker-compose.yml` framework (dev — PostgreSQL 16 + Redis 7) | ✅ Présent | — |
 | `infra/docker-compose.prod.yml` (framework prod) | ✅ Présent — GHCR + secrets env | — |
-| `infra/docker-compose.service.prod.yml` (service prod) | ✅ Présent — partage réseau ptf-net | — |
-| `infra/nginx.conf` | ✅ Présent — TLS, rate-limit, reverse proxy 3 domaines | — |
-| `infra/setup-vps.sh` | ✅ Présent — Docker + UFW + fail2ban + Certbot + cron TLS | — |
+| `infra/docker-compose.service.prod.yml` (service prod) | ✅ Présent — réseau `ptf-bridge` isolé (DB inaccessible) | — |
+| `infra/nginx.conf` | ✅ Durci — HSTS, nosniff, ciphers modernes, server_tokens off | — |
+| `infra/setup-vps.sh` | ✅ Corrigé — UFW idempotent, certbot `docker compose exec` | — |
 | `infra/.env.*.example` | ✅ Présents — framework + service | — |
 | GitHub Actions CI — framework | ✅ Corrigé (`a9313ca`) — Foundry deps + typecheck + tests | — |
 | GitHub Actions CI — service | ✅ Présent | — |
@@ -183,7 +183,7 @@ Le projet est désormais séparé en deux dépôts distincts :
 | Déploiement VPS (Hetzner CX21) | 🔴 À faire — créer le serveur + pointer les DNS | 🔴 Haute |
 | Secrets GitHub Actions | 🔴 À faire — `VPS_HOST`, `VPS_SSH_KEY`, `GHCR_TOKEN` | 🔴 Haute |
 | Contrats testnet Polygon Amoy | 🔴 À faire — besoin de `DEPLOYER_PK` + MATIC Amoy | 🔴 Haute |
-| The Graph subgraph | ✅ Présent — 4 contrats, 12 entities, deploy script | — |
+| The Graph subgraph | ⚠️ Corrigé partiellement — compile (imports fixés), handlers manquants | — |
 | Monitoring (Grafana Cloud) | 🔴 À faire | 🟠 Basse |
 
 ---
@@ -199,8 +199,8 @@ Le projet est désormais séparé en deux dépôts distincts :
 | TypeScript errors | **0** (typecheck passe sur les deux projets) |
 | CI GitHub Actions | ✅ Corrigé (`a9313ca`) — Foundry deps installées dans le CI |
 | Commits framework | 16 |
-| Findings sécurité corrigés | **119** (15 rounds d'audit) |
-| Findings ouverts | **0** |
+| Findings sécurité corrigés | **152** (16 rounds d'audit) |
+| Findings ouverts | **7** (non bloquants — voir `AUDIT_CORRECTIONS.md`) |
 
 ---
 

@@ -1,3 +1,4 @@
+import { ethers } from "ethers";
 import type { PrismaClient } from "@prisma/client";
 import type { IChainRegistry } from "../bal/chain.registry.js";
 import type { IReputationService } from "./reputation.service.js";
@@ -6,7 +7,8 @@ import { PtfError, PtfErrorCode } from "../types/errors.js";
 const PTF_DECIMALS = 6;
 
 export interface IEscrowService {
-  releaseTaskReward(taskId: string, chain: string): Promise<ReleaseResult>;
+  // F3 — callerAddress requis pour vérifier que l'appelant est le project owner.
+  releaseTaskReward(taskId: string, chain: string, callerAddress: string): Promise<ReleaseResult>;
 }
 
 export interface ReleaseResult {
@@ -25,7 +27,7 @@ export class EscrowService implements IEscrowService {
     private readonly reputationService: IReputationService
   ) {}
 
-  async releaseTaskReward(taskId: string, chain: string): Promise<ReleaseResult> {
+  async releaseTaskReward(taskId: string, chain: string, callerAddress: string): Promise<ReleaseResult> {
     const task = await this.prisma.task.findUnique({
       where: { id: taskId },
       include: { project: true },
@@ -34,12 +36,35 @@ export class EscrowService implements IEscrowService {
     if (!task) {
       throw new PtfError(PtfErrorCode.TASK_NOT_FOUND, `Tâche introuvable : ${taskId}`);
     }
-    if (task.status !== "submitted" && task.status !== "under_review") {
+
+    // F3 — Vérifier que l'appelant est bien le project owner.
+    if (task.project.ownerAddress.toLowerCase() !== callerAddress.toLowerCase()) {
       throw new PtfError(
-        PtfErrorCode.TASK_IMMUTABLE,
-        `Impossible de libérer le reward : statut inattendu "${task.status}" (attendu : submitted | under_review)`
+        PtfErrorCode.UNAUTHORIZED,
+        "Seul le créateur du projet peut libérer les rewards"
       );
     }
+
+    // F3 — Accepter uniquement "under_review" (validation automatique passée).
+    // "submitted" seul n'est pas suffisant : les tests doivent avoir tourné et approuvé la soumission.
+    if (task.status !== "under_review") {
+      throw new PtfError(
+        PtfErrorCode.TASK_IMMUTABLE,
+        `Impossible de libérer le reward : statut "${task.status}" (requis : under_review)`
+      );
+    }
+
+    // F3 — Vérifier qu'au moins une soumission est effectivement approuvée par validateSubmission.
+    const approvedSubmission = await this.prisma.submission.findFirst({
+      where: { taskId, status: "approved" },
+    });
+    if (!approvedSubmission) {
+      throw new PtfError(
+        PtfErrorCode.UNAUTHORIZED,
+        "Aucune soumission approuvée pour cette tâche — exécutez validateSubmission d'abord"
+      );
+    }
+
     if (!task.devAddress) {
       throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Aucun développeur assigné à cette tâche");
     }
@@ -51,7 +76,12 @@ export class EscrowService implements IEscrowService {
     let amountRaw: bigint;
 
     if (project.rewardMode === "paid" && task.rewardAmount) {
-      amountRaw = BigInt(Math.round(task.rewardAmount * 10 ** PTF_DECIMALS));
+      // F10 — task.rewardAmount est maintenant Decimal (Prisma). Convertir via toString() pour éviter
+      // toute perte de précision IEEE 754 avant le BigInt.
+      const rewardDecimal = task.rewardAmount.toString();
+      const [intPart, fracPart = ""] = rewardDecimal.split(".");
+      const fracPadded = fracPart.padEnd(PTF_DECIMALS, "0").slice(0, PTF_DECIMALS);
+      amountRaw = BigInt(intPart + fracPadded);
       txHash = await adapter.releaseTaskReward(project.id, taskId, task.devAddress, amountRaw);
     } else {
       // Projets free : pas de transfert USDC — reward = réputation uniquement
@@ -59,9 +89,12 @@ export class EscrowService implements IEscrowService {
       txHash = "0x0000000000000000000000000000000000000000000000000000000000000000";
     }
 
-    // Unlock du soft-lock (projets paid)
+    // F2 — Soft-unlock : l'adapter n'accepte qu'un seul argument (address dev).
+    // Le contrat gère le montant fixe SOFT_LOCK_AMOUNT en interne.
     if (project.rewardMode === "paid" && task.devAddress) {
-      await adapter.softUnlock(task.devAddress, BigInt(10 * 10 ** PTF_DECIMALS)).catch(() => {});
+      await adapter.softUnlock(task.devAddress).catch((err: unknown) => {
+        console.error(`[EscrowService] softUnlock failed for ${task.devAddress} (task ${taskId}):`, err);
+      });
     }
 
     // Récompense réputation (tous projets open-source)
@@ -75,13 +108,17 @@ export class EscrowService implements IEscrowService {
       );
     }
 
-    // UTXO receipt on-chain (projets paid uniquement)
-    const utxoId = task.id.startsWith("0x")
-      ? task.id
-      : "0x" + Buffer.from(taskId).toString("hex").slice(0, 64).padEnd(64, "0");
+    // F7 — utxoId : keccak256 du taskId pour obtenir un bytes32 sans troncature.
+    // Buffer.from().hex.slice(0,64) tronque silencieusement les IDs > 32 octets (ex: UUID),
+    // créant des collisions. keccak256 garantit un hash de longueur fixe, toujours correct.
+    const utxoId = taskId.startsWith("0x")
+      ? taskId
+      : ethers.keccak256(ethers.toUtf8Bytes(taskId));
 
     if (project.rewardMode === "paid" && amountRaw > 0n) {
-      await adapter.mintCredits(task.devAddress, amountRaw, taskId).catch(() => {});
+      await adapter.mintCredits(task.devAddress, amountRaw, taskId).catch((err: unknown) => {
+        console.error(`[EscrowService] mintCredits failed for ${task.devAddress} (task ${taskId}):`, err);
+      });
     }
 
     const releasedAt = new Date().toISOString();
@@ -102,6 +139,7 @@ export class EscrowService implements IEscrowService {
           projectId: project.id,
           devAddress: task.devAddress,
           tasksCompleted: 1,
+          // F10 — Decimal; Prisma accepte string | Decimal | number pour les champs Decimal.
           totalEarned: task.rewardAmount ?? 0,
           lastActivity: new Date(),
         },

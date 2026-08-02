@@ -88,7 +88,6 @@ jobs:
         run: forge test -vv
       - name: Run Slither
         uses: crytic/slither-action@v0.4.0
-        continue-on-error: true
         with:
           target: contracts/evm/
           slither-args: --exclude-dependencies
@@ -128,6 +127,7 @@ jobs:
           if [[ "${{ needs.typecheck.result }}" != "success" ||
                 "${{ needs.test-backend.result }}" != "success" ||
                 "${{ needs.test-cli.result }}" != "success" ||
+                "${{ needs.test-contracts.result }}" != "success" ||
                 "${{ needs.build-cli.result }}" != "success" ]]; then
             echo "One or more required checks failed"
             exit 1

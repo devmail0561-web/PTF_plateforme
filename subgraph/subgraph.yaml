@@ -8,7 +8,7 @@ features:
 dataSources:
   - kind: ethereum
     name: ProjectRegistry
-    network: matic  # Polygon mainnet — remplacer par "matic-amoy" pour testnet
+    network: matic-amoy  # Polygon mainnet — remplacer par "matic-amoy" pour testnet
     source:
       address: "0x0000000000000000000000000000000000000000"  # à remplir après deploy
       abi: ProjectRegistry
@@ -38,7 +38,7 @@ dataSources:
 
   - kind: ethereum
     name: EscrowVault
-    network: matic
+    network: matic-amoy
     source:
       address: "0x0000000000000000000000000000000000000000"
       abi: EscrowVault
@@ -70,7 +70,7 @@ dataSources:
 
   - kind: ethereum
     name: ReputationRegistry
-    network: matic
+    network: matic-amoy
     source:
       address: "0x0000000000000000000000000000000000000000"
       abi: ReputationRegistry
@@ -92,7 +92,7 @@ dataSources:
 
   - kind: ethereum
     name: CreditToken
-    network: matic
+    network: matic-amoy
     source:
       address: "0x0000000000000000000000000000000000000000"
       abi: CreditToken

@@ -40,15 +40,22 @@ export class MockChainAdapter implements IChainAdapter {
     return this.mockTxHash();
   }
 
-  async softLock(devAddress: string, amountPtf: bigint): Promise<string> {
+  async softLock(devAddress: string): Promise<string> {
+    const SOFT_LOCK_AMOUNT = BigInt(10 * 10 ** 6);
     const current = this.softLocks.get(devAddress) ?? 0n;
-    this.softLocks.set(devAddress, current + amountPtf);
+    this.softLocks.set(devAddress, current + SOFT_LOCK_AMOUNT);
     return this.mockTxHash();
   }
 
-  async softUnlock(devAddress: string, amountPtf: bigint): Promise<string> {
+  async getSoftLocked(devAddress: string): Promise<bigint> {
+    return this.softLocks.get(devAddress) ?? 0n;
+  }
+
+  // F2 — Un seul argument, montant fixe 10 PTF (SOFT_LOCK_AMOUNT).
+  async softUnlock(devAddress: string): Promise<string> {
+    const SOFT_LOCK_AMOUNT = BigInt(10 * 10 ** 6);
     const current = this.softLocks.get(devAddress) ?? 0n;
-    this.softLocks.set(devAddress, current > amountPtf ? current - amountPtf : 0n);
+    this.softLocks.set(devAddress, current >= SOFT_LOCK_AMOUNT ? current - SOFT_LOCK_AMOUNT : 0n);
     return this.mockTxHash();
   }
 
@@ -79,24 +86,37 @@ export class MockChainAdapter implements IChainAdapter {
     return this.mockTxHash();
   }
 
-  async deductPenalty(
+  // F4 — executePunishment remplace deductPenalty.
+  async executePunishment(
+    _projectId: string,
+    _taskId: string,
     devAddress: string,
     amount: bigint,
-    _reason: string,
-    _projectId: string
+    _punishmentType: string
   ): Promise<string> {
     const current = this.balances.get(devAddress) ?? 0n;
     this.balances.set(devAddress, current > amount ? current - amount : 0n);
     return this.mockTxHash();
   }
 
+  // @deprecated — alias pour rétrocompatibilité.
+  async deductPenalty(
+    devAddress: string,
+    amount: bigint,
+    reason: string,
+    projectId: string
+  ): Promise<string> {
+    return this.executePunishment(projectId, "unknown", devAddress, amount, reason);
+  }
+
   async getReputation(address: string): Promise<bigint> {
     return this.reputations.get(address) ?? 350n;
   }
 
-  async setReputation(
+  async applyReputationDelta(
     address: string,
     delta: bigint,
+    _taskId: string,
     _reason: string
   ): Promise<string> {
     const current = this.reputations.get(address) ?? 350n;
@@ -113,9 +133,9 @@ export class MockChainAdapter implements IChainAdapter {
   }
 
   async verifyMerkleProof(
-    _leaf: string,
-    _proof: string[],
-    _root: string
+    _projectId: string,
+    _taskId: string,
+    _proof: string[]
   ): Promise<boolean> {
     return true;
   }
@@ -127,14 +147,6 @@ export class MockChainAdapter implements IChainAdapter {
     _signature: string
   ): Promise<string> {
     return "0x0000000000000000000000000000000000000099";
-  }
-
-  async isBanned(address: string): Promise<boolean> {
-    return this.banned.has(address.toLowerCase());
-  }
-
-  ban(address: string): void {
-    this.banned.add(address.toLowerCase());
   }
 
   async estimateGas(_method: string, _params: unknown[]): Promise<bigint> {

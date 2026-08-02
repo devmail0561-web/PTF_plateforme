@@ -58,11 +58,10 @@ if ! id "$DEPLOY_USER" &>/dev/null; then
 fi
 
 # ── 5. Firewall (UFW) ────────────────────────────────────────────────────────
-echo "→ Configuration UFW..."
-ufw --force reset
+echo "→ Configuration UFW (idempotent — pas de reset)..."
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow ssh
+ufw limit ssh
 ufw allow 80/tcp
 ufw allow 443/tcp
 ufw --force enable
@@ -81,7 +80,7 @@ chown -R www-data:www-data /var/www/certbot
 
 # ── 8. Renouvellement TLS automatique ────────────────────────────────────────
 echo "→ Configuration cron renouvellement TLS..."
-CRON_LINE="0 3 * * * certbot renew --quiet && docker exec nginx nginx -s reload"
+CRON_LINE="0 3 * * * certbot renew --quiet && docker compose -f $PTF_HOME/framework/docker-compose.prod.yml exec nginx nginx -s reload"
 (crontab -l 2>/dev/null | grep -v certbot; echo "$CRON_LINE") | crontab -
 
 # ── 9. Registry GitHub ───────────────────────────────────────────────────────

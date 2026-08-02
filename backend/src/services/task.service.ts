@@ -431,8 +431,10 @@ export class TaskService implements ITaskService {
 
       if (project.rewardMode === "paid" && task.devAddress) {
         const forfeit = shouldForfeitGuarantee(task.claimedAt, task.deadline);
-        // Soft-unlock on-chain regardless (cancel releases the lock)
-        await this.walletService.softUnlock(task.devAddress, project.chain, 10).catch(() => {});
+        // F2 — softUnlock sans montant (contrat utilise SOFT_LOCK_AMOUNT constant).
+        await this.walletService.softUnlock(task.devAddress, project.chain).catch((err: unknown) => {
+          console.error(`[TaskService] softUnlock failed on cancel for ${task.devAddress}:`, err);
+        });
         if (forfeit) {
           // The on-chain penalty is handled by the contract — the guarantee is forfeited
           console.log(`[TaskService] Cancel after grace period: 10 PTF forfeited for task ${taskId}`);
@@ -463,7 +465,10 @@ export class TaskService implements ITaskService {
         where: { id: task.projectId },
       });
       if (project?.rewardMode === "paid") {
-        await this.walletService.softUnlock(task.devAddress, project.chain, 10).catch(() => {});
+        // F2 — softUnlock sans montant.
+        await this.walletService.softUnlock(task.devAddress, project.chain).catch((err: unknown) => {
+          console.error(`[TaskService] softUnlock failed on expire for ${task.devAddress}:`, err);
+        });
         // The on-chain contract handles penalty — no UTXO/ledger needed
         console.log(`[TaskService] Expired: guarantee forfeited on-chain for task ${taskId}`);
       }

@@ -96,6 +96,8 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
     event RefundIssued(bytes32 indexed projectId, address indexed to, uint256 amount);
     event WithdrawalExecuted(address indexed owner, uint256 amount, address indexed destination, bytes32 proofHash);
     event UTXOSpent(bytes32 indexed utxoId, address indexed owner);
+    // F9 — Événement distinct pour la création d'un UTXO (évite la confusion avec UTXOSpent).
+    event UTXOMinted(bytes32 indexed utxoId, address indexed dev, uint256 amount, bytes32 indexed sourceId);
 
     // ── Errors ───────────────────────────────────────────────────────────────
 
@@ -263,9 +265,15 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         releaseNonces[dev][taskId] = 1;
         escrowBalance[projectId] -= amount;
 
-        // Also unlock soft-lock if still active
+        // Also unlock soft-lock if still active — return PTF collateral to dev
         if (softLocked[dev] >= SOFT_LOCK_AMOUNT) {
             softLocked[dev] -= SOFT_LOCK_AMOUNT;
+            uint256 vaultBal = ptfToken.balanceOf(address(this));
+            uint256 toReturn = vaultBal >= SOFT_LOCK_AMOUNT ? SOFT_LOCK_AMOUNT : vaultBal;
+            if (toReturn > 0) {
+                SafeERC20.safeTransfer(IERC20(address(ptfToken)), dev, toReturn);
+            }
+            emit SoftUnlocked(dev, toReturn);
         }
 
         // ── Interactions ──────────────────────────────────────────────────────
@@ -326,10 +334,11 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         ptfToken.burn(address(this), actualSlash);
 
         // ── Interactions ──────────────────────────────────────────────────────
-        // Mint 80% to treasury
+        // F6 — Mint 80% to treasury
         ptfToken.mint(treasury, treasuryShare);
-        // Mint 20% to treasury — tracked per project for potential redistribution
-        ptfToken.mint(treasury, projectShare);
+        // F6 FIX — Mint 20% to this vault (not treasury) so projectPunishmentFunds
+        // stays backed by real tokens available for redistribution.
+        ptfToken.mint(address(this), projectShare);
 
         // softLocked[dev] was already decremented above (by actualSlash)
         // softUnlock will handle remaining balance when called by operator
@@ -523,10 +532,10 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         // Mint PTF tokens to dev — this is the spendable credit
         ptfToken.mint(dev, amount);
 
-        // Emit on-chain anchor — indexed by utxoId so The Graph can index it
-        emit UTXOSpent(utxoId, address(0)); // address(0) = creation, not spend
-        // Re-use WithdrawalExecuted pattern in reverse: log the mint with sourceId as proofHash
-        emit WithdrawalExecuted(dev, amount, dev, sourceId);
+        // F9 — Utiliser l'événement UTXOMinted dédié au lieu de détourner UTXOSpent(utxoId, address(0)).
+        // L'ancien emit UTXOSpent(utxoId, address(0)) marquait le UTXO comme "dépensé" dès la création,
+        // ce qui confondait les indexeurs The Graph et bloquait les retraits.
+        emit UTXOMinted(utxoId, dev, amount, sourceId);
     }
 
     // ── View ─────────────────────────────────────────────────────────────────

@@ -21,8 +21,9 @@ export interface IChainAdapter {
   ): Promise<string>; // txHash
 
   // Credits soft-lock (caution 10 PTF, projets paid)
-  softLock(devAddress: string, amountPtf: bigint): Promise<string>;
-  softUnlock(devAddress: string, amountPtf: bigint): Promise<string>;
+  softLock(devAddress: string): Promise<string>;
+  softUnlock(devAddress: string): Promise<string>;
+  getSoftLocked(devAddress: string): Promise<bigint>;
 
   // Credits lifecycle
   mintCredits(devAddress: string, amount: bigint, taskId: string): Promise<string>;
@@ -36,7 +37,16 @@ export interface IChainAdapter {
     amountPtf: bigint
   ): Promise<string>;
 
-  // Punishment — distribue 80% trésorerie PTF / 20% fonds projet dans EscrowVault
+  // F4 — La fonction du contrat s'appelle executePunishment (pas deductPenalty).
+  executePunishment(
+    projectId: string,
+    taskId: string,
+    devAddress: string,
+    amount: bigint,
+    punishmentType: string
+  ): Promise<string>;
+
+  // @deprecated Utiliser executePunishment — conservé pour rétrocompatibilité.
   deductPenalty(
     devAddress: string,
     amount: bigint,
@@ -46,14 +56,19 @@ export interface IChainAdapter {
 
   // Reputation
   getReputation(address: string): Promise<bigint>;
-  setReputation(address: string, delta: bigint, reason: string): Promise<string>;
+  applyReputationDelta(
+    devAddress: string,
+    delta: bigint,
+    taskId: string,
+    reason: string
+  ): Promise<string>;
 
   // Merkle
   anchorMerkleRoot(projectId: string, merkleRoot: string): Promise<string>;
   verifyMerkleProof(
-    leaf: string,
-    proof: string[],
-    root: string
+    projectId: string,
+    taskId: string,
+    proof: string[]
   ): Promise<boolean>;
 
   // EIP-712
@@ -62,10 +77,7 @@ export interface IChainAdapter {
     types: Record<string, unknown>,
     value: Record<string, unknown>,
     signature: string
-  ): Promise<string>; // returns signer address
-
-  // Auth
-  isBanned(address: string): Promise<boolean>;
+  ): Promise<string>;
 
   // Utility
   estimateGas(method: string, params: unknown[]): Promise<bigint>;

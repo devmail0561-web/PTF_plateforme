@@ -70,7 +70,8 @@ model Task {
   devAddress        String?
   conditionsHash    String?
   eip712Signature   String?
-  rewardAmount      Float?
+  // F10 — Decimal pour éviter la perte de précision IEEE 754 des montants financiers.
+  rewardAmount      Decimal?  @db.Decimal(18, 6)
   rewardToken       String?
   commitHash        String?
   branchRef         String?
@@ -124,7 +125,8 @@ model ContributorRecord {
   devAddress     String
   githubHandle   String?
   tasksCompleted Int       @default(0)
-  totalEarned    Float     @default(0)
+  // F10 — Decimal pour cohérence avec Task.rewardAmount.
+  totalEarned    Decimal   @default(0) @db.Decimal(18, 6)
   joinedAt       DateTime  @default(now())
   lastActivity   DateTime?
 

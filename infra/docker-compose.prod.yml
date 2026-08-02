@@ -61,7 +61,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 45s
-    networks: [ptf-net]
+    networks: [ptf-net, ptf-bridge]
 
   nginx:
     image: nginx:alpine
@@ -84,4 +84,6 @@ volumes:
 
 networks:
   ptf-net:
+    driver: bridge
+  ptf-bridge:
     driver: bridge

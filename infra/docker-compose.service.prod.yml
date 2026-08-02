@@ -61,7 +61,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 45s
-    networks: [ptf-service-net, ptf-net]
+    networks: [ptf-service-net, ptf-bridge]
 
   ptf-service-frontend:
     image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/ptf-service-frontend:${IMAGE_TAG:-latest}
@@ -81,5 +81,5 @@ volumes:
 networks:
   ptf-service-net:
     driver: bridge
-  ptf-net:
-    external: true  # partage le réseau avec docker-compose.prod.yml
+  ptf-bridge:
+    external: true  # réseau de liaison vers ptf-backend uniquement (pas postgres/redis)

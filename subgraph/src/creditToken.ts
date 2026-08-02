@@ -1,4 +1,4 @@
-import { BigDecimal, Address } from "@graphprotocol/graph-ts";
+import { BigDecimal, BigInt, Address } from "@graphprotocol/graph-ts";
 import {
   CreditClaimed,
   Transfer,
@@ -18,8 +18,6 @@ function loadOrCreateDeveloper(address: string): Developer {
   return dev;
 }
 
-// Évite l'import BigInt depuis @graphprotocol/graph-ts dans une fonction — on le redéclare localement
-import { BigInt } from "@graphprotocol/graph-ts";
 
 export function handleCreditClaimed(event: CreditClaimed): void {
   const devAddr = event.params.to.toHexString().toLowerCase();
@@ -50,20 +48,18 @@ export function handleTransfer(event: Transfer): void {
 
   const id = event.transaction.hash.toHexString() + "-" + event.logIndex.toString();
 
-  // Transfer sortant (from)
-  if (fromAddr != ZERO_ADDRESS) {
-    loadOrCreateDeveloper(fromAddr);
-    const outEvent = new CreditEvent(id + "-out");
-    outEvent.dev = fromAddr;
-    outEvent.eventType = "transfer_out";
-    outEvent.amount = amount;
-    outEvent.from = event.params.from;
-    outEvent.to = event.params.to;
-    outEvent.txHash = event.transaction.hash;
-    outEvent.blockNumber = event.block.number;
-    outEvent.timestamp = event.block.timestamp;
-    outEvent.save();
-  }
+  // Transfer sortant (from) — fromAddr != ZERO_ADDRESS garanti par early-return ci-dessus
+  loadOrCreateDeveloper(fromAddr);
+  const outEvent = new CreditEvent(id + "-out");
+  outEvent.dev = fromAddr;
+  outEvent.eventType = "transfer_out";
+  outEvent.amount = amount;
+  outEvent.from = event.params.from;
+  outEvent.to = event.params.to;
+  outEvent.txHash = event.transaction.hash;
+  outEvent.blockNumber = event.block.number;
+  outEvent.timestamp = event.block.timestamp;
+  outEvent.save();
 
   // Transfer entrant (to) — ignorer burns (to == 0x0)
   if (toAddr != ZERO_ADDRESS) {

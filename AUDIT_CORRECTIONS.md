@@ -1,4 +1,63 @@
-# Corrections d'audit PTF — 2026-07-31
+# Corrections d'audit PTF
+
+---
+
+## Audit du 2026-08-02 — 43 findings (6C / 16H / 9M / 12L)
+
+Audit multi-agents (5 dimensions : sécurité, subgraph, infra, contrats, séparation framework/service).
+20 fichiers modifiés — TypeScript compile sans erreur.
+
+### CRITICAL — corrigés
+
+| # | Fichier | Correction |
+|---|---|---|
+| CR-1 | `evm.adapter.base.ts` | 4 ABIs entièrement fausses : `REPUTATION_ABI` (getScore/applyDelta), `PROJECT_REGISTRY_ABI` (markTaskClaimed/updateMerkleRoot/verifyTask), `CREDIT_TOKEN_ABI` (mint 2 args) — alignées avec les vrais contrats |
+| CR-2 | `validation.service.ts` | RCE via `execFileAsync` — ajout allowlist binaires + FORBIDDEN_ARGS + MAX_COMMAND_LENGTH |
+| CR-3 | `escrow.service.ts`, `task.resolver.ts` | `releaseTaskReward` sans access control — ajout vérification owner + statut `under_review` + submission approved |
+| CR-4 | `subgraph/creditToken.ts` | Import `BigInt` après usage → déplacé en tête |
+| CR-4 | `subgraph/schema.graphql` | `@derivedFrom` sur `Bytes` → remplacé par références entités `Developer` |
+| CR-5 | `infra/nginx.conf` | Rate-limit auth inefficace (opération dans le body, pas l'URL) — supprimé, commentaire middleware applicatif |
+| CR-6 | `infra/docker-compose.*.prod.yml` | ptf-service accédait à postgres/redis du framework — réseau `ptf-bridge` isolé |
+
+### HIGH — corrigés
+
+| # | Fichier | Correction |
+|---|---|---|
+| H-1 | `EscrowVault.sol` | Soft-lock PTF perdus après `releaseTaskReward` — ajout `safeTransfer` + `emit SoftUnlocked` |
+| H-2 | `evm.adapter.base.ts`, `mock.adapter.ts`, `chain.adapter.ts`, `wallet.service.ts` | `softLock`/`softUnlock` appelés avec arg excédentaire — signature corrigée (1 arg) |
+| H-3 | `evm.adapter.base.ts` | `projectIdBytes` encodé UTF-8 → `keccak256` correct |
+| H-4 | `EscrowVault.sol` | `executePunishment` mint 100% treasury → mint 20% vault (F6, corrigé session précédente) |
+| H-5 | `evm.adapter.base.ts` | `taskIdBytes` cuid non padded → `keccak256` |
+| H-6 | `validation.service.ts`, `task.resolver.ts` | `validateSubmission` sans ownership check → ajout `callerAddress` + vérif project owner |
+| H-8 | `infra/setup-vps.sh` | Cron certbot `docker exec nginx` → `docker compose exec` |
+| H-9 | `infra/setup-vps.sh` | `ufw --force reset` → commandes idempotentes + `ufw limit ssh` |
+| H-11 | `infra/nginx.conf` | Headers sécurité absents → HSTS, X-Frame-Options, nosniff, server_tokens off, ciphers modernes |
+| H-12 | `wallet.service.ts` | `softLocked` toujours 0 → `getSoftLocked()` lu on-chain |
+| H-13 | — | `rewardMode` dérivé de `rewardAmount` (non corrigé — à traiter) |
+
+### MEDIUM — corrigés
+
+| # | Fichier | Correction |
+|---|---|---|
+| M-5 | `subgraph/subgraph.yaml` | `network: matic` (mainnet) → `matic-amoy` (testnet) |
+| — | `ci.yml` | `test-contracts` ajouté au gate `all-checks` |
+| — | `reputation.service.ts` | `setReputation` → `applyReputationDelta` (aligné contrat) |
+
+### Findings ouverts (non bloquants)
+
+| Sévérité | Description |
+|---|---|
+| HIGH | Subgraph handlers manquants : `RefundIssued`, `UTXOMinted`, `UTXORecord.owner` |
+| HIGH | `deploy.yml` — pas de rollback si healthcheck échoue |
+| MEDIUM | `task.service.ts:517` — `rewardMode` dérivé par heuristique |
+| MEDIUM | `EscrowVault.sol` — opérateur unique sans multisig/timelock/Pausable |
+| LOW | `EscrowVault.sol` — O(n²) `withdrawWithProof`, manque `nonReentrant` sur `mintUTXOReceipt` |
+| LOW | `schema.prisma` — `rewardAmount Float` au lieu de `Decimal(18,6)` (partiellement corrigé dans `escrow.service.ts`) |
+
+---
+---
+
+## Audit du 2026-07-31
 
 Résumé des corrections appliquées suite à l'audit multi-agents du système UTXO PTF.
 

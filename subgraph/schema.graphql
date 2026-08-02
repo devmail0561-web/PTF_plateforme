@@ -17,9 +17,9 @@ type Project @entity {
 }
 
 type Task @entity {
-  id: ID!                        # bytes32 taskId (hex)
+  id: ID!                        # projectId-taskId (hex)
   project: Project!
-  claimedBy: Bytes               # address du développeur
+  claimedBy: Developer           # référence Developer (nullable — event sans adresse)
   claimedAt: BigInt              # block.timestamp du claim
   reward: TaskReward             @derivedFrom(field: "task")
 }
@@ -28,7 +28,7 @@ type TaskReward @entity {
   id: ID!                        # txHash-logIndex
   project: Project!
   task: Task!
-  dev: Bytes!                    # address
+  dev: Developer!                # référence Developer
   amount: BigDecimal!            # PTF (6 décimales)
   txHash: Bytes!
   blockNumber: BigInt!

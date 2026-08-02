@@ -13,7 +13,8 @@ export interface IWalletService {
   ): Promise<WalletVerificationResult>;
   getBalance(address: string, chain: string): Promise<CreditBalance>;
   softLock(address: string, chain: string, amount: number): Promise<string>;
-  softUnlock(address: string, chain: string, amount: number): Promise<string>;
+  // F2 — Le contrat ne prend qu'une adresse; montant fixe SOFT_LOCK_AMOUNT géré on-chain.
+  softUnlock(address: string, chain: string): Promise<string>;
   meetsMinBalance(address: string, chain: string): Promise<boolean>;
 }
 
@@ -45,10 +46,9 @@ export class WalletService implements IWalletService {
       : 0n;
     const hasGasFees = nativeBalance > BigInt(1e15); // > 0.001 token natif
 
-    // 4. Non banni
-    const isBanned = isValidAddress ? await adapter.isBanned(address) : false;
-    const isNotBanned = !isBanned;
-    if (isBanned) errors.push(PtfErrorCode.WALLET_BANNED);
+    // 4. Non banni — le contrat ReputationRegistry ne gère pas de ban explicite.
+    // Un score négatif est traité comme alerte côté applicatif, pas comme un ban on-chain.
+    const isNotBanned = true;
 
     // 5. Ownership (signature du nonce)
     let ownershipProven = false;
@@ -84,16 +84,10 @@ export class WalletService implements IWalletService {
     const raw = await adapter.getBalance(address, "PTF");
     const balance = Number(raw) / 10 ** PTF_DECIMALS;
 
-    // Soft-locked : lire depuis on-chain via softLocks (le mock adapter gère ça)
-    // Le soft-lock on-chain est la source de vérité — pas de query DB
     let softLocked = 0;
     try {
-      const lockedRaw = await adapter.getBalance(address, "PTF");
-      // For now, soft-lock is tracked on-chain via softLock/softUnlock calls.
-      // We read 0 here since the on-chain adapter tracks the locked amount separately.
-      // The adapter's softLock method is the canonical write path.
-      void lockedRaw;
-      softLocked = 0;
+      const lockedRaw = await adapter.getSoftLocked(address);
+      softLocked = Number(lockedRaw) / 10 ** PTF_DECIMALS;
     } catch {
       softLocked = 0;
     }
@@ -108,14 +102,13 @@ export class WalletService implements IWalletService {
 
   async softLock(address: string, chain: string, amount: number): Promise<string> {
     const adapter = this.chainRegistry.get(chain);
-    const amountRaw = BigInt(Math.round(amount * 10 ** PTF_DECIMALS));
-    return adapter.softLock(address, amountRaw);
+    return adapter.softLock(address);
   }
 
-  async softUnlock(address: string, chain: string, amount: number): Promise<string> {
+  // F2 — Délègue directement; le contrat gère SOFT_LOCK_AMOUNT en interne.
+  async softUnlock(address: string, chain: string): Promise<string> {
     const adapter = this.chainRegistry.get(chain);
-    const amountRaw = BigInt(Math.round(amount * 10 ** PTF_DECIMALS));
-    return adapter.softUnlock(address, amountRaw);
+    return adapter.softUnlock(address);
   }
 
   async meetsMinBalance(address: string, chain: string): Promise<boolean> {

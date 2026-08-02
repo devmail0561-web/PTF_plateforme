@@ -7,6 +7,46 @@ import { PtfError, PtfErrorCode } from "../types/errors.js";
 const execFileAsync = promisify(execFile);
 const STEP_TIMEOUT_MS = 120_000; // 2 minutes max par step
 
+// F1 — Allowlist des binaires autorisés dans les verificationSteps.
+// Aucun binaire shell (bash, sh, python -c, etc.) n'est permis.
+const ALLOWED_BINARIES = new Set([
+  "npm", "npx", "yarn", "pnpm",
+  "pytest", "python", "python3",
+  "cargo",
+  "go",
+  "node",
+]);
+
+// Arguments qui permettent l'exécution arbitraire de code même dans un binaire autorisé.
+const FORBIDDEN_ARGS = new Set(["-c", "--eval", "-e", "--exec", "-i", "--interactive"]);
+
+const MAX_COMMAND_LENGTH = 200;
+
+function assertSafeCommand(step: VerificationStep): void {
+  const raw = step.command.trim();
+  if (raw.length > MAX_COMMAND_LENGTH) {
+    throw new PtfError(
+      PtfErrorCode.UNAUTHORIZED,
+      `Commande trop longue (max ${MAX_COMMAND_LENGTH} chars) : "${raw.slice(0, 40)}..."`
+    );
+  }
+  const [cmd, ...args] = raw.split(/\s+/);
+  if (!ALLOWED_BINARIES.has(cmd)) {
+    throw new PtfError(
+      PtfErrorCode.UNAUTHORIZED,
+      `Binaire interdit : "${cmd}". Autorisés : ${[...ALLOWED_BINARIES].join(", ")}`
+    );
+  }
+  for (const arg of args) {
+    if (FORBIDDEN_ARGS.has(arg)) {
+      throw new PtfError(
+        PtfErrorCode.UNAUTHORIZED,
+        `Argument interdit "${arg}" dans la commande "${raw}"`
+      );
+    }
+  }
+}
+
 export interface ValidationReport {
   taskId: string;
   submissionId: string;
@@ -16,20 +56,30 @@ export interface ValidationReport {
 }
 
 export interface IValidationService {
-  validateSubmission(submissionId: string): Promise<ValidationReport>;
+  // F8 — callerAddress requis pour vérifier que l'appelant est bien le project owner.
+  validateSubmission(submissionId: string, callerAddress: string): Promise<ValidationReport>;
 }
 
 export class ValidationService implements IValidationService {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async validateSubmission(submissionId: string): Promise<ValidationReport> {
+  async validateSubmission(submissionId: string, callerAddress: string): Promise<ValidationReport> {
     const submission = await this.prisma.submission.findUnique({
       where: { id: submissionId },
-      include: { task: true },
+      include: { task: { include: { project: true } } },
     });
 
     if (!submission) {
       throw new PtfError(PtfErrorCode.TASK_NOT_FOUND, `Soumission introuvable : ${submissionId}`);
+    }
+
+    // F8 — Vérifier que l'appelant est bien le project owner.
+    const projectOwner = (submission.task as unknown as { project: { ownerAddress: string } }).project.ownerAddress;
+    if (projectOwner.toLowerCase() !== callerAddress.toLowerCase()) {
+      throw new PtfError(
+        PtfErrorCode.UNAUTHORIZED,
+        "Seul le créateur du projet peut valider une soumission"
+      );
     }
 
     const task = submission.task;
@@ -41,14 +91,25 @@ export class ValidationService implements IValidationService {
       const step = steps[i];
       const stepStart = Date.now();
 
-      // Commandes cachées (projets privés) : skip silencieux
+      // Commandes cachées (projets privés) : skip silencieux.
+      // Note : "[HIDDEN]" ne devrait jamais être stocké en DB — c'est un masque pour l'API publique.
+      // Si quelqu'un a réussi à stocker "[HIDDEN]", la step passe sans exécution (intentionnel).
       if (step.command === "[HIDDEN]") {
         results.push({ stepIndex: i, passed: true, output: "[HIDDEN]", durationMs: 0 });
         continue;
       }
 
+      // F1 — Valider la commande contre l'allowlist AVANT toute exécution.
       try {
-        const [cmd, ...cmdArgs] = step.command.split(/\s+/);
+        assertSafeCommand(step);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        results.push({ stepIndex: i, passed: false, error: message, durationMs: 0 });
+        continue;
+      }
+
+      try {
+        const [cmd, ...cmdArgs] = step.command.trim().split(/\s+/);
         const { stdout, stderr } = await execFileAsync(cmd, cmdArgs, {
           timeout: STEP_TIMEOUT_MS,
           env: { ...process.env, CI: "true" },

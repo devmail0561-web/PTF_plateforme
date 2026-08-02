@@ -8,28 +8,35 @@ const ERC20_ABI = [
 
 const CREDIT_TOKEN_ABI = [
   ...ERC20_ABI,
-  "function mint(address to, uint256 amount, bytes32 taskId) external",
+  // Contrat réel : mint(address to, uint256 amount) — pas de taskId on-chain.
+  "function mint(address to, uint256 amount) external",
   "function burn(address from, uint256 amount) external",
 ];
 
 const REPUTATION_ABI = [
-  "function getReputation(address wallet) view returns (uint256)",
-  "function setReputation(address wallet, int256 delta, string reason) external returns (bytes32)",
-  "function isBanned(address wallet) view returns (bool)",
+  "function getScore(address dev) view returns (uint256)",
+  "function getRawScore(address dev) view returns (int256)",
+  "function applyDelta(address dev, int256 delta, bytes32 taskId, string reason) external",
 ];
 
 const PROJECT_REGISTRY_ABI = [
-  "function claimTask(bytes32 taskId, address devAddress, bytes32 conditionsHash) external",
-  "function anchorMerkleRoot(bytes32 projectId, bytes32 merkleRoot) external",
-  "function verifyMerkleProof(bytes32 leaf, bytes32[] proof, bytes32 root) view returns (bool)",
+  "function markTaskClaimed(bytes32 projectId, bytes32 taskId) external",
+  "function updateMerkleRoot(bytes32 projectId, bytes32 newRoot) external",
+  "function verifyTask(bytes32 projectId, bytes32 taskId, bytes32[] proof) view returns (bool)",
+  "function registerProject(bytes32 projectId, address projectOwner, uint8 projectType, uint8 rewardMode) external",
 ];
 
 const ESCROW_VAULT_ABI = [
   "function softLock(address dev) external",
+  // F2 — Le contrat prend uniquement (address dev), montant fixe SOFT_LOCK_AMOUNT en interne.
   "function softUnlock(address dev) external",
-  "function deductPenalty(address dev, uint256 amount, string reason, bytes32 projectId) external",
+  // F4 — La fonction s'appelle executePunishment, pas deductPenalty.
+  "function executePunishment(bytes32 projectId, bytes32 taskId, address dev, uint256 amount, string punishmentType) external",
   "function releaseTaskReward(bytes32 projectId, bytes32 taskId, address dev, uint256 amount, uint256 deadline, bytes signature) external",
   "function mintUTXOReceipt(bytes32 utxoId, address dev, uint256 amount, bytes32 sourceId) external",
+  // F5 — Lecture du nonce on-chain pour signer correctement.
+  "function releaseNonces(address dev, bytes32 taskId) view returns (uint256)",
+  "function softLocked(address dev) view returns (uint256)",
 ];
 
 export abstract class EvmAdapterBase implements IChainAdapter {
@@ -90,24 +97,31 @@ export abstract class EvmAdapterBase implements IChainAdapter {
   async claimTask(
     taskId: string,
     devAddress: string,
-    conditionsHash: string
+    projectId: string
   ): Promise<string> {
-    const tx = await this.projectRegistry.claimTask(
-      ethers.hexlify(ethers.toUtf8Bytes(taskId)),
-      devAddress,
-      conditionsHash
-    );
+    const projectIdBytes = projectId.startsWith("0x")
+      ? projectId
+      : ethers.keccak256(ethers.toUtf8Bytes(projectId));
+    const taskIdBytes = taskId.startsWith("0x")
+      ? taskId
+      : ethers.keccak256(ethers.toUtf8Bytes(taskId));
+    const tx = await this.projectRegistry.markTaskClaimed(projectIdBytes, taskIdBytes);
     return tx.hash as string;
   }
 
-  async softLock(devAddress: string, amountPtf: bigint): Promise<string> {
-    const tx = await this.escrowVault.softLock(devAddress, amountPtf);
+  async softLock(devAddress: string): Promise<string> {
+    const tx = await this.escrowVault.softLock(devAddress);
     return tx.hash as string;
   }
 
-  async softUnlock(devAddress: string, amountPtf: bigint): Promise<string> {
-    const tx = await this.escrowVault.softUnlock(devAddress, amountPtf);
+  // F2 — Un seul argument : le contrat utilise SOFT_LOCK_AMOUNT constant en interne.
+  async softUnlock(devAddress: string): Promise<string> {
+    const tx = await this.escrowVault.softUnlock(devAddress);
     return tx.hash as string;
+  }
+
+  async getSoftLocked(devAddress: string): Promise<bigint> {
+    return this.escrowVault.softLocked(devAddress) as Promise<bigint>;
   }
 
   async mintCredits(
@@ -115,11 +129,7 @@ export abstract class EvmAdapterBase implements IChainAdapter {
     amount: bigint,
     taskId: string
   ): Promise<string> {
-    const tx = await this.creditToken.mint(
-      devAddress,
-      amount,
-      ethers.hexlify(ethers.toUtf8Bytes(taskId))
-    );
+    const tx = await this.creditToken.mint(devAddress, amount);
     return tx.hash as string;
   }
 
@@ -153,9 +163,18 @@ export abstract class EvmAdapterBase implements IChainAdapter {
         { name: "deadline", type: "uint256" },
       ],
     };
-    const projectIdBytes = ethers.hexlify(ethers.toUtf8Bytes(projectId)).padEnd(66, "0").slice(0, 66) as `0x${string}`;
-    const taskIdBytes = taskId.startsWith("0x") ? taskId as `0x${string}` : ethers.hexlify(ethers.toUtf8Bytes(taskId)) as `0x${string}`;
-    const value = { projectId: projectIdBytes, taskId: taskIdBytes, dev: devAddress, amount: amountPtf, nonce: 0n, deadline };
+    const projectIdBytes = (projectId.startsWith("0x")
+      ? projectId
+      : ethers.keccak256(ethers.toUtf8Bytes(projectId))) as `0x${string}`;
+    // F7 — keccak256 pour taskId > 32 octets, cohérent avec EscrowService.
+    const taskIdBytes = taskId.startsWith("0x")
+      ? taskId as `0x${string}`
+      : ethers.keccak256(ethers.toUtf8Bytes(taskId)) as `0x${string}`;
+
+    // F5 — Lire le nonce on-chain pour éviter les signatures rejoables.
+    const nonce: bigint = await this.escrowVault.releaseNonces(devAddress, taskIdBytes);
+
+    const value = { projectId: projectIdBytes, taskId: taskIdBytes, dev: devAddress, amount: amountPtf, nonce, deadline };
     const signature = await this.signer.signTypedData(domain, types, value);
 
     const tx = await this.escrowVault.releaseTaskReward(
@@ -169,33 +188,60 @@ export abstract class EvmAdapterBase implements IChainAdapter {
     return tx.hash as string;
   }
 
+  // F4 — La fonction du contrat s'appelle executePunishment avec une signature différente :
+  // executePunishment(bytes32 projectId, bytes32 taskId, address dev, uint256 amount, string punishmentType)
+  async executePunishment(
+    projectId: string,
+    taskId: string,
+    devAddress: string,
+    amount: bigint,
+    punishmentType: string
+  ): Promise<string> {
+    const projectIdBytes = projectId.startsWith("0x")
+      ? projectId
+      : ethers.keccak256(ethers.toUtf8Bytes(projectId));
+    const taskIdBytes = taskId.startsWith("0x")
+      ? taskId
+      : ethers.keccak256(ethers.toUtf8Bytes(taskId));
+    const tx = await this.escrowVault.executePunishment(
+      projectIdBytes,
+      taskIdBytes,
+      devAddress,
+      amount,
+      punishmentType
+    );
+    return tx.hash as string;
+  }
+
+  // Alias déprécié — conservé pour compatibilité, délègue vers executePunishment.
+  // @deprecated Utiliser executePunishment directement.
   async deductPenalty(
     devAddress: string,
     amount: bigint,
     reason: string,
     projectId: string
   ): Promise<string> {
-    const tx = await this.escrowVault.deductPenalty(
-      devAddress,
-      amount,
-      reason,
-      ethers.hexlify(ethers.toUtf8Bytes(projectId))
-    );
-    return tx.hash as string;
+    // taskId inconnu à ce niveau — utiliser un placeholder; migration vers executePunishment recommandée.
+    return this.executePunishment(projectId, "unknown", devAddress, amount, reason);
   }
 
   async getReputation(address: string): Promise<bigint> {
-    return this.reputationRegistry.getReputation(address) as Promise<bigint>;
+    return this.reputationRegistry.getScore(address) as Promise<bigint>;
   }
 
-  async setReputation(
-    address: string,
+  async applyReputationDelta(
+    devAddress: string,
     delta: bigint,
+    taskId: string,
     reason: string
   ): Promise<string> {
-    const tx = await this.reputationRegistry.setReputation(
-      address,
+    const taskIdBytes = taskId.startsWith("0x")
+      ? taskId
+      : ethers.keccak256(ethers.toUtf8Bytes(taskId));
+    const tx = await this.reputationRegistry.applyDelta(
+      devAddress,
       delta,
+      taskIdBytes,
       reason
     );
     return tx.hash as string;
@@ -205,22 +251,28 @@ export abstract class EvmAdapterBase implements IChainAdapter {
     projectId: string,
     merkleRoot: string
   ): Promise<string> {
-    const tx = await this.projectRegistry.anchorMerkleRoot(
-      ethers.hexlify(ethers.toUtf8Bytes(projectId)),
-      merkleRoot
-    );
+    const projectIdBytes = projectId.startsWith("0x")
+      ? projectId
+      : ethers.keccak256(ethers.toUtf8Bytes(projectId));
+    const tx = await this.projectRegistry.updateMerkleRoot(projectIdBytes, merkleRoot);
     return tx.hash as string;
   }
 
   async verifyMerkleProof(
-    leaf: string,
-    proof: string[],
-    root: string
+    projectId: string,
+    taskId: string,
+    proof: string[]
   ): Promise<boolean> {
-    return this.projectRegistry.verifyMerkleProof(
-      leaf,
-      proof,
-      root
+    const projectIdBytes = projectId.startsWith("0x")
+      ? projectId
+      : ethers.keccak256(ethers.toUtf8Bytes(projectId));
+    const taskIdBytes = taskId.startsWith("0x")
+      ? taskId
+      : ethers.keccak256(ethers.toUtf8Bytes(taskId));
+    return this.projectRegistry.verifyTask(
+      projectIdBytes,
+      taskIdBytes,
+      proof
     ) as Promise<boolean>;
   }
 
@@ -236,10 +288,6 @@ export abstract class EvmAdapterBase implements IChainAdapter {
       value,
       signature
     );
-  }
-
-  async isBanned(address: string): Promise<boolean> {
-    return this.reputationRegistry.isBanned(address) as Promise<boolean>;
   }
 
   async estimateGas(method: string, params: unknown[]): Promise<bigint> {

@@ -54,8 +54,8 @@ export class PunishmentService implements IPunishmentService {
     if (rewardMode === "paid" && rule.credits && rule.credits > 0) {
       const amountRaw = BigInt(Math.round(rule.credits * 10 ** PTF_DECIMALS));
       const adapter = this.chainRegistry.get(chain);
-      // EscrowVault distribue : 80% trésorerie PTF / 20% fonds projet
-      txHash = await adapter.deductPenalty(devAddress, amountRaw, type, projectId);
+      // F4 — Utiliser executePunishment (nom correct) avec signature (projectId, taskId, dev, amount, type).
+      txHash = await adapter.executePunishment(projectId, taskId, devAddress, amountRaw, type);
     }
 
     // Pénalité réputation (tous projets)
