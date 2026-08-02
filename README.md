@@ -7,7 +7,11 @@
 [![Node.js](https://img.shields.io/badge/Node.js-20+-339933.svg)](https://nodejs.org/)
 [![Solidity](https://img.shields.io/badge/Solidity-0.8+-363636.svg)](https://soliditylang.org/)
 
-**PTF** est un **écosystème cryptographique décentralisé** qui connecte des développeurs à des tâches rémunérées — issues de projets open source ou d'entreprises privées. Chaque tâche validée génère des **crédits PTF** (1 crédit = 1 USDC stable) et fait progresser votre réputation on-chain. Les paiements sont garantis par smart contract : aucun intermédiaire, aucun impayé. PTF récompense la qualité — et **punit automatiquement** les manquements.
+**PTF** est un **écosystème cryptographique décentralisé** qui connecte des développeurs à des tâches rémunérées — issues de projets open source ou d'entreprises privées. Chaque tâche validée génère des **crédits PTF** (token à valeur flottante) et fait progresser votre réputation on-chain. Les paiements sont garantis par smart contract : aucun intermédiaire, aucun impayé. PTF récompense la qualité — et **punit automatiquement** les manquements.
+
+> **Deux dépôts distincts :**
+> - **Framework PTF** (ce dépôt, open-source) — CLI, contrats, backend réseau
+> - **[PTF Service Plateforme](https://github.com/devmail0561-web/ptf_service_plateforme)** (privé) — comptes, wallet, dépôts/retraits, interface web
 
 ---
 
@@ -19,34 +23,29 @@
 # 1. Installer la CLI PTF (~30s)
 npm install -g @ptf/cli
 
-# 2. Créer son compte PTF (~2 min)
-ptf auth register --email you@example.com  # mot de passe + clé secp256k1 générée
-#   → votre clé PTF est chiffrée (AES-256-GCM) et stockée localement
-#   → aucune clé privée n'est transmise ni stockée sur nos serveurs
+# 2. Créer son wallet PTF (~1 min)
+ptf wallet create
+#   → keypair secp256k1 + seed phrase BIP-39 générés localement
+#   → clé chiffrée AES-256-GCM — ne quitte jamais votre machine
 
-# Connexion depuis un nouvel appareil :
-ptf auth login --email you@example.com
-#   → code OTP envoyé par email (expire en 10 min)
-#   → l'appareil est mémorisé après vérification (plus de code la prochaine fois)
+# 3. Créer un compte sur le service et recharger son solde
+#    → https://github.com/devmail0561-web/ptf_service_plateforme
+#    → Lier votre adresse PTF depuis les paramètres du service
+#    → Déposer des PTF via l'interface web (dépôt on-chain détecté automatiquement)
 
-# 3. Lier son compte GitHub (requis pour créer/réclamer des tâches)
-ptf auth link-github     # redirect OAuth GitHub
+# 4. Se connecter au nœud PTF (~30s)
+ptf auth login
+#   → challenge-response EIP-712 (nonce signé localement — clé privée jamais envoyée)
+#   → JWT { ptfAddress } émis
 
-# 4. Lier son wallet crypto (requis pour créer/réclamer des tâches)
-ptf wallet connect       # signature EIP-712 challenge-response
-
-# 3. Charger son compte (~2 min)
-# Minimum 10 PTF requis pour les tâches rémunérées
-ptf wallet deposit --chain polygon --amount 10 --token USDC
-
-# 4. Trouver et réclamer une tâche (~1 min)
+# 5. Trouver et réclamer une tâche (~1 min)
 ptf tasks list --min-reward 50 --skill typescript
 ptf task show <taskId>
 ptf task claim <taskId>  # affiche les conditions, confirmer avec [o/N]
 
-# 5. Travailler et soumettre
+# 6. Travailler et soumettre
 # ... coder ...
-ptf submit <taskId> --branch feat/mon-impl
+ptf submit
 ```
 
 ### Parcours Créateur
@@ -109,79 +108,43 @@ chmod +x /usr/local/bin/ptf
 winget install ptf
 ```
 
-### Lancer le frontend (MVP V0.1.0)
-
-```bash
-cd frontend
-cp .env.local.example .env.local   # copier les variables d'environnement
-npm install
-npm run dev     # → http://localhost:3000
-```
-
-Pages disponibles sans backend (MSW activé) :
-
-| Route | Statut | Description |
-|-------|--------|-------------|
-| `/tasks` | 200 | Marketplace — 10+ tâches mock |
-| `/tasks/[id]` | 200 | Détail tâche |
-| `/login` | 200 | Connexion |
-| `/register` | 200 | Inscription |
-| `/onboarding` | 200 | Wizard OTP (`123456`) → GitHub → wallet |
-| `/dashboard` | 307 → `/login` | Dashboard dev (protégé — middleware Edge) |
-| `/profile/[address]` | 200 | Profil public développeur |
-
-```bash
-# Vérifier les types TypeScript (0 erreurs attendues)
-npm run typecheck
-```
-
----
-
 ### Créer son compte et se connecter
 
-PTF utilise un système d'authentification à 3 étapes pour sécuriser chaque compte. Ces étapes ne sont requises qu'une seule fois (à l'inscription).
-
 ```bash
-# ── Étape 1 : Créer son compte PTF (email + mot de passe) ──────────────
-ptf auth register --email you@example.com
-# → Mot de passe saisi localement (min 12 caractères)
-# → PTF génère une paire de clés secp256k1
-# → La clé privée est chiffrée avec votre mot de passe (AES-256-GCM + PBKDF2)
-# → La clé chiffrée est stockée localement sur votre appareil
-# → PTF ne stocke JAMAIS votre clé privée en clair
+# ── Étape 1 : Créer son wallet PTF ──────────────────────────────────────
+ptf wallet create
+# → Keypair secp256k1 + seed phrase BIP-39 générés localement
+# → Keystore chiffré AES-256-GCM avec votre mot de passe
+# → La clé privée ne quitte JAMAIS votre machine
 
-# Connexion ultérieure :
-ptf auth login --email you@example.com
-# → Appareil déjà connu → JWT immédiat
-# → Nouvel appareil → code OTP envoyé par email (10 min), appareil mémorisé ensuite
+# Restaurer depuis une seed phrase :
+ptf wallet restore
 
-# Gérer ses appareils connectés :
-ptf auth devices list               # voir tous les appareils actifs
-ptf auth devices revoke <deviceId>  # déconnecter un appareil
-ptf auth devices revoke-all         # garder uniquement l'appareil courant
+# ── Étape 2 : Créer un compte service et recharger ──────────────────────
+# → Rendez-vous sur le service PTF (ptf_service_plateforme)
+# → Créez un compte email/mot de passe
+# → Liez votre adresse PTF depuis les paramètres
+# → Déposez des PTF via l'interface web
 
-# ── Étape 2 : Lier son compte GitHub ────────────────────────────────────
-ptf auth link-github  # requis pour créer ou réclamer des tâches
+# ── Étape 3 : Se connecter au nœud PTF ──────────────────────────────────
+ptf auth login
+# → Sélectionnez votre wallet local
+# → Déchiffrez avec votre mot de passe
+# → Challenge-response EIP-712 : nonce signé localement
+# → JWT { ptfAddress } émis — aucun mot de passe envoyé au serveur
 
-# ── Étape 3 : Lier son wallet crypto ────────────────────────────────────
-ptf wallet connect    # signature EIP-712 challenge-response (ownership prouvé)
+# Mode offline :
+ptf auth login --offline
 
-# Vérifier votre profil complet
-ptf profile
-# → PTF address : 0xYour...  (clé publique PTF)
-# → GitHub : @votre-pseudo   (lié)
-# → Wallet : 0xWallet...     (lié, Polygon)
-# → Credits PTF : 0
-# → Reputation : 0 pts (unranked)
+# Vérifier le statut de connexion :
+ptf auth status
 ```
 
-> **Sécurité :** votre clé privée PTF ne quitte jamais votre appareil. Elle est stockée chiffrée avec votre mot de passe (AES-256-GCM). Le serveur ne peut pas la lire ni la récupérer. Si vous perdez votre mot de passe, la clé est irrécupérable.
+> **Sécurité :** votre clé privée ne quitte jamais votre machine. Le backend framework ne stocke aucun compte email ni mot de passe. L'identité est votre adresse PTF secp256k1 — prouvée par signature à chaque connexion.
 
-> **Nouvel appareil :** à chaque connexion depuis un appareil non reconnu, un code à 6 chiffres est envoyé à votre adresse email. Après vérification, l'appareil est mémorisé — aucun code ne sera redemandé pour les connexions suivantes.
+> **Garantie minimum :** pour les **tâches rémunérées** (projets public paid ou private), un développeur doit disposer d'**au moins 10 PTF**. Ces crédits sont *soft-locked* pendant la durée des tâches actives. Les projets **public free** n'exigent aucune garantie de solde.
 
-> **Garantie minimum :** pour les **tâches rémunérées** (projets public paid ou private), un développeur doit disposer d'**au moins 10 crédits PTF**. Ces crédits sont *soft-locked* (réservés, non dépensables) pendant toute la durée des tâches actives. Les projets **public free** n'exigent aucune garantie de solde.
-
-> **Statut wallet :** utilisez `ptf wallet status` pour vérifier en une commande les 6 conditions requises (format EIP-55, activité on-chain, solde gas natif, solde PTF, statut de ban, ownership).
+> **Statut wallet :** `ptf wallet status` vérifie en une commande les 6 conditions requises (format EIP-55, activité on-chain, solde gas natif, solde PTF, statut de ban, ownership).
 
 ### Créer un projet (flow pré-création)
 
@@ -538,62 +501,39 @@ Les crédits PTF sont un token stable déployé sur **chaque chaîne supportée*
 **Précision des crédits :** les crédits PTF sont stockés en **float64 avec 6 décimales** (ex : `10.50`, `0.001`, `150.123456`), aligné sur la précision d'USDC. Le **montant minimum de retrait est 1.0 PTF**. Les crédits soft-locked sont également exprimés en float (ex : `10.000000`).
 
 ```bash
-# Voir son solde
-ptf wallet balance
-# → Credits PTF : 340.500000 (≈ 340.50 USDC)
-# → Soft-locked (taches actives) : 10.000000
+# Créer / restaurer son wallet
+ptf wallet create           # keypair secp256k1 + BIP-39 local
+ptf wallet restore          # restaurer depuis seed phrase
+ptf wallet list             # wallets présents sur cette machine
 
-# Verifier la signature cryptographique EIP-712 de vos credits
-ptf wallet verify 0xYourWalletAddress
-# → Signature EIP-712 valide pour 340 credits
-
-# Etat detaille du wallet (6 verifications)
+# Vérifier son solde et statut (lu on-chain)
 ptf wallet status
 # → Format EIP-55          : ✅ valide
-# → Wallet active          : ✅ (124 txs on-chain)
+# → Wallet actif           : ✅ (124 txs on-chain)
 # → Solde gas natif        : ✅ 0.23 (seuil : > 0.01)
-# → Solde PTF credits      : ✅ 340.500000 credits (seuil : >= 10)
+# → Solde PTF              : ✅ 340.5000 PTF (seuil : >= 10)
 # → Wallet banni           : ✅ non banni
-# → Ownership prouve       : ✅ nonce signe et verifie
-
-# Lier un wallet d'une autre chaîne
-ptf wallet link --chain ethereum --address 0xYourEthWallet
-ptf wallet link --chain solana --address YourSolanaAddress
-
-# Voir ses wallets par chaîne
-ptf wallet chains
-# → polygon  : 0xAbc...123 (340.500000 PTF)
-# → ethereum : 0xDef...456 (0.000000 PTF)
-
-# Bridge des credits PTF entre chaînes
-ptf wallet bridge --from polygon --to ethereum --amount 50
+# → Ownership prouvé       : ✅ nonce signé et vérifié
 
 # Lister ses UTXOs (unités de crédit spendables)
 ptf wallet utxos                          # UTXOs unspent (défaut)
 ptf wallet utxos --status spent           # historique des UTXOs dépensés
 ptf wallet utxos --chain polygon          # filtrer par chaîne
 
-# Recharger son compte (dépôt via adresse officielle PTF vérifiée)
-ptf wallet deposit --chain polygon --amount 50 --token USDC
-# → Vérifie l'adresse officielle PTF via Merkle root réseau
-# → Affiche adresse officielle PTF vérifiée
-# → Attend confirmation on-chain → crédite en PTF
+# Historique des mouvements (récompenses, pénalités, soft-lock)
+ptf wallet history
+ptf wallet reputation-history
 
-# Déposer dans une autre devise (conversion automatique)
-ptf wallet deposit --currency ETH --amount 0.1
-# → Oracle Chainlink : ETH → USDC → PTF (frais ~0.5%, taux garanti 60s)
-ptf wallet convert --from EUR --amount 100
-
-# Convertir en crypto ou fiat (minimum 1.0 PTF)
-ptf wallet withdraw --amount 25.5 --to 0xYourWallet  # → USDC sur la chaîne active (min 1.0 PTF)
-ptf wallet withdraw --amount 100 --to bank            # → virement SEPA
+# ── Dépôts et retraits ──────────────────────────────────────────────────
+# Les dépôts et retraits de PTF s'effectuent via le service PTF :
+# → https://github.com/devmail0561-web/ptf_service_plateforme
+# → Interface web : onglet Wallet → Dépôt / Retrait
+# → Votre solde est crédité automatiquement après détection on-chain
 ```
 
-> **Verifications automatiques :** avant tout claim ou withdraw, PTF execute automatiquement les 6 verifications du wallet : format valide (EIP-55), wallet active (>= 1 tx on-chain), solde gas natif suffisant (> 0.01), solde PTF >= 10.0 credits (float), wallet non banni, et ownership prouve par signature d'un nonce. La verification du solde >= 10 PTF est la premiere barriere pour les **projets paid**, declenchee des `ptf task show`. Elle n'est pas appliquee pour les projets **public free**.
+> **Verifications automatiques :** avant tout claim, PTF vérifie les 6 conditions du wallet : format EIP-55, activité on-chain, solde gas natif, solde PTF ≥ 10 (projets paid), statut de ban, ownership prouvé. Pour les projets **public free**, la vérification de solde est ignorée.
 
-> **Recharge de compte :** avant tout dépôt, l'algorithme PTF vérifie l'adresse de destination via la **Merkle root platform du réseau PTF**. Seule une adresse officielle PTF vérifiée peut recevoir des fonds. Cette vérification protège contre toute tentative de détournement vers une fausse adresse.
-
-> **Conversion multi-devises :** PTF accepte les dépôts en EUR, ETH, BTC, USDT, DAI, MATIC et toute devise supportée. La conversion s'effectue automatiquement via oracle **Chainlink** → USDC → PTF credits. Frais de conversion : ~0.5%. Le taux est **garanti 60 secondes** à partir de la demande.
+> **Séparation des responsabilités :** le framework PTF gère l'identité cryptographique (keypair secp256k1) et les interactions réseau (claim, submit). Les dépôts, retraits, et le compte utilisateur sont dans `ptf_service_plateforme`.
 
 ### Système de punitions (configurable par le créateur)
 
@@ -844,16 +784,18 @@ Cette vérification protège contre toute tentative d'usurpation d'adresse. Aucu
 |--------|-------------|
 | **Blockchain** | Multi-chaîne (EVM + non-EVM) via Blockchain Abstraction Layer |
 | **Smart contracts** | Solidity 0.8+ (EVM) + Rust/Anchor (Solana) — déployés sur chaque chaîne supportée |
-| **Backend** | Node.js 20 + TypeScript + GraphQL |
-| **Base de données** | PostgreSQL (données mutables) + Redis |
+| **Backend framework** | Node.js 20 + TypeScript + Apollo GraphQL + Prisma — données réseau uniquement |
+| **Backend service** | Node.js 20 + Apollo GraphQL + Prisma — comptes, dépôts, retraits ([ptf_service_plateforme](https://github.com/devmail0561-web/ptf_service_plateforme)) |
+| **Frontend service** | Next.js 14 + TailwindCSS + Apollo Client + Zustand ([ptf_service_plateforme](https://github.com/devmail0561-web/ptf_service_plateforme)) |
+| **Base de données** | PostgreSQL (réseau + comptes séparés) + Redis (Redlock + BullMQ) |
 | **Indexation** | The Graph (multi-chaîne, un subgraph par chaîne) |
 | **Stockage décentralisé** | Arweave (permanent) + IPFS |
-| **Frontend** | Next.js 14.2.5 App Router + TailwindCSS dark theme + Apollo Client 3 + wagmi v2 + RainbowKit + Zustand + MSW 2 — MVP V0.1.0 ✅ |
-| **Sandbox** | Docker + gVisor (projets prives) |
-| **Auth** | Email + mot de passe + clé secp256k1 générée côté serveur + OTP email nouvel appareil + OAuth GitHub CSRF-safe (state nonce) |
-| **Sécurité API** | Rate limiting `express-rate-limit` (300 req/15min global, 20 req/15min auth) + depth limit GraphQL (max 6) |
+| **Sandbox** | Docker + gVisor (projets privés) |
+| **Auth framework** | Challenge-response EIP-712 stateless — JWT `{ ptfAddress }` — aucun compte email côté framework |
+| **Auth service** | Email + mot de passe + wallet linking challenge-response |
+| **Sécurité API** | Rate limiting `express-rate-limit` (200 req/15min global) + depth limit GraphQL |
 | **CLI** | Node.js + TypeScript (binaires statiques) |
-| **IA / LLM** | Compatible tous fournisseurs (OpenAI, Anthropic, Ollama...) — clé API configurée par l'utilisateur via `ptf config set-llm` — 0 coût LLM pour PTF |
+| **IA / LLM** | Compatible tous fournisseurs (OpenAI, Anthropic, Ollama...) — clé API configurée via `ptf config set-llm` — 0 coût LLM pour PTF |
 
 ### Chaînes supportées
 
@@ -977,12 +919,13 @@ Les projets OSS existants apportent une communauté et des contributions réelle
 ## Tech Stack detail
 
 - **Smart contracts :** Solidity 0.8+ — Hardhat — OpenZeppelin (EVM) ; Rust + Anchor (Solana)
-- **Backend :** Node.js 20 + TypeScript + Apollo GraphQL + Prisma
+- **Backend framework :** Node.js 20 + TypeScript + Apollo GraphQL + Prisma — données réseau (projets, tâches, réputation)
+- **Backend service :** Node.js 20 + Apollo GraphQL + Prisma — comptes, dépôts, retraits, ledger ([ptf_service_plateforme](https://github.com/devmail0561-web/ptf_service_plateforme))
+- **Frontend service :** Next.js 14 + TailwindCSS dark theme + Apollo Client 3 + Zustand ([ptf_service_plateforme](https://github.com/devmail0561-web/ptf_service_plateforme))
 - **BAL :** ChainAdapter interface + ChainRegistry + adapters par chaîne
 - **Indexation :** The Graph (subgraph par chaîne) + agrégation backend
 - **Stockage décentralisé :** Arweave (ARCHITECTURE.md, PLAN_ACTION.md — permanent) + IPFS
-- **Base de donnees :** PostgreSQL 16 (données mutables : statuts, sessions, locks, logs) + Redis 7
-- **Frontend :** Next.js 14.2.5 App Router + TailwindCSS dark theme + wagmi v2 + RainbowKit + Apollo Client 3 + Zustand + MSW 2 — MVP V0.1.0 ✅
+- **Base de données :** PostgreSQL 16 + Redis 7
 - **CLI :** Node.js + TypeScript (pkg pour binaires statiques Linux/macOS/Windows)
 - **Blockchain :** Multi-chaîne EVM (Polygon, Ethereum, BSC, Avalanche, Arbitrum, Base) + Solana
 - **Bridge :** LayerZero (ou équivalent) pour PTF Credits cross-chaîne

@@ -1,6 +1,51 @@
 # PTF — Architecture des modules
 
-> Relations entre les modules, données stockées, et rapport framework ↔ service.
+> Relations entre les modules, données du réseau, et séparation framework / service.
+
+---
+
+## Vue d'ensemble
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      PTF FRAMEWORK  (open-source)                           │
+│              github.com/devmail0561-web/PTF_plateforme                      │
+│                                                                             │
+│  ┌─────────────────────┐  ┌───────────────────────┐  ┌──────────────────┐  │
+│  │   cli/   (ptf CLI)  │  │   backend/            │  │   contracts/     │  │
+│  │   Commander.js      │◄─┤   Apollo GraphQL       │  │   Solidity 0.8+  │  │
+│  │   keypair secp256k1 │  │   Prisma / PostgreSQL  │  │   EVM (ERC-20,   │  │
+│  │   keystore local    │  │   données réseau seul  │  │   EscrowVault,   │  │
+│  └─────────────────────┘  └──────────┬────────────┘  │   ProjectReg,    │  │
+│                                      │               │   ReputationReg) │  │
+│                                      ▼               └──────────────────┘  │
+│                               PostgreSQL (réseau)                          │
+│                               Redis (Redlock + BullMQ)                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+        ▲  lecture on-chain (balance, réputation, ban)
+        │  via IChainAdapter → PTF node
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                   PTF SERVICE PLATEFORME  (privé)                           │
+│              github.com/devmail0561-web/ptf_service_plateforme              │
+│                                                                             │
+│  ┌───────────────────────────┐   ┌────────────────────────────────────┐    │
+│  │  frontend/  (Next.js 14)  │◄──┤  backend/  (Apollo + Prisma)       │    │
+│  │  Marketplace  ·  Compte   │   │  Comptes utilisateur               │    │
+│  │  Wallet  ·  Dépôts        │   │  Sessions · Wallet linking         │    │
+│  │  Retraits · Historique    │   │  Dépôts · Retraits · Ledger        │    │
+│  └───────────────────────────┘   │  Notifications · SMTP              │    │
+│                                  └──────────────┬─────────────────────┘    │
+│                                                 │                          │
+│                                  PostgreSQL (comptes)                      │
+│                                  Redis (BullMQ deposit queue)              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 1. Relations entre les modules — Framework
 
 ---
 
@@ -96,268 +141,152 @@
 │         Historique immuable on-chain                                         │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-                         ╔══════════════════════════════════════════╗
-                         ║           SERVICE (privé)                ║
-                         ╚══════════════════════════════════════════╝
+                         ╔═════════════════════════════════════════════════════╗
+                         ║   Backend framework — modules (état actuel)       ║
+                         ╚═════════════════════════════════════════════════════╝
 
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  backend/src/                                                                │
 │                                                                              │
 │   server.ts                                                                  │
-│      │  Express + Apollo Server + rate limiting + depth limit               │
+│      │  Express + Apollo Server + rate limiting                              │
 │      │                                                                       │
-│      ├── container.ts  (DI root — instancie tout dans l'ordre)              │
-│      │      │                                                               │
-│      │      ├── PrismaClient ──────────────────────► PostgreSQL             │
-│      │      ├── Redis ────────────────────────────► Redis                  │
-│      │      │                                                               │
-│      │      └── Services (ordre de dépendances) :                          │
-│      │             ReputationService                                        │
-│      │             EmailService ─────────────────► SMTP                    │
-│      │             GithubService ────────────────► api.github.com          │
-│      │             AuthService ──────────────────► PrismaClient            │
-│      │             WalletService                                            │
-│      │             ProjectService                                           │
-│      │             CreditLedgerService                                      │
-│      │             UTXOService                                              │
-│      │             PunishmentService                                        │
-│      │             TaskService ──────────────────► Redis (Redlock)         │
-│      │             TimerService ─────────────────► Redis (BullMQ)          │
-│      │             NotificationService                                      │
-│      │             ReportService                                            │
-│      │             LLMTaskGeneratorService ──────► LLM API                 │
+│      ├── container.ts  (DI root)                                             │
+│      │      ├── PrismaClient ─────────────────────► PostgreSQL               │
+│      │      ├── Redis ──────────────────────────── Redis                    │
+│      │      └── Services :                                                   │
+│      │             AuthService         (nonces en mémoire, JWT stateless)   │
+│      │             WalletService       (solde on-chain via IChainAdapter)    │
+│      │             ProjectService      (création, publication, licence)      │
+│      │             TaskService         (claim/submit/cancel, Redlock)        │
+│      │             ReputationService   (lecture/écriture on-chain)           │
+│      │             PunishmentService   (pénalités on-chain)                  │
+│      │             TimerService        (BullMQ — expiration tâches)          │
+│      │             LLMTaskGenerator    (génération tâches depuis docs)       │
+│      │             GithubService       (vérification licence OSS)            │
 │      │                                                                       │
 │      ├── graphql/                                                            │
-│      │     schema.graphql   (SDL — types, queries, mutations, subscription) │
-│      │     context.ts       (IServiceContainer + JwtPayload → GraphQLContext)│
-│      │     task.resolver.ts ────────────────────► TaskService               │
-│      │     project.resolver.ts ───────────────────► ProjectService          │
-│      │     wallet.resolver.ts ────────────────────► AuthService             │
-│      │                                             WalletService            │
-│      │                                             UTXOService              │
-│      │                                             CreditLedgerService      │
-│      │                                             ReputationService        │
+│      │     schema.graphql                                                    │
+│      │     context.ts       (JWT → { ptfAddress } — aucune donnée user)     │
+│      │     resolvers/                                                        │
+│      │       task.resolver.ts    ──────────────────► TaskService             │
+│      │       project.resolver.ts ──────────────────► ProjectService         │
+│      │       wallet.resolver.ts  ──────────────────► AuthService             │
+│      │                                               WalletService          │
+│      │                                               ReputationService      │
 │      │                                                                       │
 │      ├── services/                                                           │
-│      │     auth.service.ts                                                  │
-│      │        ├── PrismaClient (User, AuthChallenge, DeviceSession)        │
-│      │        ├── ethers (ecrecover EIP-712)                                │
-│      │        └── jsonwebtoken (JWT émission + vérification)               │
+│      │     auth.service.ts                                                   │
+│      │        ├── Map<nonce, { ptfAddress, expiresAt }> (TTL 5 min)         │
+│      │        └── jsonwebtoken (JWT { ptfAddress } — pas de userId)         │
 │      │                                                                       │
-│      │     wallet.service.ts                                                │
-│      │        ├── PrismaClient (WalletLink)                                │
-│      │        └── IChainAdapter (balance, txCount, softLock)               │
+│      │     wallet.service.ts                                                 │
+│      │        └── IChainAdapter (balance on-chain)                          │
 │      │                                                                       │
-│      │     project.service.ts                                               │
-│      │        ├── PrismaClient (Project)                                   │
-│      │        ├── IChainAdapter (anchorMerkleRoot)                         │
-│      │        └── GithubService (vérification licence)                     │
+│      │     project.service.ts                                                │
+│      │        ├── PrismaClient (Project, ContributorRecord)                 │
+│      │        ├── IChainAdapter (anchorMerkleRoot)                          │
+│      │        └── GithubService (vérification licence OSS)                  │
 │      │                                                                       │
-│      │     task.service.ts                                                  │
-│      │        ├── PrismaClient (Task, Submission)                          │
-│      │        ├── IChainAdapter (claimTask on-chain)                       │
-│      │        ├── Redis (Redlock — mutex anti double-claim)                │
-│      │        ├── WalletService (solde PTF)                                │
-│      │        ├── ReputationService (éligibilité)                          │
-│      │        ├── CreditLedgerService (enregistrement)                     │
-│      │        └── UTXOService (coin-selection)                             │
+│      │     task.service.ts                                                   │
+│      │        ├── PrismaClient (Task, Submission)                           │
+│      │        ├── IChainAdapter (claimTask on-chain)                        │
+│      │        ├── Redis (Redlock — mutex anti double-claim)                 │
+│      │        ├── WalletService (solde PTF on-chain)                        │
+│      │        └── ReputationService (éligibilité)                           │
 │      │                                                                       │
-│      │     utxo.service.ts                                                  │
-│      │        ├── PrismaClient (CreditUTXO, CreditTransaction)             │
-│      │        └── PTF_OPERATOR_PRIVATE_KEY (signe les UTXOs de monnaie)    │
+│      │     reputation.service.ts                                             │
+│      │        └── IChainAdapter (getReputation / setReputation on-chain)    │
 │      │                                                                       │
-│      │     creditLedger.service.ts                                          │
-│      │        └── PrismaClient (CreditEvent)                               │
+│      │     punishment.service.ts                                             │
+│      │        ├── IChainAdapter (deductPenalty on-chain)                    │
+│      │        ├── ReputationService (applyDelta)                            │
+│      │        └── PrismaClient (PunishmentRecord)                           │
 │      │                                                                       │
-│      │     reputation.service.ts                                            │
-│      │        ├── PrismaClient (Reputation, ReputationEvent)               │
-│      │        └── IChainAdapter (setReputation on-chain)                   │
+│      │     timer.service.ts                                                  │
+│      │        ├── Redis / BullMQ (delayed jobs d'expiration)                │
+│      │        └── PunishmentService (execute lateDelivery)                  │
 │      │                                                                       │
-│      │     punishment.service.ts                                            │
-│      │        ├── IChainAdapter (deductPenalty on-chain)                   │
-│      │        ├── UTXOService (spend UTXOs pénalisés)                      │
-│      │        ├── CreditLedgerService (enregistrement)                     │
-│      │        └── ReputationService (applyDelta)                           │
+│      │     github.service.ts                                                 │
+│      │        └── api.github.com (licence, LICENSE.md)                      │
 │      │                                                                       │
-│      │     timer.service.ts                                                 │
-│      │        ├── Redis / BullMQ (delayed jobs)                            │
-│      │        └── PunishmentService (execute lateDelivery)                 │
-│      │                                                                       │
-│      │     github.service.ts                                                │
-│      │        └── api.github.com (licence, OAuth, LICENSE.md)              │
-│      │                                                                       │
-│      │     email.service.ts                                                 │
-│      │        └── SMTP (OTP nouvel appareil)                               │
-│      │                                                                       │
-│      │     report.service.ts                                                │
-│      │        └── PrismaClient (Report)                                    │
-│      │                                                                       │
-│      │     taskGenerator.service.ts                                         │
-│      │        └── LLM provider (génération JSON tâches)                    │
+│      │     taskGenerator.service.ts                                          │
+│      │        └── LLM provider (génération JSON tâches depuis ARCHITECTURE) │
 │      │                                                                       │
 │      ├── workers/                                                            │
-│      │     deposit.worker.ts                                                │
-│      │        ├── RPC WebSocket ──────────────────► EscrowVault events     │
-│      │        └── UTXOService (mint UTXO sur CreditClaimed)                │
+│      │     deposit.worker.ts       ── stub minimal (dépôts gérés par svc)   │
+│      │     reconciliation.worker.ts ── gère SyncCheckpoint uniquement       │
 │      │                                                                       │
-│      │     reconciliation.worker.ts                                         │
-│      │        ├── RPC HTTP ─────────────────────── scan historique blocs   │
-│      │        ├── PrismaClient (SyncCheckpoint)                            │
-│      │        └── UTXOService (backfill / revert stale-spent)              │
-│      │                                                                       │
-│      └── bal/  (Blockchain Abstraction Layer)                               │
-│            chain.registry.ts  (Map<chainId, IChainAdapter>)                │
+│      └── bal/  (Blockchain Abstraction Layer)                                │
+│            chain.registry.ts  (Map<chainId, IChainAdapter>)                 │
 │            chain.adapter.ts   (interface IChainAdapter)                     │
-│            adapters/                                                        │
-│               mock.adapter.ts   ── dev / tests (in-memory)                 │
-│               evm.adapter.base.ts ── ethers.js + 4 contrats                │
-│               polygon.adapter.ts ─── EvmAdapterBase + RPC Polygon          │
-│               ethereum.adapter.ts ── EvmAdapterBase + RPC Ethereum         │
-└──────────────────────────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  frontend/src/                                                               │
-│                                                                              │
-│   lib/apollo/                                                                │
-│      client.ts ────────────────────────► backend GraphQL (HTTP)            │
-│      links.ts ─────────────────────────► backend GraphQL (WS subscriptions)│
-│                                                                              │
-│   lib/auth/authStore.ts (Zustand)                                           │
-│      token JWT ─────────────────────────► localStorage + cookie             │
-│                                                                              │
-│   lib/wagmi/config.ts (RainbowKit)                                          │
-│      Polygon / Ethereum ───────────────► WalletConnect                      │
-│                                                                              │
-│   lib/graphql/                                                               │
-│      queries.ts    (GET_TASKS, GET_WALLET_STATUS…)                          │
-│      mutations.ts  (CLAIM_TASK, CANCEL_TASK, LINK_GITHUB…)                  │
-│      subscriptions.ts  (TASK_STATUS_CHANGED)                                │
+│            adapters/                                                         │
+│               mock.adapter.ts    ── dev / tests (in-memory)                 │
+│               evm.adapter.base.ts ── ethers.js + 4 contrats                 │
+│               polygon.adapter.ts ─── EvmAdapterBase + RPC Polygon           │
+│               ethereum.adapter.ts ── EvmAdapterBase + RPC Ethereum          │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Données stockées dans le backend
+## 2. Données stockées — Backend framework (réseau uniquement)
 
-### Base de données PostgreSQL (Prisma)
+Le backend du framework ne contient **aucune donnée utilisateur** (comptes, sessions, dépôts, retraits). L'identité est l'adresse PTF secp256k1 — pas un `userId`.
+
+### PostgreSQL (Prisma) — 7 modèles réseau
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  IDENTITÉ & SESSIONS                                                        │
-│                                                                             │
-│  User                        AuthChallenge                                 │
-│  ──────────────────────      ───────────────────                           │
-│  id (cuid)                   id                                            │
-│  ptfAddress (unique)         userId ──────────► User                       │
-│  ptfPublicKey                nonce (unique)                                │
-│  githubId (unique)           expiresAt                                     │
-│  githubHandle                used                                          │
-│  isBanned                                                                  │
-│  banReason                   DeviceSession                                 │
-│                              ───────────────────                           │
-│  WalletLink                  id                                            │
-│  ──────────────────────      userId ──────────► User                       │
-│  id                          token (unique, JWT)                           │
-│  userId ──────────► User     deviceName                                    │
-│  chain                       userAgent                                     │
-│  address                     lastSeenAt                                    │
-│  isPrimary                   expiresAt                                     │
-│  unique(chain, address)                                                    │
-│                                                                             │
-│  WalletLinkChallenge                                                       │
-│  ──────────────────────                                                    │
-│  nonce (unique), userId, chain, address, used                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  PROJETS & TÂCHES                                                           │
 │                                                                             │
 │  Project                          Task                                     │
 │  ─────────────────────────────    ─────────────────────────────────────    │
 │  id (keccak256)                   id (keccak256)                           │
-│  networkId                        projectId ──────────────────► Project    │
+│  networkId? @unique               projectId ──────────────────► Project    │
 │  name / type / rewardMode         parentId (self-ref)                      │
-│  chain / token                    networkId                                │
-│  repoType / repoUrl               title / type / priority / status         │
-│  syncStatus                       context / objective / deliverable        │
-│  escrowBalance                    outOfScope[]                             │
-│  merkleRoot (ancré on-chain)      constraints (JSON)                       │
-│  status (draft→active→archived)   verificationSteps (JSON)                │
-│  language / stack[]               claimCriteria (JSON)                    │
-│  description                      punishments (JSON)                       │
-│  ownerAddress / ownerId           scoring (JSON)                           │
-│  isOpenSource / license           reputationPoints                         │
-│  licenseVerifiedAt                dependencies[] / blockedBy[] / unlocks[] │
-│                                   duration / claimedAt / deadline          │
-│                                   devAddress / conditionsHash              │
-│                                   eip712Signature (jamais exposé via API)  │
-│                                   rewardAmount / rewardToken               │
-│                                   commitHash / branchRef                   │
-│                                                                             │
-│  Submission                                                                │
-│  ─────────────────────────────                                             │
-│  taskId ─────────► Task                                                    │
-│  devAddress / userId                                                       │
+│  chain / token                    title / type / priority / status         │
+│  repoType / repoUrl               context / objective / deliverable        │
+│  syncStatus                       outOfScope[]                             │
+│  escrowBalance                    constraints (JSON)                       │
+│  merkleRoot (ancré on-chain)      verificationSteps (JSON)                │
+│  status (draft→active→archived)   claimCriteria (JSON)                    │
+│  language / stack[]               punishments (JSON)                       │
+│  description                      scoring (JSON)                           │
+│  ownerAddress (ptfAddress)        reputationPoints                         │
+│  isOpenSource / license           dependencies[] / blockedBy[]             │
+│  licenseVerifiedAt                duration / claimedAt / deadline          │
+│                                   devAddress (ptfAddress)                  │
+│  Submission                       conditionsHash / eip712Signature         │
+│  ─────────────────────────────    rewardAmount / rewardToken               │
+│  taskId ─────────► Task           commitHash / branchRef                   │
+│  devAddress (ptfAddress)                                                   │
 │  commitHash / branchRef                                                    │
 │  status (pending→validated→rejected)                                       │
-│  testResults (JSON)                                                        │
-│  validationJobId                                                           │
+│  testResults (JSON) / validationJobId                                      │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  CRÉDITS PTF (UTXO + LEDGER)                                                │
+│  SANCTIONS & CONTRIBUTEURS                                                  │
 │                                                                             │
-│  CreditUTXO                       CreditTransaction                       │
-│  ─────────────────────────────    ─────────────────────────────────────    │
-│  id (keccak256)                   id (keccak256)                           │
-│  ownerAddress                     type (withdrawal|punishment|bridge_out)  │
-│  amount (PTF)                     devAddress                               │
-│  sourceType                       inputTotal / outputTotal / netAmount     │
-│    task_reward                    chain / destination                      │
-│    deposit                        txHash                                   │
-│    bridge_in                      proofHash (keccak256 des UTXOs consommés)│
-│    change                                                                  │
-│  sourceId (taskId ou txId)        CreditEvent  (double-entry ledger)      │
-│  projectId                        ─────────────────────────────────────    │
-│  chain                            devAddress                               │
-│  eip712Signature                  type (8 types)                           │
-│    (prouve l'origine — jamais     direction (credit | debit)               │
-│     exposé en API, CIA-C4)        amount / balanceAfter                    │
-│  txHash                           utxoId / taskId / projectId              │
-│  status (unspent|spent|locked)    chain / txHash / note                    │
-│  spentInTxId                                                               │
-│  createdInTxId                                                             │
+│  PunishmentRecord              ContributorRecord                           │
+│  ───────────────────────────   ─────────────────────────────────────────  │
+│  devAddress  (ptfAddress)      projectId ─────────────────────► Project   │
+│  taskId / type                 devAddress  (ptfAddress)                   │
+│  creditsPenalty Float?         githubHandle?                               │
+│  reputationPenalty Int         tasksCompleted Int / totalEarned Float     │
+│  txHash? / executedAt          joinedAt / lastActivity                    │
+│                                unique(projectId, devAddress)              │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  RÉPUTATION & SANCTIONS                                                     │
+│  INFRASTRUCTURE RÉSEAU                                                      │
 │                                                                             │
-│  Reputation                  ReputationEvent        PunishmentRecord      │
-│  ──────────────────────      ─────────────────      ──────────────────    │
-│  userId (unique) → User      reputationId → Rep.    devAddress            │
-│  totalPoints                 delta (+/-)             taskId               │
-│  level                       reason                  type                 │
-│  completedTasks              taskId                  creditsPenalty       │
-│                              chain / txHash          reputationPenalty    │
-│  ContributorRecord                                   txHash               │
-│  ──────────────────────                              executedAt           │
-│  projectId / devAddress                                                   │
-│  githubHandle                Report                                       │
-│  tasksCompleted              ─────────────────────                        │
-│  totalEarned                 reporterId / reportedUserId                  │
-│  unique(project, devAddr)    taskId / reason / evidence                   │
-│                              status / resolution                          │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  INFRASTRUCTURE                                                             │
-│                                                                             │
-│  NetworkBroadcast             SyncCheckpoint                               │
-│  ─────────────────────────   ──────────────────────────                   │
-│  type / projectId / taskId   chain                                         │
-│  payload (JSON)              contractAddress                               │
-│  signature                   lastBlock (reprise après restart)             │
-│  chain / txHash              unique(chain, contractAddress)                │
+│  NetworkBroadcast              SyncCheckpoint                              │
+│  ─────────────────────────     ──────────────────────────────────────────  │
+│  type / projectId / taskId     chain / contractAddress                    │
+│  payload Json                  lastBlock  (reprise après restart)          │
+│  signature / chain / txHash    unique(chain, contractAddress)              │
 │  broadcastAt                                                               │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -365,8 +294,8 @@
 ### Cache Redis
 
 ```
-  lock:task:<taskId>        ── Redlock mutex (anti double-claim, TTL 30s)
-  bull:ptf-timers:*         ── BullMQ — jobs d'expiration des tâches
+  lock:task:<taskId>     ── Redlock mutex (anti double-claim, TTL 30s)
+  bull:ptf-timers:*      ── BullMQ — jobs d'expiration des tâches
 ```
 
 ---
@@ -375,7 +304,7 @@
 
 ```
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                     CE QUE LE FRAMEWORK FAIT SANS LE SERVICE                ║
+║              CE QUE LE FRAMEWORK FAIT SANS LE SERVICE                       ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
   ┌─────────────────────────────────────────────────────────────────────────┐
@@ -383,122 +312,106 @@
   │  ptf validate-docs   Valide le format de ces fichiers                   │
   │  ptf wallet create   Génère un keypair secp256k1 + BIP-39 local         │
   │  ptf wallet restore  Restaure depuis une seed phrase                    │
+  │  ptf auth login      Challenge-response stateless (nonce signé local)   │
   │  ptf auth --offline  Session locale simulée                             │
   │  ptf commit          Wrapper git + tracking local (.ptf/active-task)    │
   │  ptf status          Lit le tracker local                               │
   │  ptf config get/set  Lit/écrit ~/.config/ptf/config.json                │
   │                                                                         │
   │  Stockage : fichiers locaux uniquement (keystore, tracker, config)      │
-  │  Réseau   : zéro                                                        │
+  │  Réseau   : zéro (mode offline complet)                                 │
   └─────────────────────────────────────────────────────────────────────────┘
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                     CE QUE LE SERVICE APPORTE EN PLUS                       ║
+║              CE QUE LE BACKEND FRAMEWORK APPORTE (avec service PTF)         ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
   ┌─────────────────────────────────────────────────────────────────────────┐
-  │  Annuaire réseau des projets et tâches (base de données)                │
-  │  Authentification cross-device (JWT + DeviceSession)                    │
-  │  Escrow on-chain (EscrowVault — fonds USDC des projets payants)         │
-  │  Génération de tâches par LLM depuis les docs du framework              │
+  │  Annuaire réseau des projets et tâches (PostgreSQL)                     │
+  │  Authentification cross-device par adresse PTF (JWT stateless)          │
+  │  Escrow on-chain (EscrowVault — fonds des projets paid)                 │
+  │  Génération de tâches par LLM depuis les docs du projet                 │
   │  Timer d'expiration des tâches (BullMQ + Redis)                         │
-  │  Historique de réputation cross-chaîne                                  │
-  │  Historique de crédits (ledger + UTXOs)                                 │
-  │  Signalement de développeurs (Report)                                   │
-  │  Synchronisation on-chain (DepositWorker, ReconciliationWorker)         │
-  │  Interface web (dashboard développeur)                                  │
+  │  Réputation on-chain cross-chaîne (ReputationRegistry)                  │
+  │  Synchronisation on-chain (ReconciliationWorker)                        │
   └─────────────────────────────────────────────────────────────────────────┘
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║              FLUX DE DONNÉES : CYCLE DE VIE D'UNE TÂCHE                    ║
+║              CE QUE ptf_service_plateforme APPORTE EN PLUS                  ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
-  CLIENT OWNER (CLI)                    BACKEND              ON-CHAIN
-  ──────────────────                    ───────              ────────
-  ptf init
-    └─► createProject ─────────────────► Project (DB)
-                                         anchorMerkleRoot ──► ProjectRegistry
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  Comptes utilisateur (email + mot de passe + vérification email)        │
+  │  Sessions persistées (token JWT long-lived + device tracking)           │
+  │  Liaison wallet PTF via challenge-response (EIP-712)                    │
+  │  Dépôts on-chain : listener EVM → crédit ledger interne                 │
+  │  Retraits : réservation atomique + broadcast on-chain                   │
+  │  Ledger interne (historique complet des mouvements PTF)                 │
+  │  Notifications in-app + email SMTP                                      │
+  │  Interface web (marketplace, compte, wallet)                            │
+  │  Proxy lecture vers nœud PTF (balance on-chain, réputation)             │
+  └─────────────────────────────────────────────────────────────────────────┘
 
-  ptf generate
-    └─► generateTasks ─────────────────► LLM ──► TaskDraft[]
-                                         Task[] (DB)
+╔══════════════════════════════════════════════════════════════════════════════╗
+║              FLUX : CYCLE DE VIE D'UNE TÂCHE                               ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 
-  ptf tasks publish
-    └─► publishProject ────────────────► Project.status = active
-                                         updateMerkleRoot ──► ProjectRegistry
+  DÉVELOPPEUR (CLI)                     BACKEND FRAMEWORK         ON-CHAIN
+  ─────────────────                     ─────────────────         ────────
 
+  ptf wallet create
+    └─► keypair secp256k1 généré localement (jamais envoyé)
 
-  DÉVELOPPEUR (CLI ou Frontend)         BACKEND              ON-CHAIN
-  ──────────────────────────────        ───────              ────────
-  ptf tasks list
-    └─► tasks() ───────────────────────► Task[] (filtrés, anonymisés)
+  [Recharger via ptf_service_plateforme]
+    └─► Dépôt on-chain → EscrowVault
+        Listener service → LedgerEntry crédit (svc)
+
+  ptf auth login
+    └─► requestChallenge ──────────────► nonce (Map TTL 5min)
+        signChallenge (local)
+        verifyChallenge ───────────────► ecrecover EIP-712
+                                         JWT { ptfAddress }
+
+  ptf tasks list → tasks() ─────────────► Task[] filtrés
 
   ptf task claim <id>
     └─► claimTask() ───────────────────► [Redlock]
-                                         balance PTF ≥ 10 ?
+                                         balance PTF ≥ 10 ? (on-chain)
                                          réputation OK ?
-                                         dépendances validées ?
                                          softLock 10 PTF ──────────────────►
                                          claimTask() ──────────────────────► ProjectRegistry
-                                         Task.status = claimed (DB)
+                                         Task.status = claimed
                                          scheduleExpiry ──► BullMQ
 
-  [N jours de travail sur ptf/<taskId>]
-  ptf commit -m "msg"
-    └─► tracker local (.ptf/active-task.json)
+  ptf commit -m "msg" → tracker local (.ptf/active-task.json)
 
   ptf submit
     └─► submitTask() ──────────────────► Submission (DB)
                                          Task.status = submitted
 
-                                  [si délai dépassé]
-                         BullMQ ──────────► execute(lateDelivery)
-                                            deductPenalty ────────────────►
-                                            applyDelta (réputation) ───────► ReputationRegistry
-                                            Task.status = expired
-
-
-  RETRAIT (Développeur)                 BACKEND              ON-CHAIN
-  ─────────────────────                 ───────              ────────
-  ptf wallet withdraw
-    └─► withdrawCredits() ─────────────► coin-selection UTXOs (DB)
-                                         spend() → proofHash (DB)
-                                         ◄── retourne UTXOs + signatures
-
-  [Développeur appelle on-chain]
-    └─────────────────────────────────────────────────────────────────────►
-                                         EscrowVault.withdrawWithProof()
-                                         vérifie signatures EIP-712
-                                         transfère USDC
-                                         émet UTXOSpent
-
-  DepositWorker ────────────────────────────────────── écoute CreditClaimed
-    └─► utxoService.mint() (DB)
-
-  ReconciliationWorker ─────────────────────────────── scan historique blocs
-    └─► backfill UTXOs manqués / revert stale-spent (CIA-I9)
+  [Validation auto + peer review]
+    └─► Credits PTF mintés ────────────────────────────────────────────────► CreditToken
+        NetworkBroadcast ─────────────► ptf_service_plateforme le capte
+                                        LedgerEntry reward (svc)
 ```
 
 ---
 
-## 4. Ce qui n'est pas dans le backend
+## 4. Ce qui n'est pas dans le backend framework
 
-Le framework est utilisable sans service. Le backend est optionnel.
-
-| Donnée | Où elle vit | Backend requis ? |
+| Donnée | Où elle vit | Backend framework requis ? |
 |---|---|---|
-| Clé privée du développeur | `~/.ptf/keystore/<addr>.json` (chiffré AES-256-GCM) | Non |
+| Clé privée du développeur | `~/.ptf/keystore/<addr>.json` (AES-256-GCM) | Non |
 | Seed phrase BIP-39 | Sur papier — jamais stockée | Non |
-| Config utilisateur (API URL, wallet addr, JWT) | `~/.config/ptf/config.json` | Non |
-| Config projet (projectId, chain, mode) | `.ptf/config.json` dans le repo | Non |
-| Tâche active (branche, commits, vérifications) | `.ptf/active-task.json` + index global | Non |
-| ARCHITECTURE.md / PLAN_ACTION.md | Fichiers du repo | Non |
-| Projets et tâches (annuaire réseau) | PostgreSQL (backend) | **Oui** |
-| Sessions multi-device, JWT | PostgreSQL (backend) | **Oui** |
-| Crédits PTF, UTXOs, historique ledger | PostgreSQL + on-chain | **Oui** |
-| Réputation cross-chaîne | PostgreSQL + on-chain | **Oui** |
-| Escrow des projets payants | On-chain (EscrowVault) | **Oui** |
-| Expiration automatique des tâches | Redis / BullMQ (backend) | **Oui** |
+| Config utilisateur | `~/.config/ptf/config.json` | Non |
+| Config projet | `.ptf/config.json` dans le repo | Non |
+| Tâche active (branche, commits) | `.ptf/active-task.json` | Non |
+| Comptes email / sessions | `ptf_service_plateforme` | Non |
+| Dépôts / retraits / ledger PTF | `ptf_service_plateforme` | Non |
+| Projets et tâches (annuaire) | PostgreSQL (backend framework) | **Oui** |
+| Réputation cross-chaîne | On-chain + IChainAdapter | **Oui** |
+| Expiration automatique des tâches | Redis / BullMQ | **Oui** |
+| Escrow des projets paid | On-chain (EscrowVault) | **Oui** |
 
 ---
 
@@ -509,7 +422,10 @@ Le framework est utilisable sans service. Le backend est optionnel.
   │  La clé privée ne quitte jamais la machine du développeur               │
   │     signChallenge() signe en mémoire, la clé est zeroisée après         │
   │                                                                         │
-  │  eip712Signature absente de toutes les réponses GraphQL (CIA-C4)        │
+  │  JWT ne contient que { ptfAddress } — pas de userId, pas de device      │
+  │     Le backend framework ne connaît aucune donnée utilisateur           │
+  │                                                                         │
+  │  eip712Signature absente de toutes les réponses GraphQL                 │
   │     Le resolver wallet.resolver.ts supprime le champ avant envoi        │
   │                                                                         │
   │  Double-claim impossible                                                │
@@ -519,14 +435,10 @@ Le framework est utilisable sans service. Le backend est optionnel.
   │     ProjectRegistry.markTaskClaimed() verrouille la root               │
   │     dès le premier claim — impossible de modifier les tâches après      │
   │                                                                         │
-  │  UTXO anti-double-spend                                                 │
-  │     coin-selection dans une transaction Prisma atomique                 │
-  │     EscrowVault.spentUTXOs[id] vérifié on-chain aussi                   │
-  │                                                                         │
   │  Rate limiting                                                          │
-  │     300 req/15min global, 20 req/15min sur les mutations auth           │
+  │     200 req/15min global, filtrage renforcé sur requestChallenge        │
   │                                                                         │
-  │  Depth limit GraphQL                                                    │
-  │     max 6 niveaux d'imbrication — protection O(n) join                 │
+  │  Pas de User model dans le framework                                    │
+  │     Aucune surface d'attaque sur les données personnelles               │
   └─────────────────────────────────────────────────────────────────────────┘
 ```
