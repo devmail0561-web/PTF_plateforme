@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { Redis, type Redis as RedisType } from "ioredis";
 import { ChainRegistry } from "./bal/chain.registry.js";
 import { MockChainAdapter } from "./bal/adapters/mock.adapter.js";
+import { PolygonAdapter } from "./bal/adapters/polygon.adapter.js";
 import { AuthService } from "./services/auth.service.js";
 import { WalletService } from "./services/wallet.service.js";
 import { ProjectService } from "./services/project.service.js";
@@ -14,6 +15,8 @@ import {
   MockLLMProvider,
 } from "./services/taskGenerator.service.js";
 import { GithubService } from "./services/github.service.js";
+import { EscrowService } from "./services/escrow.service.js";
+import { ValidationService } from "./services/validation.service.js";
 import type { IServiceContainer } from "./graphql/context.js";
 
 export function buildContainer(): {
@@ -34,18 +37,20 @@ export function buildContainer(): {
     process.env["DEFAULT_CHAIN"] ?? "mock"
   );
 
-  // En dev/test : MockChainAdapter sur toutes les chaînes
-  // En prod : remplacer par PolygonAdapter, EthereumAdapter, etc.
-  const isDev = process.env["NODE_ENV"] !== "production";
-  if (isDev) {
-    ["mock", "polygon", "ethereum", "bsc", "avalanche", "arbitrum", "base"].forEach(
-      (chain) => chainRegistry.register(chain, new MockChainAdapter(chain))
-    );
+  // Adapters : PolygonAdapter si SIGNER_PRIVATE_KEY présent, MockChainAdapter sinon
+  const hasSignerKey = !!process.env["SIGNER_PRIVATE_KEY"];
+
+  // Toujours enregistrer mock pour les tests et le dev sans clé
+  ["mock", "ethereum", "bsc", "avalanche", "arbitrum", "base"].forEach(
+    (chain) => chainRegistry.register(chain, new MockChainAdapter(chain))
+  );
+
+  if (hasSignerKey) {
+    // Testnet / production : PolygonAdapter réel
+    chainRegistry.register("polygon", new PolygonAdapter());
   } else {
-    // Production : importer les vrais adapters
-    // const { PolygonAdapter } = await import("./bal/adapters/polygon.adapter.js");
-    // chainRegistry.register("polygon", new PolygonAdapter());
-    chainRegistry.register("mock", new MockChainAdapter("mock"));
+    // Dev sans clé : MockChainAdapter sur polygon aussi
+    chainRegistry.register("polygon", new MockChainAdapter("polygon"));
   }
 
   // ── Services (ordre strict par dépendances) ─────────────────────────────────
@@ -62,7 +67,9 @@ export function buildContainer(): {
     walletService,
     redis
   );
-  const timerService = new TimerService(prisma, punishmentService, redis);
+  const timerService      = new TimerService(prisma, punishmentService, redis);
+  const escrowService     = new EscrowService(prisma, chainRegistry, reputationService);
+  const validationService = new ValidationService(prisma);
 
   // LLM : MockLLMProvider en dev, à remplacer par un provider réel configuré par l'utilisateur
   const llmProvider = new MockLLMProvider();
@@ -75,6 +82,8 @@ export function buildContainer(): {
     reputation:    reputationService,
     wallet:        walletService,
     punishment:    punishmentService,
+    escrow:        escrowService,
+    validation:    validationService,
     taskGenerator: taskGeneratorService,
     github:        githubService,
   };

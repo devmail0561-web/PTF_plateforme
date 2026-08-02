@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ptf
+      POSTGRES_PASSWORD: ptf
+      POSTGRES_DB: ptf_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ptf -d ptf_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      DATABASE_URL: postgresql://ptf:ptf@postgres:5432/ptf_dev
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-dev}
+      PORT: 4000
+      NODE_ENV: ${NODE_ENV:-development}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      DEFAULT_CHAIN: ${DEFAULT_CHAIN:-mock}
+      # Blockchain (optionnel — laisser vide pour utiliser MockChainAdapter)
+      SIGNER_PRIVATE_KEY: ${SIGNER_PRIVATE_KEY:-}
+      RPC_POLYGON: ${RPC_POLYGON:-}
+      RPC_ETHEREUM: ${RPC_ETHEREUM:-}
+      CONTRACT_PROJECT_REGISTRY_POLYGON: ${CONTRACT_PROJECT_REGISTRY_POLYGON:-}
+      CONTRACT_ESCROW_VAULT_POLYGON: ${CONTRACT_ESCROW_VAULT_POLYGON:-}
+      CONTRACT_CREDIT_TOKEN_POLYGON: ${CONTRACT_CREDIT_TOKEN_POLYGON:-}
+      CONTRACT_REPUTATION_REGISTRY_POLYGON: ${CONTRACT_REPUTATION_REGISTRY_POLYGON:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  postgres_data:
+  redis_data:

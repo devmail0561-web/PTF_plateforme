@@ -28,6 +28,14 @@ export interface IChainAdapter {
   mintCredits(devAddress: string, amount: bigint, taskId: string): Promise<string>;
   burnCredits(devAddress: string, amount: bigint): Promise<string>;
 
+  // Escrow — release USDC reward to developer after task validation
+  releaseTaskReward(
+    projectId: string,
+    taskId: string,
+    devAddress: string,
+    amountPtf: bigint
+  ): Promise<string>;
+
   // Punishment — distribue 80% trésorerie PTF / 20% fonds projet dans EscrowVault
   deductPenalty(
     devAddress: string,

@@ -90,6 +90,24 @@ export const taskResolvers = {
       return true;
     },
 
+    validateSubmission: async (
+      _: unknown,
+      args: { submissionId: string },
+      ctx: GraphQLContext
+    ) => {
+      assertAuthenticated(ctx.user);
+      return ctx.services.validation.validateSubmission(args.submissionId);
+    },
+
+    releaseTaskReward: async (
+      _: unknown,
+      args: { taskId: string; chain: string },
+      ctx: GraphQLContext
+    ) => {
+      assertAuthenticated(ctx.user);
+      return ctx.services.escrow.releaseTaskReward(args.taskId, args.chain);
+    },
+
     generateTasks: async (
       _: unknown,
       args: {

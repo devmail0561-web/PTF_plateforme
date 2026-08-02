@@ -5,6 +5,8 @@ import type { ITaskService } from "../services/task.service.js";
 import type { IReputationService } from "../services/reputation.service.js";
 import type { IWalletService } from "../services/wallet.service.js";
 import type { IPunishmentService } from "../services/punishment.service.js";
+import type { IEscrowService } from "../services/escrow.service.js";
+import type { IValidationService } from "../services/validation.service.js";
 import type { ITaskGeneratorService } from "../services/taskGenerator.service.js";
 import type { IGithubService } from "../services/github.service.js";
 import { PtfError, PtfErrorCode } from "../types/errors.js";
@@ -16,6 +18,8 @@ export interface IServiceContainer {
   reputation: IReputationService;
   wallet: IWalletService;
   punishment: IPunishmentService;
+  escrow: IEscrowService;
+  validation: IValidationService;
   taskGenerator: ITaskGeneratorService;
   github: IGithubService;
 }

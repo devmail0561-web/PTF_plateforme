@@ -25,10 +25,11 @@ const PROJECT_REGISTRY_ABI = [
 ];
 
 const ESCROW_VAULT_ABI = [
-  "function softLock(address dev, uint256 amount) external",
-  "function softUnlock(address dev, uint256 amount) external",
+  "function softLock(address dev) external",
+  "function softUnlock(address dev) external",
   "function deductPenalty(address dev, uint256 amount, string reason, bytes32 projectId) external",
-  "function releaseReward(bytes32 taskId, address dev, uint256 amount) external",
+  "function releaseTaskReward(bytes32 projectId, bytes32 taskId, address dev, uint256 amount, uint256 deadline, bytes signature) external",
+  "function mintUTXOReceipt(bytes32 utxoId, address dev, uint256 amount, bytes32 sourceId) external",
 ];
 
 export abstract class EvmAdapterBase implements IChainAdapter {
@@ -124,6 +125,47 @@ export abstract class EvmAdapterBase implements IChainAdapter {
 
   async burnCredits(devAddress: string, amount: bigint): Promise<string> {
     const tx = await this.creditToken.burn(devAddress, amount);
+    return tx.hash as string;
+  }
+
+  async releaseTaskReward(
+    projectId: string,
+    taskId: string,
+    devAddress: string,
+    amountPtf: bigint
+  ): Promise<string> {
+    // Deadline = now + 10 minutes (operator signs immediately)
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
+    // The operator signer IS the contract owner — sign the EIP-712 release voucher
+    const domain = {
+      name: "PTFEscrowVault",
+      version: "1",
+      chainId: (await this.provider.getNetwork()).chainId,
+      verifyingContract: this.contractAddresses.escrowVault,
+    };
+    const types = {
+      TaskRelease: [
+        { name: "projectId", type: "bytes32" },
+        { name: "taskId", type: "bytes32" },
+        { name: "dev", type: "address" },
+        { name: "amount", type: "uint256" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    };
+    const projectIdBytes = ethers.hexlify(ethers.toUtf8Bytes(projectId)).padEnd(66, "0").slice(0, 66) as `0x${string}`;
+    const taskIdBytes = taskId.startsWith("0x") ? taskId as `0x${string}` : ethers.hexlify(ethers.toUtf8Bytes(taskId)) as `0x${string}`;
+    const value = { projectId: projectIdBytes, taskId: taskIdBytes, dev: devAddress, amount: amountPtf, nonce: 0n, deadline };
+    const signature = await this.signer.signTypedData(domain, types, value);
+
+    const tx = await this.escrowVault.releaseTaskReward(
+      projectIdBytes,
+      taskIdBytes,
+      devAddress,
+      amountPtf,
+      deadline,
+      signature
+    );
     return tx.hash as string;
   }
 

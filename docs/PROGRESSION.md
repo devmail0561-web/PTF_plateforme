@@ -1,15 +1,15 @@
 # PTF — Progression du projet
 
-> Version : **V0.2.0-alpha** — Dernière mise à jour : **2026-08-02**
+> Version : **V0.2.1-alpha** — Dernière mise à jour : **2026-08-02**
 >
-> Commits récents : `fb647b7` tokenomics flottant → `1ea8e65` wallet BIP-39 + challenge-response → `a26cd79` séparation données utilisateurs → `848c4e1` suppression frontend + nettoyage services → `eaaf912` fix logique free/paid CLI
+> Commits récents : `fb647b7` tokenomics flottant → `1ea8e65` wallet BIP-39 + challenge-response → `a26cd79` séparation données utilisateurs → `848c4e1` suppression frontend + nettoyage services → `eaaf912` fix logique free/paid CLI → `EscrowService + ValidationService + docker-compose`
 
 ---
 
 ## Avancement global
 
 ```
-██████████████████████████████░░░░░░░░░░  75%
+████████████████████████████████░░░░░░░░  80%
 ```
 
 | Module | Statut | Progression |
@@ -18,10 +18,10 @@
 | CLI (framework) | ✅ Terminé | 100% |
 | Smart contracts EVM | ✅ Terminé | 100% |
 | Audit sécurité (15 rounds) | ✅ Terminé | 100% |
-| Backend framework (réseau) | ⚠️ En cours | 80% |
-| ptf_service_plateforme — backend | ⚠️ En cours | 75% |
+| Backend framework (réseau) | ⚠️ En cours | 95% |
+| ptf_service_plateforme — backend | ⚠️ En cours | 90% |
 | ptf_service_plateforme — frontend | ⚠️ En cours | 70% |
-| Infrastructure | 🔴 À faire | 5% |
+| Infrastructure | ⚠️ En cours | 20% |
 | Blockchain réelle (testnet) | 🔴 À faire | 0% |
 | Solana / Anchor | 🔴 À faire | 0% |
 
@@ -88,9 +88,9 @@ Le projet est désormais séparé en deux dépôts distincts :
 
 ---
 
-### ⚠️ Backend framework — 80%
+### ⚠️ Backend framework — 95%
 
-**10 services — Apollo GraphQL — Prisma — 7 modèles DB réseau**
+**12 services — Apollo GraphQL — Prisma — 7 modèles DB réseau**
 
 **JWT contient uniquement `{ ptfAddress }` — aucun compte email côté framework.**
 
@@ -108,13 +108,8 @@ Le projet est désormais séparé en deux dépôts distincts :
 | `GithubService` | Vérification licence OSS + création LICENSE.md |
 | `LicenseCatalog` | 50+ licences OSI/FSF/source-available |
 | `LLMTaskGenerator` | Génération tâches depuis ARCHITECTURE.md + PLAN_ACTION.md |
-
-#### Manquants (2 services)
-
-| Service | Priorité | Description |
-|---|---|---|
-| `EscrowService` | 🔴 Haute | Orchestrer `releaseTaskReward()` on-chain à la validation d'une tâche |
-| `ValidationService` | 🔴 Haute | Exécuter les `verificationSteps` automatiquement + sandbox gVisor (projets privés) |
+| `EscrowService` | Release reward USDC on-chain + réputation + ContributorRecord atomique |
+| `ValidationService` | Exécution des `verificationSteps` en shell + persistance résultats DB |
 
 #### BAL (Blockchain Abstraction Layer)
 
@@ -147,7 +142,7 @@ Le projet est désormais séparé en deux dépôts distincts :
 | `PtfNodeService` | ✅ | Proxy lecture vers nœud PTF (balance, réputation on-chain) |
 | `DepositListener` | ⚠️ | Architecture BullMQ prête — broadcast on-chain réel non câblé |
 
-**Tests : 0** — à écrire (priorité moyenne)
+**Tests : 20** — LedgerService (8), DepositService (6), WithdrawalService (6)
 
 ---
 
@@ -176,7 +171,7 @@ Le projet est désormais séparé en deux dépôts distincts :
 | `docker-compose.yml` ptf_service | ✅ Présent | — |
 | GitHub Actions CI — framework | ✅ Présent | — |
 | GitHub Actions CI — service | ✅ Présent | — |
-| `docker-compose.yml` framework (PostgreSQL + Redis + backend) | 🔴 Manquant | 🔴 Haute |
+| `docker-compose.yml` framework (PostgreSQL + Redis + backend) | ✅ Présent | — |
 | Déploiement VPS (Hetzner CX21) | 🔴 À faire | 🟡 Moyenne |
 | Contrats testnet Polygon Amoy | 🔴 À faire | 🟡 Moyenne |
 | The Graph subgraph | 🔴 À faire | 🟠 Basse |
@@ -201,28 +196,23 @@ Le projet est désormais séparé en deux dépôts distincts :
 
 ## Roadmap — Prochaines étapes prioritaires
 
-### 🔴 Priorité 1 — Compléter le backend framework
+### ✅ Priorité 1 — Backend framework COMPLÉTÉ
 
-**`EscrowService`**
-- Implémenter `releaseTaskReward(taskId)` : appel `EscrowVault.releaseTaskReward()` on-chain via `PolygonAdapter`
-- Câbler dans `TaskService` à la validation d'une soumission
-- Fichier : `backend/src/services/escrow.service.ts`
-
-**`ValidationService`**
-- Exécuter les `verificationSteps` d'une tâche après soumission (`submitTask`)
-- Retourner pass/fail par step + log
-- Mode sandbox Docker/gVisor pour les projets privés
-- Fichier : `backend/src/services/validation.service.ts`
+- `EscrowService` (`backend/src/services/escrow.service.ts`) — `releaseTaskReward()` câblé
+- `ValidationService` (`backend/src/services/validation.service.ts`) — exécution verificationSteps
+- Mutations GraphQL ajoutées : `validateSubmission`, `releaseTaskReward`
+- BAL étendu : `IChainAdapter.releaseTaskReward()` + implémentation Mock + EVM
+- `PolygonAdapter` activé automatiquement si `SIGNER_PRIVATE_KEY` présent
 
 ---
 
-### 🔴 Priorité 2 — docker-compose framework + testnet
+### ⚠️ Priorité 2 — docker-compose framework + testnet
 
-**`docker-compose.yml` framework**
-```yaml
-# PostgreSQL + Redis + backend framework
-# À créer à la racine de PTF_plateforme
-```
+**`docker-compose.yml` framework** ✅ Créé (`docker-compose.yml` à la racine — PostgreSQL 16 + Redis 7 + backend)
+
+**Scripts déploiement testnet** ✅
+- `contracts/evm/scripts/deploy-amoy.sh` — déploiement automatisé + génération `backend/.env.testnet`
+- `contracts/evm/Makefile` — `make deploy-amoy`, `make test`, `make coverage`
 
 **Déploiement contrats Polygon Amoy (testnet)**
 - Exécuter `contracts/evm/scripts/Deploy.s.sol` sur Amoy
@@ -232,12 +222,13 @@ Le projet est désormais séparé en deux dépôts distincts :
 
 ---
 
-### 🟡 Priorité 3 — Tests ptf_service_plateforme
+### ✅ Priorité 3 — Tests ptf_service_plateforme COMPLÉTÉS
 
-- Tests Jest pour `DepositService` (confirmation, idempotence)
-- Tests Jest pour `WithdrawalService` (réservation atomique, remboursement)
-- Tests Jest pour `LedgerService` (solde, crédit/débit)
-- Câbler le broadcast on-chain réel dans `WithdrawalService`
+- `LedgerService` : 8 tests (solde, crédit/débit, historique, balanceAfter, INSUFFICIENT_BALANCE)
+- `DepositService` : 6 tests (confirmation, idempotence, adresse inconnue, notification)
+- `WithdrawalService` : 6 tests (réservation atomique, INSUFFICIENT_BALANCE, fee 0.1%, remboursement, confirmation)
+- Total : **20 tests** — tous passent ✅
+- Câbler le broadcast on-chain réel dans `WithdrawalService` — 🔴 reste à faire
 
 ---
 

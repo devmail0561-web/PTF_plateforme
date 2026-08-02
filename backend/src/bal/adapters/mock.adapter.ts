@@ -68,6 +68,17 @@ export class MockChainAdapter implements IChainAdapter {
     return this.mockTxHash();
   }
 
+  async releaseTaskReward(
+    _projectId: string,
+    _taskId: string,
+    devAddress: string,
+    amountPtf: bigint
+  ): Promise<string> {
+    const current = this.balances.get(devAddress) ?? 0n;
+    this.balances.set(devAddress, current + amountPtf);
+    return this.mockTxHash();
+  }
+
   async deductPenalty(
     devAddress: string,
     amount: bigint,

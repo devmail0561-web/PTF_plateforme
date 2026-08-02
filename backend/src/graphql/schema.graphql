@@ -49,6 +49,12 @@ type Mutation {
   claimTask(taskId: ID!, chain: String!, signedNonce: String): ClaimResult!
   submitTask(taskId: ID!, commitHash: String!, branchRef: String!): SubmitResult!
   cancelTask(taskId: ID!): Boolean!
+
+  # Validation — exécute les verificationSteps d'une soumission
+  validateSubmission(submissionId: ID!): ValidationReport!
+
+  # Release reward après validation (operator uniquement — auth requise)
+  releaseTaskReward(taskId: ID!, chain: String!): ReleaseResult!
 }
 
 type Subscription {
@@ -325,6 +331,35 @@ type SubmitResult {
   branchRef: String!
   submittedAt: String!
   validationJobId: String!
+}
+
+# ─── Validation ──────────────────────────────────────────────────────────────
+
+type ValidationReport {
+  taskId: String!
+  submissionId: String!
+  outcome: String!    # "passed" | "failed" | "error"
+  steps: [VerificationStepResult!]!
+  durationMs: Int!
+}
+
+type VerificationStepResult {
+  stepIndex: Int!
+  passed: Boolean!
+  output: String
+  error: String
+  durationMs: Int
+}
+
+# ─── Escrow release ───────────────────────────────────────────────────────────
+
+type ReleaseResult {
+  taskId: String!
+  devAddress: String!
+  amount: Float!
+  txHash: String!
+  utxoId: String!
+  releasedAt: String!
 }
 
 # ─── Generation ──────────────────────────────────────────────────────────────
