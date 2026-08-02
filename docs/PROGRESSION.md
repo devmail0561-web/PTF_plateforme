@@ -48,6 +48,13 @@ Le projet est désormais séparé en deux dépôts distincts :
 
 **14 commandes — ESM — Commander.js + ethers.js v6 + chalk v5**
 
+**Shell interactif REPL :**
+- `ptf` sans arguments → entre dans le prompt `ptf ›` avec banner
+- Commandes exécutées en boucle (ex: `tasks list`, `wallet status`)
+- `exit` / `quit` pour quitter — `clear` pour effacer l'écran
+- Mode one-shot conservé : `ptf <commande>` exécute et quitte
+- Logo ASCII aléatoire à chaque lancement (5 designs × 8 couleurs)
+
 | Catégorie | Commandes |
 |---|---|
 | Wallet | `create`, `restore`, `list`, `status`, `history`, `utxos`, `reputation-history` |

@@ -14,8 +14,8 @@
 │  ┌─────────────────────┐  ┌───────────────────────┐  ┌──────────────────┐  │
 │  │   cli/   (ptf CLI)  │  │   backend/            │  │   contracts/     │  │
 │  │   Commander.js      │◄─┤   Apollo GraphQL       │  │   Solidity 0.8+  │  │
-│  │   keypair secp256k1 │  │   Prisma / PostgreSQL  │  │   EVM (ERC-20,   │  │
-│  │   keystore local    │  │   données réseau seul  │  │   EscrowVault,   │  │
+│  │   Shell REPL + 1-shot│  │   Prisma / PostgreSQL  │  │   EVM (ERC-20,   │  │
+│  │   keypair secp256k1 │  │   données réseau seul  │  │   EscrowVault,   │  │
 │  └─────────────────────┘  └──────────┬────────────┘  │   ProjectReg,    │  │
 │                                      │               │   ReputationReg) │  │
 │                                      ▼               └──────────────────┘  │
@@ -96,7 +96,9 @@
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  cli/src/                                                                    │
 │                                                                              │
-│   index.ts                                                                   │
+│   index.ts  (point d'entrée — REPL interactif ou one-shot)                   │
+│      │  • Sans args → shell REPL avec prompt `ptf ›` (exit pour quitter)     │
+│      │  • Avec args → exécution unique puis retour au terminal               │
 │      │                                                                       │
 │      ├── commands/                                                           │
 │      │     auth.ts ──────────────────────────────► utils/keystore.ts        │

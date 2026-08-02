@@ -55,18 +55,68 @@ export function printSectionHeader(title: string): void {
 
 // ── Logo banner ────────────────────────────────────────────────────────────────
 
-export function printBanner(version = "0.1.0"): void {
-  const LOGO = [
+const LOGOS: string[][] = [
+  [ // Block heavy
     "   ██████╗ ████████╗███████╗",
     "   ██╔══██╗╚══██╔══╝██╔════╝",
     "   ██████╔╝   ██║   █████╗  ",
     "   ██╔═══╝    ██║   ██╔══╝  ",
     "   ██║        ██║   ██║     ",
     "   ╚═╝        ╚═╝   ╚═╝     ",
-  ];
+  ],
+  [ // Slant
+    "       ____  ______  ______",
+    "      / __ \\/_  __/ / ____/",
+    "     / /_/ / / /   / /_    ",
+    "    / ____/ / /   / __/    ",
+    "   / /     / /   / /       ",
+    "  /_/     /_/   /_/        ",
+  ],
+  [ // ANSI Shadow
+    "   ██████  ████████ ███████",
+    "   ██   ██    ██    ██     ",
+    "   ██████     ██    █████  ",
+    "   ██         ██    ██     ",
+    "   ██         ██    ██     ",
+    "   ▀▀         ▀▀    ▀▀     ",
+  ],
+  [ // Isometric
+    "      ___       ___       ___  ",
+    "     /\\  \\     /\\  \\     /\\  \\ ",
+    "    /::\\  \\    \\:\\  \\   /::\\  \\",
+    "   /:/\\:\\__\\   /::\\__\\ /:/\\:\\__\\",
+    "   \\:\\/:/  /  /:/\\/__/ \\:\\ \\/__/",
+    "    \\::/  /   \\/__/     \\:\\__\\  ",
+    "     \\/__/               \\/__/  ",
+  ],
+  [ // Cyberpunk
+    "   ╔═══╗ ╔════╗ ╔═══╗",
+    "   ║   ║ ║    ║ ║    ",
+    "   ╠═══╝ ║    ║ ╠══╗ ",
+    "   ║     ║    ║ ║    ",
+    "   ║     ╚════╝ ║    ",
+    "   ▪        ▪    ▪    ",
+  ],
+];
+
+const LOGO_COLORS: Array<(s: string) => string> = [
+  (s) => chalk.cyan.bold(s),
+  (s) => chalk.magenta.bold(s),
+  (s) => chalk.green.bold(s),
+  (s) => chalk.yellow.bold(s),
+  (s) => chalk.blue.bold(s),
+  (s) => chalk.red.bold(s),
+  (s) => chalk.hex("#8B5CF6").bold(s),
+  (s) => chalk.hex("#F97316").bold(s),
+];
+
+export function printBanner(version = "0.1.0"): void {
+  const logo  = LOGOS[Math.floor(Math.random() * LOGOS.length)];
+  const color = LOGO_COLORS[Math.floor(Math.random() * LOGO_COLORS.length)];
+
   console.log();
-  for (const line of LOGO) {
-    console.log(chalk.cyan.bold(line));
+  for (const line of logo) {
+    console.log(color(line));
   }
   console.log();
   console.log(
@@ -79,7 +129,7 @@ export function printBanner(version = "0.1.0"): void {
     "   " +
     [["tasks", "Parcourir les tâches"], ["wallet", "Gérer ses crédits"],
      ["auth", "Se connecter"], ["generate", "IA → tâches"]]
-      .map(([cmd]) => chalk.cyan(cmd))
+      .map(([cmd]) => color(cmd))
       .join(chalk.dim("  ·  ")) +
     chalk.dim("  ·  ") + chalk.dim("ptf --help")
   );

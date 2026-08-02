@@ -680,6 +680,9 @@ npm init && npm install typescript apollo-server prisma ethers @solana/web3.js r
 - [ ] Tests d'integration API
 
 ### CLI
+- [x] Shell REPL interactif (`ptf` sans args → prompt `ptf ›`, `exit` pour quitter)
+- [x] Mode one-shot (`ptf <commande>` → exécute et quitte)
+- [x] Logo ASCII aléatoire à chaque lancement (5 designs × 8 couleurs)
 - [ ] Commande `ptf auth`
 - [ ] Commande `ptf tasks list` (`--min-reward`, `--skill`, `--project`)
 - [ ] Commande `ptf tasks mine` (`--status`, `--project`) avec countdown multi-projets

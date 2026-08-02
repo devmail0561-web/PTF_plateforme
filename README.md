@@ -108,6 +108,39 @@ chmod +x /usr/local/bin/ptf
 winget install ptf
 ```
 
+### Lancer la CLI
+
+La CLI PTF dispose de son propre shell interactif. Lancez `ptf` sans arguments pour entrer dans le prompt PTF :
+
+```bash
+$ ptf
+
+   ██████╗ ████████╗███████╗
+   ██╔══██╗╚══██╔══╝██╔════╝
+   ██████╔╝   ██║   █████╗
+   ██╔═══╝    ██║   ██╔══╝
+   ██║        ██║   ██║
+   ╚═╝        ╚═╝   ╚═╝
+
+   Pay-Task Framework   v0.1.0
+   Écosystème décentralisé de tâches rémunérées
+
+   Tapez une commande (ex: tasks, wallet, help) ou exit pour quitter.
+
+ptf › tasks list
+ptf › wallet status
+ptf › exit
+```
+
+Le logo et sa couleur changent aléatoirement à chaque lancement (5 designs, 8 couleurs).
+
+Le mode one-shot reste disponible pour les scripts et pipelines :
+
+```bash
+ptf tasks list --available    # exécute et quitte immédiatement
+ptf wallet status             # pas de shell interactif
+```
+
 ### Créer son compte et se connecter
 
 ```bash
@@ -794,7 +827,7 @@ Cette vérification protège contre toute tentative d'usurpation d'adresse. Aucu
 | **Auth framework** | Challenge-response EIP-712 stateless — JWT `{ ptfAddress }` — aucun compte email côté framework |
 | **Auth service** | Email + mot de passe + wallet linking challenge-response |
 | **Sécurité API** | Rate limiting `express-rate-limit` (200 req/15min global) + depth limit GraphQL |
-| **CLI** | Node.js + TypeScript (binaires statiques) |
+| **CLI** | Node.js + TypeScript (binaires statiques) — shell interactif REPL avec prompt dédié |
 | **IA / LLM** | Compatible tous fournisseurs (OpenAI, Anthropic, Ollama...) — clé API configurée via `ptf config set-llm` — 0 coût LLM pour PTF |
 
 ### Chaînes supportées
