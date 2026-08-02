@@ -43,16 +43,16 @@ Audit multi-agents (5 dimensions : sécurité, subgraph, infra, contrats, sépar
 | — | `ci.yml` | `test-contracts` ajouté au gate `all-checks` |
 | — | `reputation.service.ts` | `setReputation` → `applyReputationDelta` (aligné contrat) |
 
-### Findings ouverts (non bloquants)
+### Findings ouverts du round précédent — TOUS CORRIGÉS
 
-| Sévérité | Description |
-|---|---|
-| HIGH | Subgraph handlers manquants : `RefundIssued`, `UTXOMinted`, `UTXORecord.owner` |
-| HIGH | `deploy.yml` — pas de rollback si healthcheck échoue |
-| MEDIUM | `task.service.ts:517` — `rewardMode` dérivé par heuristique |
-| MEDIUM | `EscrowVault.sol` — opérateur unique sans multisig/timelock/Pausable |
-| LOW | `EscrowVault.sol` — O(n²) `withdrawWithProof`, manque `nonReentrant` sur `mintUTXOReceipt` |
-| LOW | `schema.prisma` — `rewardAmount Float` au lieu de `Decimal(18,6)` (partiellement corrigé dans `escrow.service.ts`) |
+| Sévérité | Description | Correction |
+|---|---|---|
+| HIGH | Subgraph handlers manquants : `RefundIssued`, `UTXOMinted`, `UTXORecord.owner` | Handlers `handleRefundIssued` + `handleUTXOMinted` ajoutés, `UTXORecord.owner` → référence `Developer`, `TaskReward.dev` assigne l'ID string (pas Bytes) |
+| HIGH | `deploy.yml` — pas de rollback si healthcheck échoue | Rollback automatique vers `PREV_TAG` si `curl` healthcheck échoue |
+| MEDIUM | `task.service.ts:517` — `rewardMode` dérivé par heuristique | `getPublicView` accepte `projectRewardMode` depuis le resolver — utilise le `project.rewardMode` réel |
+| MEDIUM | `EscrowVault.sol` — opérateur unique sans Pausable | Ajout héritage `Pausable`, fonctions `pause()`/`unpause()` onlyOwner, `whenNotPaused` sur toutes les fonctions mutatives |
+| LOW | `EscrowVault.sol` — O(n²) `withdrawWithProof`, manque `nonReentrant` sur `mintUTXOReceipt` | Dedup O(n) via tri strict des `utxoId` + `nonReentrant whenNotPaused` sur `mintUTXOReceipt` |
+| LOW | `schema.prisma` — `Float` pour montants financiers | `escrowBalance`, `creditsPenalty` migrés vers `Decimal @db.Decimal(18, 6)` (rejoint `rewardAmount` + `totalEarned` déjà corrigés) |
 
 ---
 ---

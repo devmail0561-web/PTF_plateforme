@@ -18,8 +18,11 @@ export const taskResolvers = {
       const projectTypeMap = new Map(
         projects.filter(Boolean).map((p) => [p!.id, p!.type])
       );
+      const projectRewardMap = new Map(
+        projects.filter(Boolean).map((p) => [p!.id, p!.rewardMode])
+      );
       return tasks.map((t) =>
-        ctx.services.task.getPublicView(t, projectTypeMap.get(t.projectId) ?? "public")
+        ctx.services.task.getPublicView(t, projectTypeMap.get(t.projectId) ?? "public", projectRewardMap.get(t.projectId))
       );
     },
 
@@ -31,7 +34,7 @@ export const taskResolvers = {
       const task = await ctx.services.task.findById(args.id);
       if (!task) return null;
       const project = await ctx.services.project.findById(task.projectId);
-      return ctx.services.task.getPublicView(task, project?.type ?? "public");
+      return ctx.services.task.getPublicView(task, project?.type ?? "public", project?.rewardMode);
     },
 
     myTasks: async (

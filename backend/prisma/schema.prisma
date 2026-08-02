@@ -20,7 +20,7 @@ model Project {
   tempRepoUrl  String?
   syncStatus   String   @default("synced")
   lastSyncAt   DateTime?
-  escrowBalance Float   @default(0)
+  escrowBalance Decimal @default(0) @db.Decimal(18, 6)
   merkleRoot   String?
   status       String   @default("draft")
   language     String?
@@ -110,7 +110,7 @@ model PunishmentRecord {
   devAddress        String
   taskId            String
   type              String
-  creditsPenalty    Float?
+  creditsPenalty    Decimal?  @db.Decimal(18, 6)
   reputationPenalty Int
   txHash            String?
   executedAt        DateTime @default(now())

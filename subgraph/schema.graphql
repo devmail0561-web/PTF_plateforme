@@ -60,7 +60,7 @@ type Withdrawal @entity {
 
 type UTXORecord @entity {
   id: ID!                        # utxoId (bytes32)
-  owner: Bytes!
+  owner: Developer!              # référence Developer (address)
   spent: Boolean!
   spentAt: BigInt
   txHash: Bytes!
@@ -73,6 +73,7 @@ type Developer @entity {
   creditEvents: [CreditEvent!]! @derivedFrom(field: "dev")
   tasksClaimed: [Task!]! @derivedFrom(field: "claimedBy")
   rewardsReceived: [TaskReward!]! @derivedFrom(field: "dev")
+  utxos: [UTXORecord!]! @derivedFrom(field: "owner")
 }
 
 type ReputationEvent @entity {

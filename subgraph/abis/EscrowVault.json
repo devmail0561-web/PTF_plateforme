@@ -6,5 +6,6 @@
   {"type":"event","name":"SoftUnlocked","inputs":[{"name":"dev","type":"address","indexed":true},{"name":"amount","type":"uint256","indexed":false}]},
   {"type":"event","name":"RefundIssued","inputs":[{"name":"projectId","type":"bytes32","indexed":true},{"name":"to","type":"address","indexed":true},{"name":"amount","type":"uint256","indexed":false}]},
   {"type":"event","name":"WithdrawalExecuted","inputs":[{"name":"owner","type":"address","indexed":true},{"name":"amount","type":"uint256","indexed":false},{"name":"destination","type":"address","indexed":true},{"name":"proofHash","type":"bytes32","indexed":false}]},
-  {"type":"event","name":"UTXOSpent","inputs":[{"name":"utxoId","type":"bytes32","indexed":true},{"name":"owner","type":"address","indexed":true}]}
+  {"type":"event","name":"UTXOSpent","inputs":[{"name":"utxoId","type":"bytes32","indexed":true},{"name":"owner","type":"address","indexed":true}]},
+  {"type":"event","name":"UTXOMinted","inputs":[{"name":"utxoId","type":"bytes32","indexed":true},{"name":"dev","type":"address","indexed":true},{"name":"amount","type":"uint256","indexed":false},{"name":"sourceId","type":"bytes32","indexed":true}]}
 ]

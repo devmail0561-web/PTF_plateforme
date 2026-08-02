@@ -90,6 +90,9 @@ jobs:
             set -e
             cd ~/ptf/framework
 
+            # Sauvegarder le tag actuel pour rollback
+            PREV_TAG=$(grep '^IMAGE_TAG=' .env | cut -d= -f2)
+
             # Pull nouvelle image
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker pull ${{ env.IMAGE_BACKEND }}:sha-${{ needs.build.outputs.sha_short }}
@@ -103,10 +106,16 @@ jobs:
 
             docker compose -f docker-compose.prod.yml up -d --no-deps ptf-backend
 
-            # Vérification healthcheck
+            # Vérification healthcheck avec rollback automatique
             sleep 10
-            docker compose -f docker-compose.prod.yml ps ptf-backend
-            curl -sf https://api.ptf-framework.dev/health || exit 1
+            if ! curl -sf --max-time 15 https://api.ptf-framework.dev/health; then
+              echo "❌ Healthcheck échoué — rollback vers $PREV_TAG"
+              sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$PREV_TAG/" .env
+              docker compose -f docker-compose.prod.yml up -d --no-deps ptf-backend
+              sleep 5
+              docker compose -f docker-compose.prod.yml ps ptf-backend
+              exit 1
+            fi
 
             echo "✅ Déploiement réussi — $(date -u)"
 

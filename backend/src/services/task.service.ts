@@ -88,7 +88,7 @@ export interface ITaskService {
   expire(taskId: string): Promise<void>;
   computeMerkleRoot(projectId: string): Promise<string>;
   assertMutable(task: Task): void;
-  getPublicView(task: Task, projectType: string): PublicTaskView;
+  getPublicView(task: Task, projectType: string, projectRewardMode?: string): PublicTaskView;
 }
 
 export class TaskService implements ITaskService {
@@ -497,7 +497,7 @@ export class TaskService implements ITaskService {
     }
   }
 
-  getPublicView(task: Task, projectType: string): PublicTaskView {
+  getPublicView(task: Task, projectType: string, projectRewardMode?: string): PublicTaskView {
     const isPrivate = projectType === "private";
     const constraints = task.constraints as unknown as TaskConstraints;
     const steps = task.verificationSteps as unknown as VerificationStep[];
@@ -519,7 +519,7 @@ export class TaskService implements ITaskService {
         ? `Private Project #${task.projectId.slice(2, 6)}`
         : task.projectId,
       type: task.type,
-      rewardMode: task.rewardAmount ? "paid" : "free",
+      rewardMode: (projectRewardMode as "free" | "paid") ?? (task.rewardAmount ? "paid" : "free"),
       priority: task.priority as import("../types/index.js").TaskPriority,
       title: task.title,
       reward: task.rewardAmount

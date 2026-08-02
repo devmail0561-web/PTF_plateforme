@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "./CreditToken.sol";
@@ -21,7 +22,7 @@ import "./ProjectRegistry.sol";
  *   - Punishment distribution: 80% → PTF treasury, 20% → project fund (hardcoded)
  *   - EIP-712 signatures include nonce, deadline, chainId (anti-replay)
  */
-contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
+contract EscrowVault is ReentrancyGuard, Ownable, Pausable, EIP712 {
     using SafeERC20 for IERC20;
     using ECDSA for bytes32;
 
@@ -158,6 +159,14 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         treasury = newTreasury;
     }
 
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
     // ── Project funding ──────────────────────────────────────────────────────
 
     /**
@@ -168,6 +177,7 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         external
         nonReentrant
         onlyOperator
+        whenNotPaused
     {
         if (amount == 0) revert ZeroAmount();
 
@@ -190,7 +200,7 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
      * H6 fix: replaced non-custodial counter with a real transferFrom so
      * executePunishment always has tokens to slash regardless of post-lock transfers.
      */
-    function softLock(address dev) external onlyOperator nonReentrant {
+    function softLock(address dev) external onlyOperator nonReentrant whenNotPaused {
         // Check: developer must hold ≥ 10 PTF and have approved this contract
         uint256 balance = ptfToken.balanceOf(dev);
         if (balance < SOFT_LOCK_AMOUNT) revert InsufficientSoftLock();
@@ -243,7 +253,7 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         uint256 amount,
         uint256 deadline,
         bytes calldata signature
-    ) external nonReentrant onlyOperator {
+    ) external nonReentrant onlyOperator whenNotPaused {
         // ── Checks ────────────────────────────────────────────────────────────
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (taskReleased[taskId]) revert TaskAlreadyReleased();
@@ -301,7 +311,7 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         address dev,
         uint256 amount,
         string calldata punishmentType
-    ) external nonReentrant onlyOperator {
+    ) external nonReentrant onlyOperator whenNotPaused {
         if (amount == 0) revert ZeroAmount();
 
         // H6 fix: slash from the custodial soft-lock held in this contract, not from dev wallet.
@@ -368,6 +378,7 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         external
         nonReentrant
         onlyOperator
+        whenNotPaused
     {
         if (escrowBalance[projectId] < amount) revert InsufficientEscrow();
         if (amount == 0) revert ZeroAmount();
@@ -460,10 +471,9 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
             for (uint256 i = 0; i < inputs.length; i++) {
                 UTXOInput calldata inp = inputs[i];
 
-                // Intra-call duplicate guard (same utxoId appearing twice in one call)
-                for (uint256 j = 0; j < i; j++) {
-                    if (seenIds[j] == inp.utxoId) revert UTXOAlreadySpent(inp.utxoId);
-                }
+                // Intra-call dedup: inputs MUST be sorted by utxoId (ascending, strict).
+                // This gives O(n) dedup instead of O(n²) nested loop.
+                if (i > 0 && inp.utxoId <= seenIds[i - 1]) revert UTXOAlreadySpent(inp.utxoId);
                 seenIds[i] = inp.utxoId;
 
                 // Cross-call double-spend guard
@@ -524,7 +534,7 @@ contract EscrowVault is ReentrancyGuard, Ownable, EIP712 {
         address dev,
         uint256 amount,
         bytes32 sourceId   // taskId
-    ) external onlyOperator {
+    ) external onlyOperator nonReentrant whenNotPaused {
         // Idempotency guard — prevents operator from minting the same utxoId twice
         if (mintedUTXOs[utxoId]) revert UTXOAlreadyMinted(utxoId);
         mintedUTXOs[utxoId] = true;

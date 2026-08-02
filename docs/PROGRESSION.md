@@ -1,8 +1,8 @@
 # PTF — Progression du projet
 
-> Version : **V0.2.6-alpha** — Dernière mise à jour : **2026-08-02**
+> Version : **V0.2.7-alpha** — Dernière mise à jour : **2026-08-02**
 >
-> Commits récents : `47a7e98` subgraph The Graph → `48f7a2c` infra VPS + CD → `(en cours)` audit sécurité 43 findings + corrections 20 fichiers
+> Commits récents : `47a7e98` subgraph The Graph → `1c88d8b` audit sécurité 43 findings → `(en cours)` 7 findings restants corrigés (Pausable, rollback, O(n) dedup, Decimal)
 
 ---
 
@@ -17,11 +17,11 @@
 | Documentation | ✅ À jour | 100% |
 | CLI (framework) | ✅ Terminé | 100% |
 | Smart contracts EVM | ✅ Terminé | 100% |
-| Audit sécurité (16 rounds) | ✅ Terminé | 100% |
+| Audit sécurité (17 rounds) | ✅ Terminé | 100% |
 | Backend framework (réseau) | ⚠️ En cours | 95% |
 | ptf_service_plateforme — backend | ⚠️ En cours | 90% |
 | ptf_service_plateforme — frontend | ⚠️ En cours | 85% |
-| Infrastructure | ⚠️ En cours | 75% |
+| Infrastructure | ⚠️ En cours | 80% |
 | Blockchain réelle (testnet) | 🔴 À faire | 0% |
 | Solana / Anchor | 🔴 À faire | 0% |
 

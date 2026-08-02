@@ -5,6 +5,8 @@ import {
   PunishmentExecuted,
   WithdrawalExecuted,
   UTXOSpent,
+  RefundIssued,
+  UTXOMinted,
 } from "../generated/EscrowVault/EscrowVault";
 import {
   Project,
@@ -67,7 +69,7 @@ export function handleTaskRewardReleased(event: TaskRewardReleased): void {
   const reward = new TaskReward(id);
   reward.project = projectId;
   reward.task = taskId;
-  reward.dev = event.params.dev;
+  reward.dev = devAddr;
   reward.amount = amount;
   reward.txHash = event.transaction.hash;
   reward.blockNumber = event.block.number;
@@ -133,22 +135,49 @@ export function handleWithdrawalExecuted(event: WithdrawalExecuted): void {
 
 export function handleUTXOSpent(event: UTXOSpent): void {
   const utxoId = event.params.utxoId.toHexString();
+  const ownerAddr = event.params.owner.toHexString().toLowerCase();
 
-  // address(0) = création UTXO (mintUTXOReceipt), sinon = dépense
-  const isCreation = event.params.owner.toHexString() == "0x0000000000000000000000000000000000000000";
+  loadOrCreateDeveloper(ownerAddr);
 
   let utxo = UTXORecord.load(utxoId);
   if (!utxo) {
     utxo = new UTXORecord(utxoId);
-    utxo.owner = event.params.owner;
+    utxo.owner = ownerAddr;
     utxo.spent = false;
     utxo.txHash = event.transaction.hash;
   }
 
-  if (!isCreation) {
-    utxo.spent = true;
-    utxo.spentAt = event.block.timestamp;
-  }
+  utxo.spent = true;
+  utxo.spentAt = event.block.timestamp;
+  utxo.save();
+}
 
+export function handleRefundIssued(event: RefundIssued): void {
+  const projectId = event.params.projectId.toHexString();
+  const amount = event.params.amount.toBigDecimal().div(DECIMALS);
+
+  const project = Project.load(projectId);
+  if (!project) return;
+
+  project.escrowBalance = project.escrowBalance.minus(amount);
+  if (project.escrowBalance.lt(BigDecimal.fromString("0"))) {
+    project.escrowBalance = BigDecimal.fromString("0");
+  }
+  project.save();
+}
+
+export function handleUTXOMinted(event: UTXOMinted): void {
+  const utxoId = event.params.utxoId.toHexString();
+  const devAddr = event.params.dev.toHexString().toLowerCase();
+
+  loadOrCreateDeveloper(devAddr);
+
+  let utxo = UTXORecord.load(utxoId);
+  if (!utxo) {
+    utxo = new UTXORecord(utxoId);
+    utxo.owner = devAddr;
+    utxo.spent = false;
+    utxo.txHash = event.transaction.hash;
+  }
   utxo.save();
 }
