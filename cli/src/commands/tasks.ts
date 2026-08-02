@@ -33,7 +33,7 @@ tasksCommand
   .command("list")
   .description("Lister les tâches disponibles")
   .option("--project <projectId>", "Filtrer par projet")
-  .option("--min-reward <amount>", "Reward minimum (USDC)")
+  .option("--min-reward <amount>", "Reward PTF minimum (projets paid uniquement)")
   .option("--skill <skill>", "Filtrer par compétence requise")
   .option("--status <status>", "Filtrer par statut", "open")
   .option("--reward-mode <mode>", "free | paid | all", "all")
@@ -61,7 +61,7 @@ tasksCommand
       truncate(t.title, 44),
       t.priority,
       t.status,
-      t.reward ? `${t.reward.amount} PTF` : "—",
+      t.rewardMode === "paid" && t.reward ? `${t.reward.amount} PTF` : `+${t.reputationPoints ?? "?"} rep`,
       t.duration,
       t.claimCriteria.requiredSkills?.slice(0, 3).join(", ") ?? "any",
     ]);
@@ -75,7 +75,7 @@ tasksCommand
           row[1],
           colorPriority(row[2]),
           colorStatus(row[3]),
-          row[4] !== "—" ? chalk.green.bold(row[4]) : chalk.dim(row[4]),
+          row[4].startsWith("+") ? chalk.cyan(row[4]) : chalk.green.bold(row[4]),
           chalk.dim(row[5]),
           chalk.cyan(row[6]),
         ],
@@ -140,7 +140,9 @@ tasksCommand
           `   ${chalk.bold(truncate(task.title, 52))}\n` +
           `   ${chalk.dim("ID     : ")}${chalk.dim(task.id.slice(0, 10) + "…" + task.id.slice(-6))}\n` +
           `   ${chalk.dim("Statut : ")}${colorStatus(task.status)}  ${chalk.dim("Deadline : ")}${countdown}\n` +
-          (task.reward ? `   ${chalk.dim("Reward : ")}${chalk.green.bold(task.reward.amount + " PTF")}\n` : `   ${chalk.dim("Reward : open source\n")}`) +
+          (task.rewardMode === "paid" && task.reward
+            ? `   ${chalk.dim("Reward : ")}${chalk.green.bold(task.reward.amount + " PTF")}\n`
+            : `   ${chalk.dim("Reward : ")}${chalk.cyan("+" + (task.reputationPoints ?? "?") + " pts rep")} ${chalk.dim("(free)\n")}`) +
           ""
         )
       );
@@ -222,14 +224,14 @@ tasksCommand
         "\n" +
           chalk.dim("Prochaine étape : ") +
           chalk.cyan("ptf tasks publish") +
-          chalk.dim(" — déposer l'escrow et publier dans le réseau PTF")
+          chalk.dim(" — publier dans le réseau PTF")
       );
     }
   });
 
 tasksCommand
   .command("publish")
-  .description("Déposer l'escrow et publier les tâches dans le réseau PTF")
+  .description("Publier les tâches dans le réseau PTF (escrow requis si projet paid)")
   .action(async () => {
     const config = requireProjectConfig();
     const userConfig = loadUserConfig();
@@ -274,9 +276,9 @@ tasksCommand
         "\n" +
           chalk.yellow.bold("⚠  Paiement requis avant publication\n") +
           chalk.dim(
-            `Vous devrez déposer ${totalDeposit.toFixed(6)} PTF sur la chaîne ${config.chain}\n` +
+            `Vous devrez déposer ${totalDeposit.toFixed(4)} PTF sur la chaîne ${config.chain}\n` +
               "en escrow avant que les tâches soient visibles dans le réseau PTF.\n" +
-              chalk.dim("Le montant en PTF est calculé au taux oracle PTF/USD au moment du dépôt.")
+              chalk.dim("Le montant PTF est au taux marché au moment du dépôt.")
           )
       );
     }
@@ -288,8 +290,8 @@ tasksCommand
         name: "confirm",
         message:
           config.rewardMode === "paid"
-            ? `Confirmer le dépôt de ~${totalDeposit.toFixed(2)} USD eq. en PTF et la publication ?`
-            : `Confirmer la publication de ${tasks.length} tâche(s) (projet free) ?`,
+            ? `Confirmer le dépôt escrow et la publication de ${tasks.length} tâche(s) ?`
+            : `Confirmer la publication de ${tasks.length} tâche(s) open source (aucun escrow) ?`,
         default: false,
       },
     ]);

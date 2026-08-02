@@ -38,11 +38,11 @@ taskCommand
       process.exit(1);
     }
 
-    if (task.reward && task.reward.amount > 0 && userConfig.walletAddress) {
+    if (task.rewardMode === "paid" && userConfig.walletAddress) {
       const { status: walletStatus } = await client.getWalletStatus(userConfig.walletAddress);
       if (walletStatus.ptfBalance < 10) {
         printWarning(
-          `Solde PTF faible (${walletStatus.ptfBalance} PTF). Minimum 10 PTF requis pour réclamer une tâche paid.\n` +
+          `Solde PTF faible (${walletStatus.ptfBalance} PTF). Minimum 10 PTF requis pour les projets paid.\n` +
             chalk.dim("Rechargez via votre service tiers puis reconnectez votre wallet PTF.")
         );
       }
@@ -141,7 +141,7 @@ taskCommand
       process.exit(1);
     }
 
-    if (task.reward && task.reward.amount > 0) {
+    if (task.rewardMode === "paid") {
       const { status } = await client.getWalletStatus(walletAddress);
       if (status.ptfBalance < 10) {
         printError(
@@ -156,8 +156,8 @@ taskCommand
 
     const deadline = new Date(Date.now() + parseDuration(task.duration)).toISOString();
 
-    const isPaid = task.reward && task.reward.amount > 0;
-    const projectMode = isPaid ? "Projet rémunéré" : "Projet public (non-rémunéré)";
+    const isPaid = task.rewardMode === "paid";
+    const projectMode = isPaid ? "Projet rémunéré (paid)" : "Projet public (free — réputation)";
 
     console.log(
       "\n" +
@@ -166,7 +166,7 @@ taskCommand
         (isPaid
           ? `  - Reward    : ${chalk.green.bold(task.reward!.amount + " " + task.reward!.token)} (libéré à validation)\n` +
             `  - Garantie  : 10 PTF soft-locked pendant la tâche\n`
-          : `  - Reward    : ${chalk.dim("aucun (contribution open source)")}\n`) +
+          : `  - Reward    : ${chalk.cyan("+" + (task.reputationPoints ?? "?") + " pts réputation")} (projet public free)\n`) +
         `  - Pénalités :\n` +
         `      Retard          : -${isPaid ? task.punishments.lateDelivery.credits + " crédits / " : ""}${task.punishments.lateDelivery.reputation} pts réputation\n` +
         `      Bug critique    : -${isPaid ? task.punishments.criticalBug.credits + " crédits / " : ""}${task.punishments.criticalBug.reputation} pts réputation\n` +
@@ -346,7 +346,7 @@ taskCommand
       const percentElapsed = (elapsed / total) * 100;
 
       if (percentElapsed > 50) {
-        const isPaid = task.reward && task.reward.amount > 0;
+        const isPaid = task.rewardMode === "paid";
         penaltyWarning =
           chalk.yellow(
             `\n⚠  Attention : ${percentElapsed.toFixed(0)}% de la durée est écoulée (> 50%).\n` +
@@ -396,7 +396,7 @@ taskCommand
     untrackTask(task.projectId);
 
     printSuccess(`Tâche ${taskId.slice(0, 12)}... abandonnée.`);
-    if (task.reward) {
+    if (task.rewardMode === "paid") {
       printInfo(
         "Le soft-lock de 10 PTF a été libéré — vos crédits sont à nouveau disponibles."
       );

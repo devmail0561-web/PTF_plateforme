@@ -115,8 +115,8 @@ export const generateCommand = new Command("generate")
         message:
           `Générer ${tasks.length} tâches` +
           (config.rewardMode === "paid"
-            ? ` pour ~${estimation.totalDeposit.toFixed(0)} USD eq. en PTF (reward + commission PTF) ?`
-            : " (projet free — aucun paiement requis) ?"),
+            ? ` avec un escrow de ~${estimation.totalDeposit.toFixed(2)} PTF (reward + commission PTF) ?`
+            : " (projet free — aucun escrow, reward en réputation) ?"),
         default: true,
       },
     ]);

@@ -149,9 +149,9 @@ export function printTask(task: PtfTask, verbose = false): void {
   row("Durée",    task.deadline
     ? task.duration + "  " + formatDeadlineCountdown(task.deadline)
     : task.duration);
-  row("Reward",   task.reward
+  row("Reward",   task.rewardMode === "paid" && task.reward
     ? chalk.green.bold(task.reward.amount + " PTF")
-    : chalk.dim("open source"));
+    : chalk.cyan("+" + (task.reputationPoints ?? "?") + " pts rep") + chalk.dim(" (free)"));
   row("Skills",   chalk.cyan(task.claimCriteria.requiredSkills?.join(", ") || "any"));
   console.log(chalk.dim("   ╰" + bar));
 

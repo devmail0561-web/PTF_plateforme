@@ -98,11 +98,11 @@ export const initCommand = new Command("init")
           message: "Mode de rémunération :",
           choices: [
             {
-              name: "free — open source, pas de reward PTF, pénalités réputation uniquement",
+              name: "free — open source, reward en points de réputation, aucun escrow PTF",
               value: "free",
             },
             {
-              name: "paid — escrow PTF, reward par tâche (réf. USD), garantie 10 PTF requise",
+              name: "paid — reward PTF par tâche (valeur marché), escrow + garantie 10 PTF",
               value: "paid",
             },
           ],
@@ -199,7 +199,7 @@ export const initCommand = new Command("init")
           chalk.dim(
             `  Lors de la publication, vous déposerez le reward pool + commission PTF en escrow.\n` +
               `  Assurez-vous d'avoir suffisamment de PTF sur la chaîne ${chain}.\n` +
-              `  Le montant PTF requis est calculé au taux oracle PTF/USD au moment de la publication.`
+              `  Le montant PTF est calculé au taux marché au moment de la publication.`
           )
       );
     }

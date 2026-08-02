@@ -133,8 +133,10 @@ export interface PtfTask {
   claimedAt?: string;
   deadline?: string;
   devAddress?: string;
+  rewardMode: "free" | "paid";
+  reputationPoints: number;
   reward?: {
-    amount: number;    // montant en PTF (valeur de référence en USD au moment de la création)
+    amount: number;
     token: "PTF";
   };
   claimCriteria: ClaimCriteria;
