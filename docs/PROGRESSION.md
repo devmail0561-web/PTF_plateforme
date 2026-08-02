@@ -1,15 +1,15 @@
 # PTF — Progression du projet
 
-> Version : **V0.2.2-alpha** — Dernière mise à jour : **2026-08-02**
+> Version : **V0.2.3-alpha** — Dernière mise à jour : **2026-08-02**
 >
-> Commits récents : `848c4e1` séparation framework/service → `eaaf912` fix logique free/paid CLI → `0c3b8fc` docs progression → `a9313ca` fix CI Foundry + EscrowService + ValidationService + tests service + docker-compose
+> Commits récents : `eaaf912` fix free/paid CLI → `a9313ca` fix CI Foundry + EscrowService + ValidationService → `b8d2e73` docs V0.2.2 → `(en cours)` Priorité 4 frontend notifications + wallet linking
 
 ---
 
 ## Avancement global
 
 ```
-████████████████████████████████░░░░░░░░  80%
+█████████████████████████████████░░░░░░░  83%
 ```
 
 | Module | Statut | Progression |
@@ -20,7 +20,7 @@
 | Audit sécurité (15 rounds) | ✅ Terminé | 100% |
 | Backend framework (réseau) | ⚠️ En cours | 95% |
 | ptf_service_plateforme — backend | ⚠️ En cours | 90% |
-| ptf_service_plateforme — frontend | ⚠️ En cours | 70% |
+| ptf_service_plateforme — frontend | ⚠️ En cours | 85% |
 | Infrastructure | ⚠️ En cours | 20% |
 | Blockchain réelle (testnet) | 🔴 À faire | 0% |
 | Solana / Anchor | 🔴 À faire | 0% |
@@ -159,7 +159,8 @@ Le projet est désormais séparé en deux dépôts distincts :
 | `/wallet` | ✅ | Dépôt (adresse escrow), retrait (modal + frais), historique ledger |
 | `/profile` | ✅ | Réputation on-chain, solde on-chain, infos compte |
 | `/settings` | ✅ | Liaison wallet PTF, vérification email, sécurité |
-| Notifications | 🔴 | Page dédiée notifications in-app à faire |
+| `/notifications` | ✅ | Liste, marquer lu / tout lu, badge live, icônes par type |
+| Wallet linking | ✅ | Modal inline remplace `prompt()` — nonce + commande CLI affichés |
 | Marketplace tâches | 🔴 | Accès au réseau PTF depuis le service (optionnel) |
 
 ---
@@ -222,6 +223,15 @@ Le projet est désormais séparé en deux dépôts distincts :
 - Renseigner les adresses dans `.env` du backend
 - Activer `PolygonAdapter` (retirer le fallback vers MockAdapter)
 - Durée minimale testnet avant mainnet : 3 mois
+
+---
+
+### ✅ Priorité 4 — Frontend ptf_service_plateforme COMPLÉTÉ
+
+- `/notifications` — page dédiée : liste, marquer lu / tout lu, badge live (poll 30s), icônes par type
+- `settings/page.tsx` — `prompt()` remplacé par modal inline propre : nonce + commande CLI copiable
+- `Navbar` — lien Notifications ajouté, badge pointe vers `/notifications`
+- `dashboard/page.tsx` — carte Notifications avec compteur non lus
 
 ---
 
