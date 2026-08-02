@@ -1,8 +1,8 @@
 # PTF — Progression du projet
 
-> Version : **V0.2.7-alpha** — Dernière mise à jour : **2026-08-02**
+> Version : **V0.2.8-alpha** — Dernière mise à jour : **2026-08-02**
 >
-> Commits récents : `47a7e98` subgraph The Graph → `1c88d8b` audit sécurité 43 findings → `(en cours)` 7 findings restants corrigés (Pausable, rollback, O(n) dedup, Decimal)
+> Commits récents : `1c88d8b` audit sécurité 43 findings → `353eb30` 7 findings restants → `1822e4c` shell REPL → `(en cours)` fix REPL exitOverride + hints concis
 
 ---
 
@@ -54,6 +54,8 @@ Le projet est désormais séparé en deux dépôts distincts :
 - `exit` / `quit` pour quitter — `clear` pour effacer l'écran
 - Mode one-shot conservé : `ptf <commande>` exécute et quitte
 - Logo ASCII aléatoire à chaque lancement (5 designs × 8 couleurs)
+- Commandes de groupe sans sous-commande (ex: `tasks`, `wallet`) → hint concis des sous-commandes disponibles (plus d'affichage du help entier, plus de crash du REPL)
+- `exitOverride` propagé à toutes les sous-commandes — aucune commande ne peut tuer le REPL
 
 | Catégorie | Commandes |
 |---|---|

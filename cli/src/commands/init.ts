@@ -44,7 +44,7 @@ export const initCommand = new Command("init")
           `  Projet : ${existing.name} (${existing.projectId})\n` +
           `  Supprimez .ptf/config.json pour réinitialiser.`
       );
-      process.exit(1);
+      return;
     }
 
     const userConfig = loadUserConfig();
@@ -117,7 +117,7 @@ export const initCommand = new Command("init")
         `Chaîne non supportée : ${chain}\n` +
           `Chaînes supportées : ${SUPPORTED_CHAINS.join(", ")}`
       );
-      process.exit(1);
+      return;
     }
 
     const ownerAddress = userConfig.walletAddress ?? "offline-user";

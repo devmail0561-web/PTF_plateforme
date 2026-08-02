@@ -24,7 +24,7 @@ export const submitCommand = new Command("submit")
       tracked = getTrackedTaskById(taskIdArg);
       if (!tracked) {
         printError(`Aucune tâche trackée avec l'ID ${taskIdArg}.`);
-        process.exit(1);
+        return;
       }
     }
 
@@ -40,7 +40,7 @@ export const submitCommand = new Command("submit")
           "Aucune tâche active.\n" +
             chalk.dim("Claim d'abord : ptf task claim <taskId>")
         );
-        process.exit(1);
+        return;
       }
 
       if (all.length === 1) {
@@ -72,7 +72,7 @@ export const submitCommand = new Command("submit")
       currentBranch = execSync(gitCmd(repoPath, "rev-parse --abbrev-ref HEAD"), { encoding: "utf-8" }).trim();
     } catch {
       printError(`Impossible de lire la branche dans ${repoPath}`);
-      process.exit(1);
+      return;
     }
 
     if (currentBranch !== branch) {
@@ -84,7 +84,7 @@ export const submitCommand = new Command("submit")
           `Impossible de switcher sur ${branch}.\n` +
             chalk.dim("Des changements non commités bloquent peut-être le switch.")
         );
-        process.exit(1);
+        return;
       }
     }
 
@@ -251,7 +251,7 @@ export const submitCommand = new Command("submit")
     } catch {
       pushSpinner.fail("Échec du push.");
       printError("Vérifiez votre accès au remote.");
-      process.exit(1);
+      return;
     }
 
     // Submit

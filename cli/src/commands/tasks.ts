@@ -99,7 +99,7 @@ tasksCommand
       printError(
         "Aucun wallet configuré. Connectez-vous : ptf auth login"
       );
-      process.exit(1);
+      return;
     }
 
     const { tasks, offline } = await client.getTasks({
@@ -162,7 +162,7 @@ tasksCommand
           "Générez d'abord les tâches : ptf generate --project " +
           config.projectId
       );
-      process.exit(1);
+      return;
     }
 
     const tasks = drafts as PtfTask[];
@@ -241,7 +241,7 @@ tasksCommand
       printError(
         "Aucune tâche à publier. Lancez d'abord : ptf generate"
       );
-      process.exit(1);
+      return;
     }
 
     const tasks = drafts as PtfTask[];

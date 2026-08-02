@@ -35,7 +35,7 @@ taskCommand
 
     if (!task) {
       printError(`Tâche non trouvée : ${taskId}`);
-      process.exit(1);
+      return;
     }
 
     if (task.rewardMode === "paid" && userConfig.walletAddress) {
@@ -83,7 +83,7 @@ taskCommand
 
     if (!task) {
       printError(`Tâche non trouvée : ${taskId}`);
-      process.exit(1);
+      return;
     }
 
     const template = buildTaskTemplate(task);
@@ -116,7 +116,7 @@ taskCommand
 
     if (!task) {
       printError(`Tâche non trouvée : ${taskId}`);
-      process.exit(1);
+      return;
     }
 
     if (task.status !== "open") {
@@ -124,7 +124,7 @@ taskCommand
         `Cette tâche n'est pas disponible (statut : ${task.status}).\n` +
           chalk.dim("Cherchez d'autres tâches : ptf tasks list")
       );
-      process.exit(1);
+      return;
     }
 
     if (!userConfig.walletAddress) {
@@ -132,13 +132,13 @@ taskCommand
         "Aucun wallet configuré. Impossible de réclamer une tâche sans wallet.\n" +
           chalk.dim("Configurez votre wallet : ptf config set-wallet <address>")
       );
-      process.exit(1);
+      return;
     }
     const walletAddress = userConfig.walletAddress;
 
     if (!isValidAddress(walletAddress)) {
       printError(`Adresse wallet invalide : ${walletAddress}`);
-      process.exit(1);
+      return;
     }
 
     if (task.rewardMode === "paid") {
@@ -148,7 +148,7 @@ taskCommand
           `Solde PTF insuffisant : ${status.ptfBalance} PTF (minimum 10 PTF requis pour les projets paid).\n` +
             chalk.dim("Rechargez votre solde via votre service tiers et liez votre wallet PTF depuis ce service.")
         );
-        process.exit(1);
+        return;
       }
     }
 
@@ -216,7 +216,7 @@ taskCommand
       printError("Les conditions ont changé entre la consultation et le claim. Abandon pour sécurité.");
       printInfo(`Hash local    : ${conditionsHash.slice(0, 16)}...`);
       printInfo(`Hash serveur  : ${result.conditionsHash.slice(0, 16)}...`);
-      process.exit(1);
+      return;
     }
 
     // --- Setup repo & branch ---
@@ -232,7 +232,7 @@ taskCommand
         `Vous avez déjà une tâche active sur ce projet : ${existingProject.taskId}\n` +
           chalk.dim("Soumettez-la d'abord (ptf submit) ou abandonnez-la (ptf task cancel).")
       );
-      process.exit(1);
+      return;
     }
 
     // Detect if we're in a git repo for this project
@@ -259,7 +259,7 @@ taskCommand
           "Impossible de trouver le dépôt du projet.\n" +
             chalk.dim("Clonez manuellement le repo, placez-vous dedans, puis relancez ptf task claim.")
         );
-        process.exit(1);
+        return;
       }
 
       repoUrl = projectRepoUrl;
@@ -326,14 +326,14 @@ taskCommand
 
     if (!task) {
       printError(`Tâche non trouvée : ${taskId}`);
-      process.exit(1);
+      return;
     }
 
     if (!["claimed", "in_progress"].includes(task.status)) {
       printError(
         `Impossible d'annuler une tâche au statut : ${task.status}`
       );
-      process.exit(1);
+      return;
     }
 
     let penaltyWarning = "";
@@ -390,7 +390,7 @@ taskCommand
     } catch (err) {
       spinner.fail("Échec de l'annulation côté serveur.");
       printError((err as Error).message);
-      process.exit(1);
+      return;
     }
 
     untrackTask(task.projectId);

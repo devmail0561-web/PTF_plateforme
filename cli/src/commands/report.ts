@@ -34,7 +34,7 @@ export const reportCommand = new Command("report")
           `Raison invalide : ${options.reason}\n` +
             `Raisons acceptées : ${VALID_REASONS.join(", ")}`
         );
-        process.exit(1);
+        return;
       }
 
       console.log(
@@ -94,7 +94,7 @@ export const reportCommand = new Command("report")
         );
       } catch (err) {
         printError(`Échec du signalement : ${(err as Error).message}`);
-        process.exit(1);
+        return;
       }
     }
   );

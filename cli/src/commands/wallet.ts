@@ -57,7 +57,7 @@ walletCommand
 
     if (password !== confirm) {
       printError("Les mots de passe ne correspondent pas.");
-      process.exit(1);
+      return;
     }
 
     const wallet = createWallet(password);
@@ -156,7 +156,7 @@ walletCommand
 
     if (password !== confirm) {
       printError("Les mots de passe ne correspondent pas.");
-      process.exit(1);
+      return;
     }
 
     let wallet;
@@ -164,7 +164,7 @@ walletCommand
       wallet = restoreWallet(mnemonic, password);
     } catch (err) {
       printError((err as Error).message);
-      process.exit(1);
+      return;
     }
 
     saveUserConfig({ walletAddress: wallet.address });
@@ -221,7 +221,7 @@ walletCommand
               "Ou passez : ptf wallet status --address 0x..."
           )
       );
-      process.exit(1);
+      return;
     }
 
     const client = new PtfApiClient(userConfig);
@@ -244,7 +244,7 @@ walletCommand
 
     if (!address) {
       printError("Aucun wallet configuré. Lancez : ptf config set-wallet <address>");
-      process.exit(1);
+      return;
     }
 
     const client = new PtfApiClient(userConfig);
@@ -326,7 +326,7 @@ walletCommand
 
     if (!address) {
       printError("Aucun wallet configuré. Lancez : ptf config set-wallet <address>");
-      process.exit(1);
+      return;
     }
 
     const client = new PtfApiClient(userConfig);
@@ -403,7 +403,7 @@ walletCommand
 
     if (!address) {
       printError("Aucun wallet configuré. Lancez : ptf config set-wallet <address>");
-      process.exit(1);
+      return;
     }
 
     const client = new PtfApiClient(userConfig);
@@ -439,7 +439,7 @@ walletCommand
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         printError(`Erreur récupération UTXOs : ${msg}`);
-        process.exit(1);
+        return;
       }
     }
 

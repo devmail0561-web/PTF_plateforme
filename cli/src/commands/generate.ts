@@ -41,7 +41,7 @@ export const generateCommand = new Command("generate")
         `ARCHITECTURE.md non trouvé : ${archPath}\n` +
           "Créez-le avec : ptf scaffold"
       );
-      process.exit(1);
+      return;
     }
 
     if (!existsSync(planPath)) {
@@ -49,7 +49,7 @@ export const generateCommand = new Command("generate")
         `PLAN_ACTION.md non trouvé : ${planPath}\n` +
           "Créez-le avec : ptf scaffold"
       );
-      process.exit(1);
+      return;
     }
 
     if (!options.skipValidation) {
@@ -61,7 +61,7 @@ export const generateCommand = new Command("generate")
             "Corrigez les erreurs puis relancez ptf generate.\n" +
             "Détails : ptf validate-docs"
         );
-        process.exit(1);
+        return;
       }
       if (validation.warnings.length > 0) {
         printWarning(

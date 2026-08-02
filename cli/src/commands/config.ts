@@ -48,7 +48,7 @@ configCommand
         `Provider non supporté : ${provider}\n` +
           `Providers disponibles : ${validProviders.join(", ")}`
       );
-      process.exit(1);
+      return;
     }
 
     if (provider !== "ollama" && !options.key) {
@@ -56,7 +56,7 @@ configCommand
         `Une clé API est requise pour ${provider}.\n` +
           `Exemple : ptf config set-llm ${provider} --key <votre-clé>`
       );
-      process.exit(1);
+      return;
     }
 
     if (provider === "ollama" && !options.url) {

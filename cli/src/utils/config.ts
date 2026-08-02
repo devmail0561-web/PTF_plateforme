@@ -80,11 +80,10 @@ export function saveProjectConfig(
 export function requireProjectConfig(dir?: string): PtfProjectConfig {
   const config = loadProjectConfig(dir);
   if (!config) {
-    console.error(
-      "Aucun projet PTF trouvé dans ce répertoire ou ses parents.\n" +
-        "Initialisez un projet avec : ptf init --name <nom> --type public"
-    );
-    process.exit(1);
+    const msg = "Aucun projet PTF trouvé dans ce répertoire ou ses parents.\n" +
+      "Initialisez un projet avec : ptf init --name <nom> --type public";
+    console.error(msg);
+    throw new Error(msg);
   }
   return config;
 }

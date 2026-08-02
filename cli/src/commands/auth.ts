@@ -41,7 +41,7 @@ authCommand
           "Aucun keystore local trouvé.\n" +
           chalk.dim("Créez d'abord un wallet : ptf wallet create")
         );
-        process.exit(1);
+        return;
       }
 
       saveUserConfig({ walletAddress: address, sessionToken: `offline:${address}` });
@@ -62,7 +62,7 @@ authCommand
           chalk.dim("Créez un wallet : ptf wallet create\n") +
           chalk.dim("Ou restaurez depuis votre seed phrase : ptf wallet restore")
         );
-        process.exit(1);
+        return;
       }
 
       if (wallets.length === 1) {
@@ -86,7 +86,7 @@ authCommand
         `Aucun keystore trouvé pour ${address}.\n` +
         chalk.dim("Vérifiez l'adresse ou restaurez depuis votre seed phrase : ptf wallet restore")
       );
-      process.exit(1);
+      return;
     }
 
     // ── 2. Déchiffrer le keystore local ───────────────────────────────────────
@@ -104,7 +104,7 @@ authCommand
       ({ privateKey } = unlockWallet(address, password));
     } catch (err) {
       printError((err as Error).message);
-      process.exit(1);
+      return;
     }
 
     printInfo("Keystore déchiffré. Connexion au service PTF...");
@@ -123,7 +123,7 @@ authCommand
       );
       // Effacer la clé privée de la mémoire
       privateKey = "";
-      process.exit(1);
+      return;
     }
 
     // ── 4. Signer le nonce (localement) ──────────────────────────────────────
@@ -141,7 +141,7 @@ authCommand
         `Échec de l'authentification : ${(err as Error).message}\n` +
         chalk.dim("La signature n'a pas pu être vérifiée par le service.")
       );
-      process.exit(1);
+      return;
     }
 
     saveUserConfig({ walletAddress: address, sessionToken });

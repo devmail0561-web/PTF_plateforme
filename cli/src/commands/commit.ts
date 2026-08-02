@@ -23,7 +23,7 @@ export const commitCommand = new Command("commit")
               "Claim une tâche : ptf task claim <taskId>"
           )
       );
-      process.exit(1);
+      return;
     }
 
     const repoPath = tracked.repoPath;
@@ -35,7 +35,7 @@ export const commitCommand = new Command("commit")
         `Vous êtes sur ${chalk.cyan(currentBranch)} mais la tâche est sur ${chalk.cyan(tracked.branch)}.\n` +
           chalk.dim(`Switch : git checkout ${tracked.branch}`)
       );
-      process.exit(1);
+      return;
     }
 
     // Stage files
@@ -96,7 +96,7 @@ export const commitCommand = new Command("commit")
       if (error.stderr) {
         console.log(chalk.dim(error.stderr.toString()));
       }
-      process.exit(1);
+      return;
     }
 
     // Track the commit

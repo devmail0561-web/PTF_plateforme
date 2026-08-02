@@ -32,7 +32,7 @@ export const validateDocsCommand = new Command("validate-docs")
     if (options.archOnly) {
       if (!existsSync(archPath)) {
         console.error(chalk.red(`✗ Fichier introuvable : ${archPath}`));
-        process.exit(1);
+        return;
       }
       const { errors, sectionResults } = validateArchitectureFile(archPath);
       const hardErrors = errors.filter((e) => e.type === "error");
@@ -43,14 +43,13 @@ export const validateDocsCommand = new Command("validate-docs")
         warnings,
         summary: { architecture: sectionResults, plan: [] },
       });
-      if (hardErrors.length > 0 && !options.auto) process.exit(1);
       return;
     }
 
     if (options.planOnly) {
       if (!existsSync(planPath)) {
         console.error(chalk.red(`✗ Fichier introuvable : ${planPath}`));
-        process.exit(1);
+        return;
       }
       const { errors, sectionResults } = validatePlanFile(planPath);
       const hardErrors = errors.filter((e) => e.type === "error");
@@ -61,7 +60,6 @@ export const validateDocsCommand = new Command("validate-docs")
         warnings,
         summary: { architecture: [], plan: sectionResults },
       });
-      if (hardErrors.length > 0 && !options.auto) process.exit(1);
       return;
     }
 
@@ -73,7 +71,7 @@ export const validateDocsCommand = new Command("validate-docs")
               "Ou spécifiez le chemin : ptf validate-docs --architecture <path>"
           )
       );
-      process.exit(1);
+      return;
     }
 
     if (!existsSync(planPath)) {
@@ -81,7 +79,7 @@ export const validateDocsCommand = new Command("validate-docs")
         chalk.red(`Fichier non trouvé : ${planPath}\n`) +
           chalk.dim("Générez les templates avec : ptf scaffold")
       );
-      process.exit(1);
+      return;
     }
 
     printInfo(`Validation de ${chalk.cyan(archPath)} et ${chalk.cyan(planPath)}...`);
@@ -98,7 +96,7 @@ export const validateDocsCommand = new Command("validate-docs")
               chalk.cyan("ptf fix-docs")
           )
       );
-      process.exit(1);
+      return;
     }
 
     if (result.valid) {

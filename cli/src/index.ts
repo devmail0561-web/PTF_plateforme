@@ -20,7 +20,7 @@ import {
 import { reportCommand } from "./commands/report.js";
 import chalk from "chalk";
 
-function buildProgram(silent = false): Command {
+function buildProgram(repl = false): Command {
   const prog = new Command("ptf")
     .description(
       "PTF — Pay-Task Framework\nÉcosystème cryptographique décentralisé de tâches rémunérées"
@@ -28,8 +28,8 @@ function buildProgram(silent = false): Command {
     .version("0.1.0")
     .exitOverride()
     .configureOutput({
-      writeOut: (str) => process.stdout.write(str),
-      writeErr: silent ? () => {} : (str) => process.stderr.write(str),
+      writeOut: repl ? () => {} : (str) => process.stdout.write(str),
+      writeErr: repl ? () => {} : (str) => process.stderr.write(str),
     });
 
   // Standalone (offline)
@@ -116,7 +116,28 @@ function buildProgram(silent = false): Command {
 
   prog.addCommand(syncCommand);
 
+  // Propagate exitOverride and output config to all subcommands so they
+  // throw instead of calling process.exit() — critical for REPL mode.
+  function applyOverrides(cmd: Command): void {
+    cmd.exitOverride();
+    if (repl) {
+      cmd.configureOutput({ writeOut: () => {}, writeErr: () => {} });
+    }
+    cmd.commands.forEach(applyOverrides);
+  }
+  prog.commands.forEach(applyOverrides);
+
   return prog;
+}
+
+function findCommand(root: Command, parts: string[]): Command | null {
+  let cmd: Command = root;
+  for (const p of parts) {
+    const sub = cmd.commands.find((c) => c.name() === p || c.aliases().includes(p));
+    if (!sub) break;
+    cmd = sub;
+  }
+  return cmd === root ? null : cmd;
 }
 
 async function startRepl(): Promise<void> {
@@ -138,7 +159,7 @@ async function startRepl(): Promise<void> {
 
   rl.prompt();
 
-  rl.on("line", async (line) => {
+  rl.on("line", (line) => {
     const input = line.trim();
 
     if (!input) {
@@ -149,7 +170,7 @@ async function startRepl(): Promise<void> {
     if (input === "exit" || input === "quit") {
       console.log(chalk.dim("\n   Au revoir.\n"));
       rl.close();
-      process.exit(0);
+      return;
     }
 
     if (input === "clear") {
@@ -158,29 +179,45 @@ async function startRepl(): Promise<void> {
       return;
     }
 
-    const argv = ["node", "ptf", ...input.split(/\s+/)];
+    pendingLine = (async () => {
+      const argv = ["node", "ptf", ...input.split(/\s+/)];
+      const prog = buildProgram(true);
 
-    try {
-      await buildProgram(true).parseAsync(argv);
-    } catch (err: unknown) {
-      const code = err instanceof Error && "code" in err
-        ? (err as { code: string }).code
-        : undefined;
-      if (code === "commander.helpDisplayed" || code === "commander.version") {
-        // help/version already printed
-      } else if (code === "commander.unknownCommand" || code === "commander.unknownOption" || code === "commander.invalidArgument") {
-        console.log(chalk.red("  ✗") + "  Commande inconnue : " + chalk.bold(input));
-        console.log(chalk.dim("     Tapez help pour voir les commandes disponibles."));
-      } else if (err instanceof Error) {
-        console.log(chalk.red("  ✗") + "  " + err.message);
+      try {
+        await prog.parseAsync(argv);
+      } catch (err: unknown) {
+        const code = err instanceof Error && "code" in err
+          ? (err as { code: string }).code
+          : undefined;
+        if (code === "commander.helpDisplayed" || code === "commander.version" || code === "commander.help") {
+          const parts = input.split(/\s+/);
+          const matched = findCommand(prog, parts);
+          if (matched && matched.commands.length > 0) {
+            const subs = matched.commands.map((c) => c.name());
+            console.log(
+              "  " + chalk.cyan(matched.name()) +
+              chalk.dim(" — sous-commandes : ") +
+              subs.join(", ")
+            );
+            console.log(chalk.dim(`     Aide : ptf ${parts.join(" ")} --help`));
+          }
+        } else if (code === "commander.unknownCommand" || code === "commander.unknownOption" || code === "commander.invalidArgument") {
+          console.log(chalk.red("  ✗") + "  Commande inconnue : " + chalk.bold(input));
+          console.log(chalk.dim("     Tapez help pour voir les commandes disponibles."));
+        } else if (err instanceof Error) {
+          console.log(chalk.red("  ✗") + "  " + err.message);
+        }
       }
-    }
 
-    console.log();
-    rl.prompt();
+      console.log();
+      rl.prompt();
+    })();
   });
 
-  rl.on("close", () => {
+  let pendingLine: Promise<void> | null = null;
+
+  rl.on("close", async () => {
+    if (pendingLine) await pendingLine;
     process.exit(0);
   });
 }
@@ -192,7 +229,7 @@ if (process.argv.length > 2) {
   } catch (err: unknown) {
     if (err instanceof Error && "code" in err) {
       const code = (err as { code: string }).code;
-      if (code !== "commander.helpDisplayed" && code !== "commander.version") {
+      if (code !== "commander.helpDisplayed" && code !== "commander.version" && code !== "commander.help") {
         process.exit(1);
       }
     } else {
