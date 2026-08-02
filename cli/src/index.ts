@@ -23,7 +23,11 @@ program
   .description(
     "PTF — Pay-Task Framework\nÉcosystème cryptographique décentralisé de tâches rémunérées"
   )
-  .version("0.1.0");
+  .version("0.1.0")
+  .hook("preAction", (_thisCommand, actionCommand) => {
+    // Show banner only when `ptf` is invoked alone (no subcommand args)
+    if (actionCommand.name() === "ptf") return;
+  });
 
 // Standalone (offline)
 program.addCommand(scaffoldCommand);
@@ -108,5 +112,11 @@ syncCommand
   });
 
 program.addCommand(syncCommand);
+
+// Show banner when no arguments are given
+if (process.argv.length <= 2) {
+  const { printBanner } = await import("./utils/display.js");
+  printBanner(program.version() ?? "0.1.0");
+}
 
 program.parse();

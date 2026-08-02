@@ -8,6 +8,8 @@ import {
   printOfflineBanner,
   printError,
   printInfo,
+  colorStatus,
+  truncate,
 } from "../utils/display.js";
 
 export const projectsCommand = new Command("projects").description(
@@ -36,25 +38,33 @@ projectsCommand
     }
 
     const rows = projects.map((p) => [
-      p.projectId.slice(0, 10) + "...",
+      p.projectId.slice(0, 8) + "…" + p.projectId.slice(-4),
       p.type,
       p.rewardMode,
-      p.name.slice(0, 30) + (p.name.length > 30 ? "..." : ""),
-      String(p.openTaskCount) + "/" + String(p.taskCount),
-      p.totalRewardPool ?? "—",
-      p.stack?.slice(0, 2).join(", ") ?? "—",
+      truncate(p.name, 32),
+      chalk.cyan(String(p.openTaskCount)) + chalk.dim("/" + String(p.taskCount)),
+      p.totalRewardPool ? chalk.green(p.totalRewardPool) : chalk.dim("—"),
+      p.stack?.slice(0, 3).join(", ") ?? chalk.dim("—"),
       p.status,
     ]);
 
     printTable(
-      ["ID", "Type", "Mode", "Nom", "Tâches", "Pool", "Stack", "Statut"],
-      rows
+      ["ID", "Type", "Mode", "Nom", "Tâches", "Pool PTF", "Stack", "Statut"],
+      rows,
+      {
+        colorRow: (row) => [
+          chalk.dim(row[0]),
+          row[1] === "public" ? chalk.green(row[1]) : chalk.yellow(row[1]),
+          row[2] === "paid" ? chalk.green.bold(row[2]) : chalk.dim(row[2]),
+          chalk.bold(row[3]),
+          row[4], row[5], chalk.dim(row[6]),
+          colorStatus(row[7]),
+        ],
+      }
     );
 
     console.log(
-      chalk.dim(
-        `\n${projects.length} projet(s) affiché(s). Détails : ptf project info --id <projectId>`
-      )
+      chalk.dim(`\n   ${projects.length} projet(s) — détails : ptf project info --id <id>`)
     );
   });
 

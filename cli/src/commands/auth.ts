@@ -167,40 +167,43 @@ authCommand
 authCommand
   .command("status")
   .description("Afficher le statut de connexion")
-  .action(() => {
+  .action(async () => {
     const cfg = loadUserConfig();
     const wallets = listLocalWallets();
 
-    console.log("\n" + chalk.bold("Statut PTF\n") + chalk.dim("─".repeat(40)));
+    const { printSectionHeader, shortAddr } = await import("../utils/display.js");
+    printSectionHeader("Statut de session PTF");
 
     // Keystores locaux
     if (wallets.length > 0) {
-      console.log(chalk.green("✓") + `  ${wallets.length} wallet(s) local(aux) :`);
+      console.log(chalk.green("   ✓") + chalk.dim("  Wallets locaux"));
       wallets.forEach((w) => {
         const isCurrent = w.toLowerCase() === cfg.walletAddress?.toLowerCase();
         console.log(
-          `     ${isCurrent ? chalk.cyan("→") : " "} ${w}` +
-          (isCurrent ? chalk.dim(" (actif)") : "")
+          `     ${isCurrent ? chalk.cyan("▶") : chalk.dim(" ")} ${isCurrent ? chalk.cyan.bold(shortAddr(w)) : chalk.dim(w)}` +
+          (isCurrent ? "  " + chalk.bgCyan.black(" actif ") : "")
         );
       });
     } else {
-      console.log(chalk.yellow("⚠") + "  Aucun wallet local — créez-en un : ptf wallet create");
+      console.log(chalk.yellow("   ⚠") + "  Aucun wallet — créez-en un : " + chalk.cyan("ptf wallet create"));
     }
+    console.log();
 
     // Session service tier
     if (cfg.sessionToken && !cfg.sessionToken.startsWith("offline:")) {
-      console.log(chalk.green("✓") + "  Session service PTF active");
+      console.log(chalk.green("   ✓") + "  " + chalk.green("Session service PTF active"));
     } else if (cfg.sessionToken?.startsWith("offline:")) {
-      console.log(chalk.yellow("⚠") + "  Mode offline (pas de session service tier)");
+      console.log(chalk.yellow("   ⚠") + "  Mode offline " + chalk.dim("(aucun service tier)"));
     } else {
-      console.log(chalk.dim("   Pas de session service PTF — connectez-vous : ptf auth login"));
+      console.log(chalk.dim("    ○  Pas de session — ") + chalk.cyan("ptf auth login"));
     }
 
     // Node configuré
     const nodeUrl = cfg.ptfNodeUrl ?? cfg.ptfApiUrl;
     if (nodeUrl) {
-      console.log(chalk.green("✓") + `  Nœud/service : ${chalk.dim(nodeUrl)}`);
+      console.log(chalk.green("   ✓") + "  " + chalk.dim("Nœud : ") + chalk.dim(nodeUrl));
+    } else {
+      console.log(chalk.dim("    ○  Nœud PTF non configuré — ") + chalk.cyan("ptf config set-api <url>"));
     }
-
     console.log("");
   });

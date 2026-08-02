@@ -9,6 +9,9 @@ import {
   printWarning,
   printWalletStatus,
   printOfflineBanner,
+  printSectionHeader,
+  shortAddr,
+  truncate,
 } from "../utils/display.js";
 import { isValidAddress } from "../utils/crypto.js";
 import {
@@ -566,32 +569,28 @@ walletCommand
     const totalIn  = entries.filter(e => e.direction === "credit").reduce((s, e) => s + e.amount, 0);
     const totalOut = entries.filter(e => e.direction === "debit").reduce((s, e) => s + e.amount, 0);
 
-    console.log(
-      `\n${chalk.bold("Historique crédits PTF")} — ${chalk.dim(address.slice(0, 14) + "…")}\n` +
-      chalk.dim("─".repeat(72))
-    );
+    printSectionHeader("Historique crédits PTF");
+    console.log("   " + chalk.dim("Adresse : ") + shortAddr(address) + "\n");
 
     for (const e of entries) {
-      const sign   = e.direction === "credit" ? chalk.green("+") : chalk.red("−");
-      const amount = e.direction === "credit"
-        ? chalk.green(e.amount.toFixed(6) + " PTF")
-        : chalk.red(e.amount.toFixed(6) + " PTF");
+      const isCredit = e.direction === "credit";
+      const sign   = isCredit ? chalk.green(" ▲ ") : chalk.red(" ▼ ");
+      const amount = isCredit
+        ? chalk.green.bold("+" + e.amount.toFixed(4) + " PTF")
+        : chalk.red("−" + e.amount.toFixed(4) + " PTF");
       const date  = new Date(e.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
-      const label = e.note ?? e.type;
-      const task  = e.taskId ? chalk.dim(" tâche:" + e.taskId.slice(0, 10) + "…") : "";
-      const tx    = e.txHash ? chalk.dim(" tx:" + e.txHash.slice(0, 10) + "…") : "";
-      const utxo  = e.utxoId ? chalk.dim(" utxo:" + e.utxoId.slice(0, 10) + "…") : "";
+      const label = truncate(e.note ?? e.type, 30);
+      const ref   = e.taskId ? chalk.dim(" · tâche " + e.taskId.slice(0, 8) + "…") : "";
+      const tx    = e.txHash ? chalk.dim(" · tx " + e.txHash.slice(0, 8) + "…")    : "";
 
-      console.log(
-        `  ${sign} ${amount.padEnd(22)}  ${chalk.dim(date.padEnd(14))}  ${label}${task}${tx}${utxo}`
-      );
+      console.log(`   ${sign} ${amount.padEnd(22)}  ${chalk.dim(date.padEnd(13))}  ${label}${ref}${tx}`);
     }
 
     console.log(
-      chalk.dim("─".repeat(72)) +
-      `\n  Total crédités  : ${chalk.green("+" + totalIn.toFixed(6) + " PTF")}` +
-      `\n  Total débités   : ${chalk.red("−" + totalOut.toFixed(6) + " PTF")}` +
-      `\n  Net             : ${chalk.bold((totalIn - totalOut).toFixed(6) + " PTF")}\n`
+      "\n   " + chalk.dim("─".repeat(60)) +
+      `\n   ${chalk.dim("Crédités : ")}${chalk.green("+" + totalIn.toFixed(4) + " PTF")}` +
+      `   ${chalk.dim("Débités : ")}${chalk.red("−" + totalOut.toFixed(4) + " PTF")}` +
+      `   ${chalk.dim("Net : ")}${chalk.bold((totalIn - totalOut).toFixed(4) + " PTF")}\n`
     );
   });
 
@@ -649,29 +648,26 @@ walletCommand
     const totalGained = entries.filter(e => e.delta > 0).reduce((s, e) => s + e.delta, 0);
     const totalLost   = entries.filter(e => e.delta < 0).reduce((s, e) => s + e.delta, 0);
 
-    console.log(
-      `\n${chalk.bold("Historique réputation")} — ${chalk.dim(address.slice(0, 14) + "…")}\n` +
-      chalk.dim("─".repeat(72))
-    );
+    printSectionHeader("Historique réputation");
+    console.log("   " + chalk.dim("Adresse : ") + shortAddr(address) + "\n");
 
     for (const e of entries) {
-      const pts  = e.delta > 0
-        ? chalk.green(`+${e.delta} pts`)
-        : chalk.red(`${e.delta} pts`);
-      const date = new Date(e.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
-      const task = e.taskId ? chalk.dim(" tâche:" + e.taskId.slice(0, 10) + "…") : "";
-      const tx   = e.txHash ? chalk.dim(" tx:" + e.txHash.slice(0, 10) + "…") : "";
+      const isPos = e.delta > 0;
+      const sign  = isPos ? chalk.green(" ▲ ") : chalk.red(" ▼ ");
+      const pts   = isPos
+        ? chalk.green.bold("+" + e.delta + " pts").padEnd(16)
+        : chalk.red(e.delta + " pts").padEnd(16);
+      const date  = new Date(e.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
+      const ref   = e.taskId ? chalk.dim(" · tâche " + e.taskId.slice(0, 8) + "…") : "";
 
-      console.log(
-        `  ${pts.padEnd(16)}  ${chalk.dim(date.padEnd(14))}  ${e.reason}${task}${tx}`
-      );
+      console.log(`   ${sign} ${pts}  ${chalk.dim(date.padEnd(13))}  ${truncate(e.reason, 30)}${ref}`);
     }
 
     console.log(
-      chalk.dim("─".repeat(72)) +
-      `\n  Total gagné  : ${chalk.green("+" + totalGained + " pts")}` +
-      `\n  Total perdu  : ${chalk.red(totalLost + " pts")}` +
-      `\n  Net          : ${chalk.bold((totalGained + totalLost) + " pts")}\n`
+      "\n   " + chalk.dim("─".repeat(60)) +
+      `\n   ${chalk.dim("Gagné : ")}${chalk.green("+" + totalGained + " pts")}` +
+      `   ${chalk.dim("Perdu : ")}${chalk.red(totalLost + " pts")}` +
+      `   ${chalk.dim("Net : ")}${chalk.bold((totalGained + totalLost) + " pts")}\n`
     );
   });
 
@@ -729,24 +725,23 @@ walletCommand
 
     const total = utxos.reduce((s, u) => s + u.amount, 0);
 
-    console.log(
-      `\n${chalk.bold("UTXOs PTF")} — ${chalk.dim(address.slice(0, 14) + "…")} [${options.status}]\n` +
-      chalk.dim("─".repeat(80))
-    );
+    printSectionHeader(`UTXOs PTF — ${options.status}`);
+    console.log("   " + chalk.dim("Adresse : ") + shortAddr(address) + "\n");
 
     for (const u of utxos) {
       const date = new Date(u.createdAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
-      const statusColor = u.status === "unspent" ? chalk.green : u.status === "locked" ? chalk.yellow : chalk.dim;
+      const statusFn = u.status === "unspent" ? chalk.green.bold : u.status === "locked" ? chalk.yellow : chalk.dim;
+      const badge = u.status === "unspent" ? " ● " : u.status === "locked" ? " ◐ " : " ○ ";
       console.log(
-        `  ${statusColor(u.status.padEnd(8))}  ${chalk.green.bold(u.amount.toFixed(6) + " PTF")}` +
-        chalk.dim(`  ${u.sourceType}  ${date}`) +
-        `\n            ${chalk.dim("id: " + u.id.slice(0, 18) + "…" + "  sourceId: " + (u.sourceId?.slice(0, 14) ?? "—") + "…")}`
+        `   ${statusFn(badge)} ${chalk.green.bold(u.amount.toFixed(6) + " PTF")}  ` +
+        chalk.dim(`${u.sourceType.padEnd(14)} ${date}`) +
+        `\n       ${chalk.dim("id: " + u.id.slice(0, 10) + "…" + u.id.slice(-6) + "   src: " + (u.sourceId?.slice(0, 8) ?? "—") + "…")}`
       );
     }
 
     console.log(
-      chalk.dim("─".repeat(80)) +
-      `\n  Total (${utxos.length} UTXOs) : ${chalk.bold(total.toFixed(6) + " PTF")}\n`
+      "\n   " + chalk.dim("─".repeat(60)) +
+      `\n   ${chalk.dim("Total (" + utxos.length + " UTXO(s)) : ")}${chalk.bold(total.toFixed(6) + " PTF")}\n`
     );
   });
 

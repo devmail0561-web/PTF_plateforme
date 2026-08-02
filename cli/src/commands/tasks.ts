@@ -18,6 +18,9 @@ import {
   printWarning,
   formatDeadlineCountdown,
   printEstimation,
+  colorStatus,
+  colorPriority,
+  truncate,
 } from "../utils/display.js";
 import { computeMerkleRoot } from "../utils/crypto.js";
 import type { PtfTask } from "../types.js";
@@ -54,21 +57,32 @@ tasksCommand
     }
 
     const rows = tasks.map((t) => [
-      t.id.slice(0, 12) + "...",
-      t.title.slice(0, 40) + (t.title.length > 40 ? "..." : ""),
+      t.id.slice(0, 10) + "…" + t.id.slice(-4),
+      truncate(t.title, 44),
       t.priority,
       t.status,
       t.reward ? `${t.reward.amount} PTF` : "—",
       t.duration,
-      t.claimCriteria.requiredSkills?.slice(0, 2).join(", ") ?? "any",
+      t.claimCriteria.requiredSkills?.slice(0, 3).join(", ") ?? "any",
     ]);
 
     printTable(
       ["ID", "Titre", "Priorité", "Statut", "Reward", "Durée", "Skills"],
-      rows
+      rows,
+      {
+        colorRow: (row) => [
+          chalk.dim(row[0]),
+          row[1],
+          colorPriority(row[2]),
+          colorStatus(row[3]),
+          row[4] !== "—" ? chalk.green.bold(row[4]) : chalk.dim(row[4]),
+          chalk.dim(row[5]),
+          chalk.cyan(row[6]),
+        ],
+      }
     );
 
-    console.log(chalk.dim(`\n${tasks.length} tâche(s) affichée(s). Détails : ptf task show <id>`));
+    console.log(chalk.dim(`\n   ${tasks.length} tâche(s) — détails : ptf task show <id>`));
   });
 
 tasksCommand
@@ -111,19 +125,24 @@ tasksCommand
       return;
     }
 
-    console.log(chalk.bold(`\n${myTasks.length} tâche(s) réclamée(s) :\n`));
+    console.log(chalk.bold(`\n   ${myTasks.length} tâche(s) réclamée(s) :\n`));
 
-    myTasks.forEach((task) => {
+    myTasks.forEach((task, i) => {
       const countdown = task.deadline
         ? formatDeadlineCountdown(task.deadline)
-        : chalk.dim("pas de deadline");
+        : chalk.dim("aucune deadline");
+
+      const oddRow = i % 2 !== 0;
+      const prefix = oddRow ? chalk.dim : (s: string) => s;
 
       console.log(
-        `  ${chalk.bold(task.title)}\n` +
-          `  ID : ${chalk.dim(task.id.slice(0, 16) + "...")}\n` +
-          `  Statut : ${task.status}  Deadline : ${countdown}\n` +
-          (task.reward ? `  Reward : ${chalk.green(task.reward.amount + " PTF")}\n` : "") +
+        prefix(
+          `   ${chalk.bold(truncate(task.title, 52))}\n` +
+          `   ${chalk.dim("ID     : ")}${chalk.dim(task.id.slice(0, 10) + "…" + task.id.slice(-6))}\n` +
+          `   ${chalk.dim("Statut : ")}${colorStatus(task.status)}  ${chalk.dim("Deadline : ")}${countdown}\n` +
+          (task.reward ? `   ${chalk.dim("Reward : ")}${chalk.green.bold(task.reward.amount + " PTF")}\n` : `   ${chalk.dim("Reward : open source\n")}`) +
           ""
+        )
       );
     });
   });
