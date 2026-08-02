@@ -43,7 +43,7 @@ taskCommand
       if (walletStatus.ptfBalance < 10) {
         printWarning(
           `Solde PTF faible (${walletStatus.ptfBalance} PTF). Minimum 10 PTF requis pour réclamer une tâche paid.\n` +
-            chalk.dim("Rechargez votre compte : ptf wallet deposit")
+            chalk.dim("Rechargez via votre service tiers puis reconnectez votre wallet PTF.")
         );
       }
     }
@@ -146,7 +146,7 @@ taskCommand
       if (status.ptfBalance < 10) {
         printError(
           `Solde PTF insuffisant : ${status.ptfBalance} PTF (minimum 10 PTF requis pour les projets paid).\n` +
-            chalk.dim("Rechargez : ptf wallet deposit (puis envoyez des PTF depuis votre exchange)")
+            chalk.dim("Rechargez votre solde via votre service tiers et liez votre wallet PTF depuis ce service.")
         );
         process.exit(1);
       }
