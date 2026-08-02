@@ -150,80 +150,86 @@ async function startRepl(): Promise<void> {
     chalk.dim(" pour quitter.\n")
   );
 
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: chalk.cyan.bold("ptf") + chalk.dim(" › "),
-    terminal: true,
-  });
-
-  rl.prompt();
-
-  rl.on("line", (line) => {
-    const input = line.trim();
-
-    if (!input) {
-      rl.prompt();
-      return;
-    }
-
-    if (input === "exit" || input === "quit") {
-      console.log(chalk.dim("\n   Au revoir.\n"));
-      rl.close();
-      return;
-    }
-
-    if (input === "clear") {
-      console.clear();
-      rl.prompt();
-      return;
-    }
-
-    pendingLine = (async () => {
-      const argv = ["node", "ptf", ...input.split(/\s+/)];
-      const prog = buildProgram(true);
-
-      rl.pause();
-
-      try {
-        await prog.parseAsync(argv);
-      } catch (err: unknown) {
-        const code = err instanceof Error && "code" in err
-          ? (err as { code: string }).code
-          : undefined;
-        if (code === "commander.helpDisplayed" || code === "commander.version" || code === "commander.help") {
-          const parts = input.split(/\s+/);
-          const matched = findCommand(prog, parts);
-          if (matched && matched.commands.length > 0) {
-            const subs = matched.commands.map((c) => c.name());
-            console.log(
-              "  " + chalk.cyan(matched.name()) +
-              chalk.dim(" — sous-commandes : ") +
-              subs.join(", ")
-            );
-            console.log(chalk.dim(`     Aide : ptf ${parts.join(" ")} --help`));
-          }
-        } else if (code === "commander.unknownCommand" || code === "commander.unknownOption" || code === "commander.invalidArgument") {
-          console.log(chalk.red("  ✗") + "  Commande inconnue : " + chalk.bold(input));
-          console.log(chalk.dim("     Tapez help pour voir les commandes disponibles."));
-        } else if (err instanceof Error) {
-          console.log(chalk.red("  ✗") + "  " + err.message);
-        }
-      } finally {
-        rl.resume();
-      }
-
-      console.log();
-      rl.prompt();
-    })();
-  });
-
+  const PROMPT = chalk.cyan.bold("ptf") + chalk.dim(" › ");
+  let rl: ReturnType<typeof createInterface>;
   let pendingLine: Promise<void> | null = null;
 
-  rl.on("close", async () => {
-    if (pendingLine) await pendingLine;
-    process.exit(0);
-  });
+  function createRl(): ReturnType<typeof createInterface> {
+    const iface = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      prompt: PROMPT,
+      terminal: true,
+    });
+
+    iface.on("line", (line) => {
+      const input = line.trim();
+
+      if (!input) {
+        iface.prompt();
+        return;
+      }
+
+      if (input === "exit" || input === "quit") {
+        console.log(chalk.dim("\n   Au revoir.\n"));
+        iface.close();
+        return;
+      }
+
+      if (input === "clear") {
+        console.clear();
+        iface.prompt();
+        return;
+      }
+
+      pendingLine = (async () => {
+        const argv = ["node", "ptf", ...input.split(/\s+/)];
+        const prog = buildProgram(true);
+
+        iface.close();
+
+        try {
+          await prog.parseAsync(argv);
+        } catch (err: unknown) {
+          const code = err instanceof Error && "code" in err
+            ? (err as { code: string }).code
+            : undefined;
+          if (code === "commander.helpDisplayed" || code === "commander.version" || code === "commander.help") {
+            const parts = input.split(/\s+/);
+            const matched = findCommand(prog, parts);
+            if (matched && matched.commands.length > 0) {
+              const subs = matched.commands.map((c) => c.name());
+              console.log(
+                "  " + chalk.cyan(matched.name()) +
+                chalk.dim(" — sous-commandes : ") +
+                subs.join(", ")
+              );
+              console.log(chalk.dim(`     Aide : ptf ${parts.join(" ")} --help`));
+            }
+          } else if (code === "commander.unknownCommand" || code === "commander.unknownOption" || code === "commander.invalidArgument") {
+            console.log(chalk.red("  ✗") + "  Commande inconnue : " + chalk.bold(input));
+            console.log(chalk.dim("     Tapez help pour voir les commandes disponibles."));
+          } else if (err instanceof Error) {
+            console.log(chalk.red("  ✗") + "  " + err.message);
+          }
+        }
+
+        console.log();
+        rl = createRl();
+        rl.prompt();
+      })();
+    });
+
+    iface.on("close", async () => {
+      if (pendingLine) await pendingLine;
+      else process.exit(0);
+    });
+
+    return iface;
+  }
+
+  rl = createRl();
+  rl.prompt();
 }
 
 // If invoked with arguments (e.g. `ptf tasks`), run one-shot mode
