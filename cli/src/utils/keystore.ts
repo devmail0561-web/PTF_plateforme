@@ -8,7 +8,7 @@
  * Format compatible Web3 Secret Storage V3 (Ethereum).
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { randomBytes, createCipheriv, createDecipheriv, pbkdf2Sync, createHash } from "crypto";
@@ -247,6 +247,17 @@ export function getKeystorePath(address: string): string {
  */
 export function hasKeystore(address: string): boolean {
   return existsSync(keystorePath(address));
+}
+
+/**
+ * Supprime le keystore local d'une adresse.
+ * Retourne true si le fichier existait et a été supprimé.
+ */
+export function deleteKeystore(address: string): boolean {
+  const path = keystorePath(address);
+  if (!existsSync(path)) return false;
+  unlinkSync(path);
+  return true;
 }
 
 /**

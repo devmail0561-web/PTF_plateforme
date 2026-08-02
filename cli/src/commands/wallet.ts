@@ -18,6 +18,7 @@ import {
   restoreWallet,
   listLocalWallets,
   getKeystorePath,
+  deleteKeystore,
 } from "../utils/keystore.js";
 
 export const walletCommand = new Command("wallet").description(
@@ -202,6 +203,76 @@ walletCommand
       );
     });
     console.log("");
+  });
+
+walletCommand
+  .command("delete")
+  .description("Supprimer un wallet PTF local (irréversible sans seed phrase)")
+  .option("--address <address>", "Adresse du wallet à supprimer")
+  .action(async (options: { address?: string }) => {
+    const { default: inquirer } = await import("inquirer");
+    const cfg = loadUserConfig();
+    const wallets = listLocalWallets();
+
+    if (wallets.length === 0) {
+      printInfo("Aucun wallet PTF sur cette machine.");
+      return;
+    }
+
+    let address = options.address;
+
+    if (!address) {
+      if (wallets.length === 1) {
+        address = wallets[0];
+      } else {
+        const { chosen } = await inquirer.prompt<{ chosen: string }>([
+          {
+            type:    "list",
+            name:    "chosen",
+            message: "Quel wallet supprimer ?",
+            choices: wallets.map((w) => ({
+              name: w + (w.toLowerCase() === cfg.walletAddress?.toLowerCase() ? chalk.dim(" (actif)") : ""),
+              value: w,
+            })),
+          },
+        ]);
+        address = chosen;
+      }
+    }
+
+    if (!wallets.some((w) => w.toLowerCase() === address!.toLowerCase())) {
+      printError(`Wallet ${address} introuvable localement.`);
+      return;
+    }
+
+    console.log(
+      "\n" + chalk.red.bold("  ⚠  SUPPRESSION IRRÉVERSIBLE\n") +
+      chalk.red(`  Le keystore de ${address} sera supprimé.\n`) +
+      chalk.red("  Sans votre seed phrase, ce wallet sera perdu définitivement.\n")
+    );
+
+    const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
+      {
+        type:    "confirm",
+        name:    "confirm",
+        message: `Supprimer le wallet ${address} ?`,
+        default: false,
+      },
+    ]);
+
+    if (!confirm) {
+      printInfo("Suppression annulée.");
+      return;
+    }
+
+    deleteKeystore(address);
+
+    if (cfg.walletAddress?.toLowerCase() === address.toLowerCase()) {
+      const remaining = listLocalWallets();
+      saveUserConfig({ walletAddress: remaining[0] ?? undefined, sessionToken: undefined });
+    }
+
+    printSuccess(`Wallet ${address} supprimé.`);
   });
 
 walletCommand

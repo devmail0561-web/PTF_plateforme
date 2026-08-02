@@ -27,5 +27,6 @@
 
 ### Added
 
+- **`wallet delete`** — supprimer un wallet PTF local (sélecteur si multi-wallet, confirmation obligatoire, avertissement irréversible). Si le wallet actif est supprimé, bascule automatiquement sur le suivant.
 - Shell REPL interactif avec logos ASCII aléatoires (5 designs × 8 couleurs)
 - Mode one-shot conservé pour scripts/pipelines (`ptf tasks list --available`)
