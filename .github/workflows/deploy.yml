@@ -1,0 +1,124 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'infra/**'
+      - '.github/workflows/deploy.yml'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BACKEND: ghcr.io/${{ github.repository_owner }}/ptf-backend
+
+jobs:
+  # ── Build & push image Docker ───────────────────────────────────────────────
+  build:
+    name: Build & push Docker image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      sha_short: ${{ steps.sha.outputs.sha_short }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Short SHA
+        id: sha
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_BACKEND }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build & push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Déploiement SSH sur Hetzner ─────────────────────────────────────────────
+  deploy:
+    name: Deploy to Hetzner
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy infra files to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "infra/docker-compose.prod.yml,infra/nginx.conf"
+          target: "/home/${{ secrets.VPS_USER }}/ptf/framework/"
+          strip_components: 1
+
+      - name: Deploy on VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/ptf/framework
+
+            # Pull nouvelle image
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker pull ${{ env.IMAGE_BACKEND }}:sha-${{ needs.build.outputs.sha_short }}
+
+            # Mettre à jour IMAGE_TAG dans .env
+            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=sha-${{ needs.build.outputs.sha_short }}/" .env
+
+            # Migration Prisma + redémarrage backend
+            docker compose -f docker-compose.prod.yml run --rm ptf-backend \
+              sh -c "npx prisma migrate deploy"
+
+            docker compose -f docker-compose.prod.yml up -d --no-deps ptf-backend
+
+            # Vérification healthcheck
+            sleep 10
+            docker compose -f docker-compose.prod.yml ps ptf-backend
+            curl -sf https://api.ptf-framework.dev/health || exit 1
+
+            echo "✅ Déploiement réussi — $(date -u)"
+
+  # ── Notification échec ───────────────────────────────────────────────────────
+  notify-failure:
+    name: Notify on failure
+    runs-on: ubuntu-latest
+    needs: [build, deploy]
+    if: failure()
+    steps:
+      - name: Log failure
+        run: |
+          echo "❌ Déploiement échoué sur le commit ${{ github.sha }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Voir: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

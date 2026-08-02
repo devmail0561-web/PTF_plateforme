@@ -1,15 +1,15 @@
 # PTF — Progression du projet
 
-> Version : **V0.2.3-alpha** — Dernière mise à jour : **2026-08-02**
+> Version : **V0.2.4-alpha** — Dernière mise à jour : **2026-08-02**
 >
-> Commits récents : `eaaf912` fix free/paid CLI → `a9313ca` fix CI Foundry + EscrowService + ValidationService → `b8d2e73` docs V0.2.2 → `(en cours)` Priorité 4 frontend notifications + wallet linking
+> Commits récents : `a9313ca` fix CI Foundry + backend P1 → `b8d2e73` docs V0.2.2 → `79bb0a8` docs V0.2.3 → `(en cours)` Priorité 4 frontend + Priorité 5 infra VPS
 
 ---
 
 ## Avancement global
 
 ```
-█████████████████████████████████░░░░░░░  83%
+██████████████████████████████████░░░░░░  85%
 ```
 
 | Module | Statut | Progression |
@@ -21,7 +21,7 @@
 | Backend framework (réseau) | ⚠️ En cours | 95% |
 | ptf_service_plateforme — backend | ⚠️ En cours | 90% |
 | ptf_service_plateforme — frontend | ⚠️ En cours | 85% |
-| Infrastructure | ⚠️ En cours | 20% |
+| Infrastructure | ⚠️ En cours | 60% |
 | Blockchain réelle (testnet) | 🔴 À faire | 0% |
 | Solana / Anchor | 🔴 À faire | 0% |
 
@@ -169,13 +169,19 @@ Le projet est désormais séparé en deux dépôts distincts :
 
 | Composant | Statut | Priorité |
 |---|---|---|
-| `docker-compose.yml` ptf_service | ✅ Présent | — |
-| `docker-compose.yml` framework (PostgreSQL 16 + Redis 7 + backend) | ✅ Présent | — |
+| `docker-compose.yml` ptf_service (dev) | ✅ Présent | — |
+| `docker-compose.yml` framework (dev — PostgreSQL 16 + Redis 7) | ✅ Présent | — |
+| `infra/docker-compose.prod.yml` (framework prod) | ✅ Présent — GHCR + secrets env | — |
+| `infra/docker-compose.service.prod.yml` (service prod) | ✅ Présent — partage réseau ptf-net | — |
+| `infra/nginx.conf` | ✅ Présent — TLS, rate-limit, reverse proxy 3 domaines | — |
+| `infra/setup-vps.sh` | ✅ Présent — Docker + UFW + fail2ban + Certbot + cron TLS | — |
+| `infra/.env.*.example` | ✅ Présents — framework + service | — |
 | GitHub Actions CI — framework | ✅ Corrigé (`a9313ca`) — Foundry deps + typecheck + tests | — |
 | GitHub Actions CI — service | ✅ Présent | — |
-| `contracts/evm/Makefile` | ✅ Présent — `make test`, `make deploy-amoy`, `make coverage` | — |
-| `contracts/evm/scripts/deploy-amoy.sh` | ✅ Présent — déploiement one-shot + génération `.env.testnet` | — |
-| Déploiement VPS (Hetzner CX21) | 🔴 À faire | 🟡 Moyenne |
+| GitHub Actions Deploy (`deploy.yml`) | ✅ Présent — build GHCR + SSH Hetzner + Prisma migrate | — |
+| `contracts/evm/Makefile` + `deploy-amoy.sh` | ✅ Présents | — |
+| Déploiement VPS (Hetzner CX21) | 🔴 À faire — créer le serveur + pointer les DNS | 🔴 Haute |
+| Secrets GitHub Actions | 🔴 À faire — `VPS_HOST`, `VPS_SSH_KEY`, `GHCR_TOKEN` | 🔴 Haute |
 | Contrats testnet Polygon Amoy | 🔴 À faire — besoin de `DEPLOYER_PK` + MATIC Amoy | 🔴 Haute |
 | The Graph subgraph | 🔴 À faire | 🟠 Basse |
 | Monitoring (Grafana Cloud) | 🔴 À faire | 🟠 Basse |
@@ -253,9 +259,25 @@ Le projet est désormais séparé en deux dépôts distincts :
 
 ---
 
-### 🟠 Priorité 5 — Infra + indexation
+### ✅ Priorité 5 — Infra VPS COMPLÉTÉE (configuration)
 
-- VPS Hetzner (déploiement backend framework + service)
+- `infra/setup-vps.sh` — setup Ubuntu 22.04 : Docker, UFW, fail2ban, Certbot, cron TLS
+- `infra/docker-compose.prod.yml` — framework prod : GHCR, healthchecks, réseau isolé
+- `infra/docker-compose.service.prod.yml` — service prod : partage réseau ptf-net avec framework
+- `infra/nginx.conf` — TLS, rate-limiting auth, reverse proxy 3 domaines
+- `infra/.env.*.example` — templates variables de production
+- `.github/workflows/deploy.yml` — CD : build GHCR → SSH Hetzner → Prisma migrate → healthcheck
+
+**Reste à faire (actions manuelles) :**
+- Créer le VPS Hetzner CX21 (4€/mois)
+- Pointer les DNS (`api.ptf-framework.dev`, `api.ptf-service.dev`, `app.ptf-service.dev`)
+- Lancer `setup-vps.sh` + `certbot` + remplir les `.env`
+- Ajouter les secrets GitHub : `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `GHCR_TOKEN`
+
+---
+
+### 🟠 Priorité 6 — Indexation + monitoring
+
 - The Graph subgraph Polygon (indexation events on-chain)
 - Arweave : stockage permanent ARCHITECTURE.md + PLAN_ACTION.md
 - Monitoring Grafana Cloud

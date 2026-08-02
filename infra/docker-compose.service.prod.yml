@@ -1,0 +1,85 @@
+version: "3.9"
+
+# PTF Service (plateforme) — Production (Hetzner CX21, même VPS)
+# Usage : docker compose -f infra/docker-compose.service.prod.yml up -d
+
+services:
+  postgres-service:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${SERVICE_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${SERVICE_POSTGRES_PASSWORD}
+      POSTGRES_DB: ptf_service
+    volumes:
+      - postgres_service_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SERVICE_POSTGRES_USER} -d ptf_service"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [ptf-service-net]
+
+  redis-service:
+    image: redis:7-alpine
+    restart: always
+    command: redis-server --requirepass ${SERVICE_REDIS_PASSWORD} --appendonly yes
+    volumes:
+      - redis_service_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${SERVICE_REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [ptf-service-net]
+
+  ptf-service-backend:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/ptf-service-backend:${IMAGE_TAG:-latest}
+    restart: always
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${SERVICE_POSTGRES_USER}:${SERVICE_POSTGRES_PASSWORD}@postgres-service:5432/ptf_service
+      REDIS_URL: redis://:${SERVICE_REDIS_PASSWORD}@redis-service:6379
+      JWT_SECRET: ${SERVICE_JWT_SECRET}
+      PORT: 4001
+      CORS_ORIGIN: ${SERVICE_CORS_ORIGIN}
+      PTF_FRAMEWORK_API: ${PTF_FRAMEWORK_API:-http://ptf-backend:4000/graphql}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      SMTP_FROM: ${SMTP_FROM}
+      PTF_CONTRACT_POLYGON: ${PTF_CONTRACT_POLYGON}
+    depends_on:
+      postgres-service:
+        condition: service_healthy
+      redis-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4001/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    networks: [ptf-service-net, ptf-net]
+
+  ptf-service-frontend:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/ptf-service-frontend:${IMAGE_TAG:-latest}
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+    depends_on:
+      ptf-service-backend:
+        condition: service_healthy
+    networks: [ptf-service-net]
+
+volumes:
+  postgres_service_data:
+  redis_service_data:
+
+networks:
+  ptf-service-net:
+    driver: bridge
+  ptf-net:
+    external: true  # partage le réseau avec docker-compose.prod.yml

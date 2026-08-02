@@ -1,0 +1,87 @@
+version: "3.9"
+
+# PTF Framework — Production (Hetzner CX21)
+# Usage : docker compose -f infra/docker-compose.prod.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ptf_framework
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ptf_framework"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [ptf-net]
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [ptf-net]
+
+  ptf-backend:
+    image: ghcr.io/${GITHUB_REPOSITORY_OWNER}/ptf-backend:${IMAGE_TAG:-latest}
+    restart: always
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/ptf_framework
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      PORT: 4000
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      DEFAULT_CHAIN: ${DEFAULT_CHAIN:-polygon}
+      SIGNER_PRIVATE_KEY: ${SIGNER_PRIVATE_KEY}
+      RPC_POLYGON: ${RPC_POLYGON}
+      CONTRACT_PROJECT_REGISTRY_POLYGON: ${CONTRACT_PROJECT_REGISTRY_POLYGON}
+      CONTRACT_ESCROW_VAULT_POLYGON: ${CONTRACT_ESCROW_VAULT_POLYGON}
+      CONTRACT_CREDIT_TOKEN_POLYGON: ${CONTRACT_CREDIT_TOKEN_POLYGON}
+      CONTRACT_REPUTATION_REGISTRY_POLYGON: ${CONTRACT_REPUTATION_REGISTRY_POLYGON}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    networks: [ptf-net]
+
+  nginx:
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro
+    depends_on:
+      ptf-backend:
+        condition: service_healthy
+    networks: [ptf-net]
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  ptf-net:
+    driver: bridge
