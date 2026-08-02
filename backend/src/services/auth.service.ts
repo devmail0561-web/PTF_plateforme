@@ -84,8 +84,6 @@ const CHALLENGE_TTL   = 5  * 60 * 1000;  // 5 min
 const SESSION_TTL     = 30 * 86400000;   // 30 jours
 const OAUTH_STATE_TTL = 10 * 60 * 1000;  // 10 min
 
-// Préfixe du message signé — empêche la réutilisation de la signature pour d'autres protocoles
-const SIGN_PREFIX = "PTF Authentication Challenge:\n";
 
 // ── Service ───────────────────────────────────────────────────────────────────
 
@@ -115,15 +113,6 @@ export class AuthService implements IAuthService {
     if (!ethers.isAddress(normalised)) {
       throw new PtfError(PtfErrorCode.INVALID_ADDRESS, `Adresse PTF invalide : ${ptfAddress}`);
     }
-
-    // Invalider les anciens challenges non utilisés pour cette adresse
-    await this.prisma.authChallenge.updateMany({
-      where: {
-        used: false,
-        expiresAt: { gt: new Date() },
-        // On filtre via userId → d'abord trouver l'userId si l'user existe
-      },
-    });
 
     // Trouver ou créer l'utilisateur (le compte est créé au premier login)
     let user = await this.prisma.user.findUnique({ where: { ptfAddress: normalised } });
@@ -188,12 +177,13 @@ export class AuthService implements IAuthService {
       throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Challenge invalide, expiré ou déjà utilisé.");
     }
 
-    // 2. Vérifier la signature : ecrecover(message, signature) == ptfAddress
-    //    Le message signé côté client : signMessage(nonce) utilise le préfixe Ethereum personal_sign
-    const messageToVerify = SIGN_PREFIX + input.nonce;
+    // 2. Vérifier la signature : ecrecover(nonce, signature) == ptfAddress
+    //    ethers.verifyMessage() attend le préfixe Ethereum personal_sign standard
+    //    ("\x19Ethereum Signed Message:\n" + len + message), appliqué automatiquement
+    //    par wallet.signMessageSync(nonce) côté CLI. Les deux côtés utilisent le même standard.
     let recovered: string;
     try {
-      recovered = ethers.verifyMessage(messageToVerify, input.signature);
+      recovered = ethers.verifyMessage(input.nonce, input.signature);
     } catch {
       throw new PtfError(PtfErrorCode.OWNERSHIP_NOT_PROVEN, "Signature invalide.");
     }
