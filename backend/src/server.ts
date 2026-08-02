@@ -1,3 +1,5 @@
+import cluster from "node:cluster";
+import { cpus } from "node:os";
 import { ApolloServer } from "@apollo/server";
 import { expressMiddleware } from "@apollo/server/express4";
 import express from "express";
@@ -212,7 +214,27 @@ async function main() {
   });
 }
 
-main().catch((err) => {
-  console.error("[Server] Erreur fatale :", err);
-  process.exit(1);
-});
+// ── Cluster entrypoint ─────────────────────────────────────────────────────────
+// In production, fork one worker per CPU so Node.js can saturate all cores.
+// Each worker owns its own HTTP server — the OS load-balances connections.
+// TimerService (BullMQ) runs in every worker but BullMQ's Redis-backed jobId
+// deduplication ensures each job fires exactly once across the fleet.
+// In dev (NODE_ENV != production) or when CLUSTER=0, run single-process.
+
+const WORKERS = parseInt(process.env["CLUSTER_WORKERS"] ?? "0") || cpus().length;
+const useCluster = process.env["NODE_ENV"] === "production" && process.env["CLUSTER"] !== "0";
+
+if (useCluster && cluster.isPrimary) {
+  console.log(`[Cluster] Primary ${process.pid} — forking ${WORKERS} workers`);
+  for (let i = 0; i < WORKERS; i++) cluster.fork();
+
+  cluster.on("exit", (worker, code, signal) => {
+    console.warn(`[Cluster] Worker ${worker.process.pid} exited (${signal ?? code}) — reforking`);
+    cluster.fork();
+  });
+} else {
+  main().catch((err) => {
+    console.error("[Server] Erreur fatale :", err);
+    process.exit(1);
+  });
+}

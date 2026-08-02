@@ -19,6 +19,7 @@ describe("ReconciliationWorker", () => {
   const baseConfig = {
     rpcUrl: "http://localhost:8545",
     vaultAddress: "0x1234567890abcdef1234567890abcdef12345678",
+    registryAddress: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
     chain: "polygon",
     intervalMs: 999_999,
     batchSize: 1000,
@@ -87,6 +88,7 @@ describe("ReconciliationWorker", () => {
       const w = new ReconciliationWorker(prisma as never, {
         rpcUrl: "http://localhost:8545",
         vaultAddress: "0xabc",
+        registryAddress: "0xdef",
         chain: "ethereum",
       });
       const cfg = (w as any).config;

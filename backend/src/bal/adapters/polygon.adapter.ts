@@ -19,7 +19,8 @@ export class PolygonAdapter extends EvmAdapterBase {
         escrowVault: process.env["CONTRACT_ESCROW_VAULT_POLYGON"] ?? "",
         creditToken: process.env["CONTRACT_CREDIT_TOKEN_POLYGON"] ?? "",
         reputationRegistry: process.env["CONTRACT_REPUTATION_REGISTRY_POLYGON"] ?? "",
-      }
+      },
+      process.env["RPC_POLYGON_FALLBACK"] // optional secondary endpoint
     );
   }
 }

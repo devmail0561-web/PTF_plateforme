@@ -1,6 +1,58 @@
 import { ethers } from "ethers";
 import type { IChainAdapter, IContractAddresses } from "../chain.adapter.js";
 
+// ── Circuit breaker ────────────────────────────────────────────────────────────
+// Three-state machine: CLOSED (normal) → OPEN (tripped) → HALF_OPEN (probing).
+// Opens after FAILURE_THRESHOLD consecutive failures, resets after RESET_TIMEOUT_MS.
+// When OPEN all calls throw immediately without hitting the RPC — prevents a slow
+// node from blocking claim/submit flows under load.
+
+const FAILURE_THRESHOLD = 5;
+const RESET_TIMEOUT_MS  = 30_000;
+
+type CBState = "CLOSED" | "OPEN" | "HALF_OPEN";
+
+class CircuitBreaker {
+  private state: CBState = "CLOSED";
+  private failures = 0;
+  private openedAt = 0;
+
+  async call<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.state === "OPEN") {
+      if (Date.now() - this.openedAt >= RESET_TIMEOUT_MS) {
+        this.state = "HALF_OPEN";
+      } else {
+        throw new Error("RPC circuit breaker OPEN — retrying in a moment");
+      }
+    }
+
+    try {
+      const result = await fn();
+      this.onSuccess();
+      return result;
+    } catch (err) {
+      this.onFailure();
+      throw err;
+    }
+  }
+
+  private onSuccess(): void {
+    this.failures = 0;
+    this.state = "CLOSED";
+  }
+
+  private onFailure(): void {
+    this.failures++;
+    if (this.failures >= FAILURE_THRESHOLD || this.state === "HALF_OPEN") {
+      this.state    = "OPEN";
+      this.openedAt = Date.now();
+      console.error(`[CircuitBreaker] OPEN after ${this.failures} failures`);
+    }
+  }
+
+  isOpen(): boolean { return this.state === "OPEN"; }
+}
+
 const ERC20_ABI = [
   "function balanceOf(address) view returns (uint256)",
   "function transfer(address to, uint256 amount) returns (bool)",
@@ -52,165 +104,159 @@ export abstract class EvmAdapterBase implements IChainAdapter {
   protected projectRegistry: ethers.Contract;
   protected escrowVault: ethers.Contract;
 
+  private readonly cb = new CircuitBreaker();
+  // Secondary RPC endpoint — used when the primary trips the circuit breaker.
+  private fallbackProvider: ethers.JsonRpcProvider | null = null;
+  private fallbackSigner: ethers.Wallet | null = null;
+
   constructor(
     rpcUrl: string,
     privateKey: string,
-    addresses: IContractAddresses
+    addresses: IContractAddresses,
+    fallbackRpcUrl?: string
   ) {
     this.contractAddresses = addresses;
     this.provider = new ethers.JsonRpcProvider(rpcUrl);
     this.signer = new ethers.Wallet(privateKey, this.provider);
 
-    this.creditToken = new ethers.Contract(
-      addresses.creditToken,
-      CREDIT_TOKEN_ABI,
-      this.signer
-    );
-    this.reputationRegistry = new ethers.Contract(
-      addresses.reputationRegistry,
-      REPUTATION_ABI,
-      this.signer
-    );
-    this.projectRegistry = new ethers.Contract(
-      addresses.projectRegistry,
-      PROJECT_REGISTRY_ABI,
-      this.signer
-    );
-    this.escrowVault = new ethers.Contract(
-      addresses.escrowVault,
-      ESCROW_VAULT_ABI,
-      this.signer
-    );
+    if (fallbackRpcUrl) {
+      this.fallbackProvider = new ethers.JsonRpcProvider(fallbackRpcUrl);
+      this.fallbackSigner   = new ethers.Wallet(privateKey, this.fallbackProvider);
+    }
+
+    this.creditToken         = new ethers.Contract(addresses.creditToken,         CREDIT_TOKEN_ABI,     this.signer);
+    this.reputationRegistry  = new ethers.Contract(addresses.reputationRegistry,  REPUTATION_ABI,       this.signer);
+    this.projectRegistry     = new ethers.Contract(addresses.projectRegistry,     PROJECT_REGISTRY_ABI, this.signer);
+    this.escrowVault         = new ethers.Contract(addresses.escrowVault,         ESCROW_VAULT_ABI,     this.signer);
+  }
+
+  // All RPC calls go through rpc() — circuit breaker wraps the primary; if the
+  // breaker is OPEN and a fallback is configured, the fallback is used directly.
+  protected async rpc<T>(primaryFn: () => Promise<T>, fallbackFn?: () => Promise<T>): Promise<T> {
+    if (this.cb.isOpen() && fallbackFn) {
+      console.warn(`[${this.chainId}] Circuit breaker OPEN — using fallback RPC`);
+      return fallbackFn();
+    }
+    try {
+      return await this.cb.call(primaryFn);
+    } catch (err) {
+      if (fallbackFn) {
+        console.warn(`[${this.chainId}] Primary RPC failed, trying fallback:`, (err as Error).message);
+        return fallbackFn();
+      }
+      throw err;
+    }
+  }
+
+  // Convenience: returns [primarySigner, fallbackSigner] for contract calls
+  protected signers(): [ethers.Wallet, ethers.Wallet | null] {
+    return [this.signer, this.fallbackSigner];
   }
 
   async getBalance(address: string, token: "PTF" | "native"): Promise<bigint> {
-    if (token === "native") {
-      return this.provider.getBalance(address);
-    }
-    return this.creditToken.balanceOf(address) as Promise<bigint>;
+    const [s, fb] = this.signers();
+    return this.rpc(
+      () => token === "native"
+        ? this.provider.getBalance(address)
+        : (new ethers.Contract(this.contractAddresses.creditToken, CREDIT_TOKEN_ABI, s).balanceOf(address) as Promise<bigint>),
+      fb ? () => token === "native"
+        ? this.fallbackProvider!.getBalance(address)
+        : (new ethers.Contract(this.contractAddresses.creditToken, CREDIT_TOKEN_ABI, fb).balanceOf(address) as Promise<bigint>)
+      : undefined
+    );
   }
 
   async getTxCount(address: string): Promise<number> {
-    return this.provider.getTransactionCount(address);
+    const [, fb] = this.signers();
+    return this.rpc(
+      () => this.provider.getTransactionCount(address),
+      fb ? () => this.fallbackProvider!.getTransactionCount(address) : undefined
+    );
   }
 
-  async claimTask(
-    taskId: string,
-    devAddress: string,
-    projectId: string
-  ): Promise<string> {
-    const projectIdBytes = projectId.startsWith("0x")
-      ? projectId
-      : ethers.keccak256(ethers.toUtf8Bytes(projectId));
-    const taskIdBytes = taskId.startsWith("0x")
-      ? taskId
-      : ethers.keccak256(ethers.toUtf8Bytes(taskId));
-    const tx = await this.projectRegistry.markTaskClaimed(projectIdBytes, taskIdBytes);
-    return tx.hash as string;
+  async claimTask(taskId: string, devAddress: string, projectId: string): Promise<string> {
+    const [s, fb] = this.signers();
+    const pId = projectId.startsWith("0x") ? projectId : ethers.keccak256(ethers.toUtf8Bytes(projectId));
+    const tId = taskId.startsWith("0x")    ? taskId    : ethers.keccak256(ethers.toUtf8Bytes(taskId));
+    return this.rpc(
+      async () => { const tx = await new ethers.Contract(this.contractAddresses.projectRegistry, PROJECT_REGISTRY_ABI, s).markTaskClaimed(pId, tId); return tx.hash as string; },
+      fb ? async () => { const tx = await new ethers.Contract(this.contractAddresses.projectRegistry, PROJECT_REGISTRY_ABI, fb).markTaskClaimed(pId, tId); return tx.hash as string; } : undefined
+    );
   }
 
   async softLock(devAddress: string): Promise<string> {
-    const tx = await this.escrowVault.softLock(devAddress);
-    return tx.hash as string;
+    const [s, fb] = this.signers();
+    return this.rpc(
+      async () => { const tx = await new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, s).softLock(devAddress); return tx.hash as string; },
+      fb ? async () => { const tx = await new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, fb).softLock(devAddress); return tx.hash as string; } : undefined
+    );
   }
 
   // F2 — Un seul argument : le contrat utilise SOFT_LOCK_AMOUNT constant en interne.
   async softUnlock(devAddress: string): Promise<string> {
-    const tx = await this.escrowVault.softUnlock(devAddress);
-    return tx.hash as string;
+    const [s, fb] = this.signers();
+    return this.rpc(
+      async () => { const tx = await new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, s).softUnlock(devAddress); return tx.hash as string; },
+      fb ? async () => { const tx = await new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, fb).softUnlock(devAddress); return tx.hash as string; } : undefined
+    );
   }
 
   async getSoftLocked(devAddress: string): Promise<bigint> {
-    return this.escrowVault.softLocked(devAddress) as Promise<bigint>;
+    const [s, fb] = this.signers();
+    return this.rpc(
+      () => new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, s).softLocked(devAddress) as Promise<bigint>,
+      fb ? () => new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, fb).softLocked(devAddress) as Promise<bigint> : undefined
+    );
   }
 
-  async mintCredits(
-    devAddress: string,
-    amount: bigint,
-    taskId: string
-  ): Promise<string> {
-    const tx = await this.creditToken.mint(devAddress, amount);
-    return tx.hash as string;
+  async mintCredits(devAddress: string, amount: bigint, _taskId: string): Promise<string> {
+    const [s, fb] = this.signers();
+    return this.rpc(
+      async () => { const tx = await new ethers.Contract(this.contractAddresses.creditToken, CREDIT_TOKEN_ABI, s).mint(devAddress, amount); return tx.hash as string; },
+      fb ? async () => { const tx = await new ethers.Contract(this.contractAddresses.creditToken, CREDIT_TOKEN_ABI, fb).mint(devAddress, amount); return tx.hash as string; } : undefined
+    );
   }
 
   async burnCredits(devAddress: string, amount: bigint): Promise<string> {
-    const tx = await this.creditToken.burn(devAddress, amount);
-    return tx.hash as string;
+    const [s, fb] = this.signers();
+    return this.rpc(
+      async () => { const tx = await new ethers.Contract(this.contractAddresses.creditToken, CREDIT_TOKEN_ABI, s).burn(devAddress, amount); return tx.hash as string; },
+      fb ? async () => { const tx = await new ethers.Contract(this.contractAddresses.creditToken, CREDIT_TOKEN_ABI, fb).burn(devAddress, amount); return tx.hash as string; } : undefined
+    );
   }
 
-  async releaseTaskReward(
-    projectId: string,
-    taskId: string,
-    devAddress: string,
-    amountPtf: bigint
-  ): Promise<string> {
-    // Deadline = now + 10 minutes (operator signs immediately)
+  async releaseTaskReward(projectId: string, taskId: string, devAddress: string, amountPtf: bigint): Promise<string> {
+    const [s, fb] = this.signers();
+    const pId = (projectId.startsWith("0x") ? projectId : ethers.keccak256(ethers.toUtf8Bytes(projectId))) as `0x${string}`;
+    const tId = (taskId.startsWith("0x")    ? taskId    : ethers.keccak256(ethers.toUtf8Bytes(taskId)))    as `0x${string}`;
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
-    // The operator signer IS the contract owner — sign the EIP-712 release voucher
-    const domain = {
-      name: "PTFEscrowVault",
-      version: "1",
-      chainId: (await this.provider.getNetwork()).chainId,
-      verifyingContract: this.contractAddresses.escrowVault,
+
+    const signRelease = async (signer: ethers.Wallet, provider: ethers.JsonRpcProvider): Promise<string> => {
+      const domain = { name: "PTFEscrowVault", version: "1", chainId: (await provider.getNetwork()).chainId, verifyingContract: this.contractAddresses.escrowVault };
+      const types  = { TaskRelease: [{ name: "projectId", type: "bytes32" }, { name: "taskId", type: "bytes32" }, { name: "dev", type: "address" }, { name: "amount", type: "uint256" }, { name: "nonce", type: "uint256" }, { name: "deadline", type: "uint256" }] };
+      const vault  = new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, signer);
+      // F5 — Lire le nonce on-chain pour éviter les signatures rejouables.
+      const nonce: bigint = await vault.releaseNonces(devAddress, tId);
+      const sig = await signer.signTypedData(domain, types, { projectId: pId, taskId: tId, dev: devAddress, amount: amountPtf, nonce, deadline });
+      const tx  = await vault.releaseTaskReward(pId, tId, devAddress, amountPtf, deadline, sig);
+      return tx.hash as string;
     };
-    const types = {
-      TaskRelease: [
-        { name: "projectId", type: "bytes32" },
-        { name: "taskId", type: "bytes32" },
-        { name: "dev", type: "address" },
-        { name: "amount", type: "uint256" },
-        { name: "nonce", type: "uint256" },
-        { name: "deadline", type: "uint256" },
-      ],
-    };
-    const projectIdBytes = (projectId.startsWith("0x")
-      ? projectId
-      : ethers.keccak256(ethers.toUtf8Bytes(projectId))) as `0x${string}`;
-    // F7 — keccak256 pour taskId > 32 octets, cohérent avec EscrowService.
-    const taskIdBytes = taskId.startsWith("0x")
-      ? taskId as `0x${string}`
-      : ethers.keccak256(ethers.toUtf8Bytes(taskId)) as `0x${string}`;
 
-    // F5 — Lire le nonce on-chain pour éviter les signatures rejoables.
-    const nonce: bigint = await this.escrowVault.releaseNonces(devAddress, taskIdBytes);
-
-    const value = { projectId: projectIdBytes, taskId: taskIdBytes, dev: devAddress, amount: amountPtf, nonce, deadline };
-    const signature = await this.signer.signTypedData(domain, types, value);
-
-    const tx = await this.escrowVault.releaseTaskReward(
-      projectIdBytes,
-      taskIdBytes,
-      devAddress,
-      amountPtf,
-      deadline,
-      signature
+    return this.rpc(
+      () => signRelease(s, this.provider),
+      fb ? () => signRelease(fb, this.fallbackProvider!) : undefined
     );
-    return tx.hash as string;
   }
 
-  // F4 — La fonction du contrat s'appelle executePunishment avec une signature différente :
-  // executePunishment(bytes32 projectId, bytes32 taskId, address dev, uint256 amount, string punishmentType)
-  async executePunishment(
-    projectId: string,
-    taskId: string,
-    devAddress: string,
-    amount: bigint,
-    punishmentType: string
-  ): Promise<string> {
-    const projectIdBytes = projectId.startsWith("0x")
-      ? projectId
-      : ethers.keccak256(ethers.toUtf8Bytes(projectId));
-    const taskIdBytes = taskId.startsWith("0x")
-      ? taskId
-      : ethers.keccak256(ethers.toUtf8Bytes(taskId));
-    const tx = await this.escrowVault.executePunishment(
-      projectIdBytes,
-      taskIdBytes,
-      devAddress,
-      amount,
-      punishmentType
+  // F4 — executePunishment(bytes32 projectId, bytes32 taskId, address dev, uint256 amount, string punishmentType)
+  async executePunishment(projectId: string, taskId: string, devAddress: string, amount: bigint, punishmentType: string): Promise<string> {
+    const [s, fb] = this.signers();
+    const pId = projectId.startsWith("0x") ? projectId : ethers.keccak256(ethers.toUtf8Bytes(projectId));
+    const tId = taskId.startsWith("0x")    ? taskId    : ethers.keccak256(ethers.toUtf8Bytes(taskId));
+    return this.rpc(
+      async () => { const tx = await new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, s).executePunishment(pId, tId, devAddress, amount, punishmentType); return tx.hash as string; },
+      fb ? async () => { const tx = await new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, fb).executePunishment(pId, tId, devAddress, amount, punishmentType); return tx.hash as string; } : undefined
     );
-    return tx.hash as string;
   }
 
   // Alias déprécié — conservé pour compatibilité, délègue vers executePunishment.
