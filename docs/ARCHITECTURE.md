@@ -1251,6 +1251,9 @@ class PTFReputationEngine implements IReputationEngine {
 
 ### IStorageProvider
 
+Utilisé par `MetadataService` pour l'archivage permanent des métadonnées clôturées.
+Voir section **Stockage distribué des métadonnées** pour le cycle de vie complet.
+
 ```typescript
 // Abstraction du stockage décentralisé — Arweave remplaçable par IPFS, Filecoin...
 interface IStorageProvider {
@@ -1264,7 +1267,7 @@ interface ContentRef {
     protocol: "arweave" | "ipfs" | "filecoin";
     id: string;          // txId (Arweave) ou CID (IPFS)
     url: string;         // gateway URL pour lecture
-    hash: string;        // keccak256 du contenu (vérification intégrité)
+    hash: string;        // keccak256 du contenu — vérifié par MetadataRegistry.setArchiveId()
 }
 
 class ArweaveStorageAdapter implements IStorageProvider { ... }
@@ -4415,6 +4418,403 @@ Le Task Service maintient un graphe orienté acyclique (DAG) de toutes les dépe
 
 ---
 
+## Stockage distribué des métadonnées (Content-Addressed Storage)
+
+### Principe
+
+Les métadonnées des tâches et des projets (titre, contexte, objectif, contraintes, verificationSteps, etc.) ne sont stockées ni exclusivement en PostgreSQL ni entièrement on-chain. Elles sont distribuées sur tous les nœuds PTF via un système adressé par contenu : **l'identité d'une donnée est son hash**, pas son emplacement.
+
+```
+hash = keccak256(JSON.stringify(content, sorted_keys))
+```
+
+Ce hash est ancré on-chain dans `ProjectRegistry`. N'importe quel nœud ou client peut vérifier qu'une métadonnée n'a pas été falsifiée en recalculant son hash et en le comparant à l'ancre on-chain — sans faire confiance au nœud qui la sert.
+
+Un nœud qui modifie le contenu produit un hash différent de l'ancre on-chain. Tout client détecte immédiatement la falsification et bascule vers un autre nœud.
+
+---
+
+### Architecture en 3 couches
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  COUCHE 1 — ANCRE ON-CHAIN  (source de vérité des hash)          │
+│                                                                  │
+│  ProjectRegistry (nouveau champ) :                               │
+│    taskMetadataHash[taskId]    = keccak256(task_json)            │
+│    projectMetadataHash[projId] = keccak256(project_json)         │
+│    archiveId[taskId]           = "ar://..."  (après clôture)     │
+│                                                                  │
+│  → Immuable, vérifiable par n'importe qui                        │
+│  → Coût on-chain minimal : 2 bytes32 par tâche                   │
+└──────────────────────────┬───────────────────────────────────────┘
+                           │ chaque nœud vérifie avant d'accepter
+┌──────────────────────────▼───────────────────────────────────────┐
+│  COUCHE 2 — RÉSEAU DISTRIBUÉ  (stockage actif)                   │
+│                                                                  │
+│  Chaque nœud tient un MetadataStore local :                      │
+│    Map<hash, content>  (mémoire + disque)                        │
+│                                                                  │
+│  Gossip protocol (libp2p) :                                      │
+│    Nœud reçoit (hash, content)                                   │
+│    → vérifie keccak256(content) == hash                          │
+│    → vérifie hash == ProjectRegistry.taskMetadataHash[id]        │
+│    → accepte et stocke  |  rejette et logue le pair malveillant  │
+│    → propage aux autres pairs                                    │
+│                                                                  │
+│  Redondance : N nœuds × 1 copie                                  │
+│  Résistance : survit à N-1 pannes simultanées                    │
+│  Falsification : détectée mathématiquement, pas par confiance    │
+└──────────────────────────┬───────────────────────────────────────┘
+                           │ à la clôture (validated / archived)
+┌──────────────────────────▼───────────────────────────────────────┐
+│  COUCHE 3 — ARWEAVE  (archive permanente)                        │
+│                                                                  │
+│  Déclenchement : tâche passe à "validated" ou projet "archived"  │
+│    → n'importe quel nœud peut archiver (pas seulement PTF Corp)  │
+│    → pousse le contenu sur Arweave                               │
+│    → récupère arweaveId = "ar://abc123..."                       │
+│    → appelle MetadataRegistry.setArchiveId(id, arweaveId)        │
+│    → le contrat vérifie : keccak256(content) == hash ancré        │
+│    → si ok : arweaveId accepté, tous les nœuds évictent          │
+│              leur copie locale (libération mémoire)              │
+│                                                                  │
+│  Même si tous les nœuds PTF disparaissent :                      │
+│    → historique complet accessible sur ar://...                  │
+│    → preuves de validation permanentes                           │
+│    → portfolio des développeurs vérifiable à vie                 │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Cycle de vie d'une métadonnée
+
+```
+[Publication]
+
+  1. Créateur publie ptf tasks publish
+  2. Backend sérialise task_json (clés triées — déterministe)
+  3. hash = keccak256(task_json)
+  4. ProjectRegistry.registerTaskMetadata(taskId, hash)  ← ancre on-chain
+  5. MetadataStore.put(hash, content)                    ← stocké localement
+  6. Gossip : (hash, content) propagé à tous les nœuds
+  7. Chaque nœud vérifie et stocke sa propre copie
+
+[Lecture / Vérification]
+
+  1. Client CLI demande taskId à un nœud quelconque
+  2. Nœud retourne content
+  3. CLI recalcule keccak256(content)
+  4. CLI compare avec ProjectRegistry.taskMetadataHash[taskId]
+  5. ✓ Hash correspondant → données intègres, affichage
+  6. ✗ Hash différent   → nœud malveillant ou corrompu
+                          → CLI bascule automatiquement sur un autre nœud
+                          → log de sécurité
+
+[Clôture — tâche validée ou projet archivé]
+
+  1. Statut passe à "validated" (tâche) ou "archived" (projet)
+  2. N'importe quel nœud peut déclencher l'archivage :
+       archiveService.archive(taskId, content)
+  3. Arweave TX soumise avec content en payload
+  4. arweaveId récupéré ("ar://txId")
+  5. MetadataRegistry.setArchiveId(taskId, arweaveId)
+       → contrat vérifie keccak256(content) == hash enregistré
+       → si ok : archiveId accepté, événement ArchiveConfirmed émis
+  6. Tous les nœuds reçoivent ArchiveConfirmed via gossip
+  7. Chaque nœud appelle MetadataStore.evict(hash)
+       → mémoire libérée, donnée accessible via ar://
+```
+
+---
+
+### Règles de sérialisation (déterminisme obligatoire)
+
+Le hash doit être identique quel que soit le nœud qui le calcule. Toute variation (ordre des clés, espaces, types) produit un hash différent et invalide toute la chaîne de vérification.
+
+```typescript
+// Règle absolue : sérialisation déterministe avant tout hash
+function serializeForHash(obj: object): string {
+  return JSON.stringify(obj, Object.keys(obj).sort());
+}
+
+function hashMetadata(content: object): string {
+  return ethers.keccak256(ethers.toUtf8Bytes(serializeForHash(content)));
+}
+```
+
+**Champs inclus dans le hash d'une tâche :**
+
+```typescript
+interface TaskMetadataHashable {
+  taskId:            string;
+  projectId:         string;
+  title:             string;
+  type:              string;
+  priority:          string;
+  context:           string;
+  objective:         string;
+  deliverable:       string;
+  outOfScope:        string[];
+  constraints:       TaskConstraints;
+  verificationSteps: VerificationStep[];
+  claimCriteria:     ClaimCriteria;
+  punishments:       Punishments;
+  scoring:           TaskScoring;
+  dependencies:      string[];
+  duration:          string;
+  rewardAmount?:     number;
+  rewardToken?:      string;
+  rewardMode:        "free" | "paid";
+  createdAt:         string;  // ISO — inclus pour unicité temporelle
+}
+// NE PAS inclure dans le hash : status, claimedAt, deadline, devAddress
+// Ces champs sont mutables — ils ne font pas partie de l'identité immuable de la tâche
+```
+
+---
+
+### Nouveau contrat — `MetadataRegistry.sol`
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/**
+ * MetadataRegistry — ancre les hash de métadonnées et les identifiants d'archive.
+ *
+ * Principe : le contenu est stocké off-chain (nœuds PTF + Arweave).
+ * Ce contrat stocke uniquement les hash (32 bytes par entrée) comme
+ * source de vérité cryptographique. N'importe qui peut vérifier
+ * l'intégrité d'une métadonnée sans faire confiance au nœud qui la sert.
+ */
+contract MetadataRegistry {
+  // hash des métadonnées immuables par entité
+  mapping(bytes32 => bytes32) public taskMetadataHash;
+  mapping(bytes32 => bytes32) public projectMetadataHash;
+
+  // identifiant Arweave après archivage (ar://txId)
+  mapping(bytes32 => string)  public archiveId;
+
+  // empêche la ré-archivage d'une entrée déjà archivée
+  mapping(bytes32 => bool)    public archived;
+
+  event MetadataRegistered(bytes32 indexed id, bytes32 hash);
+  event ArchiveConfirmed(bytes32 indexed id, string arweaveId);
+
+  error AlreadyRegistered();
+  error AlreadyArchived();
+  error HashMismatch();
+  error EmptyContent();
+
+  modifier onlyBackend() {
+    require(authorizedBackends[msg.sender], "Not authorized");
+    _;
+  }
+  mapping(address => bool) public authorizedBackends;
+
+  constructor(address initialBackend) {
+    authorizedBackends[initialBackend] = true;
+  }
+
+  // Appelé lors de ptf tasks publish — enregistre le hash de chaque tâche
+  function registerTaskMetadata(bytes32 taskId, bytes32 hash) external onlyBackend {
+    if (taskMetadataHash[taskId] != bytes32(0)) revert AlreadyRegistered();
+    taskMetadataHash[taskId] = hash;
+    emit MetadataRegistered(taskId, hash);
+  }
+
+  function registerProjectMetadata(bytes32 projectId, bytes32 hash) external onlyBackend {
+    if (projectMetadataHash[projectId] != bytes32(0)) revert AlreadyRegistered();
+    projectMetadataHash[projectId] = hash;
+    emit MetadataRegistered(projectId, hash);
+  }
+
+  // Appelé par n'importe quel nœud après archivage sur Arweave.
+  // Le contrat vérifie que le contenu archivé correspond au hash enregistré.
+  function setArchiveId(
+    bytes32   id,
+    string  calldata arweaveId,
+    bytes   calldata content    // contenu original pour vérification
+  ) external {
+    if (archived[id])                          revert AlreadyArchived();
+    if (bytes(arweaveId).length == 0)          revert EmptyContent();
+
+    bytes32 contentHash = keccak256(content);
+    bytes32 registered  = taskMetadataHash[id] != bytes32(0)
+      ? taskMetadataHash[id]
+      : projectMetadataHash[id];
+
+    if (contentHash != registered)             revert HashMismatch();
+
+    archiveId[id] = arweaveId;
+    archived[id]  = true;
+    emit ArchiveConfirmed(id, arweaveId);
+  }
+
+  // Vérification pure — utilisable par n'importe quel client sans gas
+  function verify(bytes32 id, bytes calldata content) external view returns (bool) {
+    bytes32 registered = taskMetadataHash[id] != bytes32(0)
+      ? taskMetadataHash[id]
+      : projectMetadataHash[id];
+    return registered != bytes32(0) && keccak256(content) == registered;
+  }
+}
+```
+
+---
+
+### Nouveau service backend — `MetadataService`
+
+```typescript
+export class MetadataService {
+  // Cache mémoire : hash → content (sérialisé)
+  private store = new Map<string, string>();
+
+  constructor(
+    private readonly chainAdapter:   IChainAdapter,
+    private readonly arweave:        IStorageProvider,
+    private readonly gossip:         IGossipService,
+  ) {}
+
+  // Appelé à la publication d'une tâche
+  async register(id: string, content: object): Promise<string> {
+    const serialized = serializeForHash(content);
+    const hash       = hashMetadata(content);
+
+    // 1. Ancrer on-chain
+    await this.chainAdapter.registerTaskMetadata(id, hash);
+
+    // 2. Stocker localement
+    this.store.set(hash, serialized);
+
+    // 3. Propager aux pairs
+    await this.gossip.broadcast({ hash, content: serialized });
+
+    return hash;
+  }
+
+  // Appelé par le gossip quand un pair envoie une métadonnée
+  async onGossipReceive(hash: string, serialized: string): Promise<void> {
+    // Vérification locale (pas de RPC)
+    const computed = ethers.keccak256(ethers.toUtf8Bytes(serialized));
+    if (computed !== hash) {
+      console.warn(`[MetadataService] Hash invalide reçu du pair`);
+      return;
+    }
+    this.store.set(hash, serialized);
+  }
+
+  // Retourne le contenu après vérification — utilisé par les resolvers GraphQL
+  async get(id: string): Promise<object | null> {
+    const onChainHash = await this.chainAdapter.getTaskMetadataHash(id);
+    if (!onChainHash) return null;
+
+    const serialized = this.store.get(onChainHash);
+    if (!serialized) return null;
+
+    // Vérification systématique avant de servir
+    const computed = ethers.keccak256(ethers.toUtf8Bytes(serialized));
+    if (computed !== onChainHash) {
+      console.error(`[MetadataService] Données corrompues pour ${id} — eviction`);
+      this.store.delete(onChainHash);
+      return null;
+    }
+
+    return JSON.parse(serialized);
+  }
+
+  // Déclenché quand une tâche passe à "validated" ou un projet à "archived"
+  // Peut être appelé par n'importe quel nœud — le contrat valide le hash
+  async archive(id: string): Promise<string> {
+    const onChainHash = await this.chainAdapter.getTaskMetadataHash(id);
+    if (!onChainHash) throw new Error(`Métadonnée inconnue : ${id}`);
+
+    const serialized = this.store.get(onChainHash);
+    if (!serialized) throw new Error(`Contenu introuvable localement pour ${id}`);
+
+    // Pousser sur Arweave
+    const ref = await this.arweave.store(serialized, { id, hash: onChainHash });
+
+    // Ancrer l'identifiant Arweave on-chain (le contrat vérifie le hash)
+    await this.chainAdapter.setArchiveId(id, ref.id, Buffer.from(serialized));
+
+    // Libérer la copie locale
+    this.store.delete(onChainHash);
+
+    console.log(`[MetadataService] ${id} archivé sur Arweave : ar://${ref.id}`);
+    return ref.id;
+  }
+}
+```
+
+---
+
+### Vérification côté CLI
+
+La CLI vérifie automatiquement l'intégrité de toute métadonnée reçue avant affichage.
+
+```typescript
+// utils/api.ts — enrichissement de getTask()
+async getTask(id: string): Promise<{ task: PtfTask | null; offline: boolean }> {
+  const result = await this.query<{ task: PtfTask }>(/* ... */);
+  const task   = result.task;
+
+  if (task && !this.isOffline()) {
+    // Vérification hash on-chain
+    const onChainHash = await this.getOnChainMetadataHash(id);
+    if (onChainHash) {
+      const localHash = hashMetadata(extractHashableFields(task));
+      if (localHash !== onChainHash) {
+        throw new Error(
+          `Nœud ${this.apiUrl} retourne des données falsifiées pour la tâche ${id}.\n` +
+          `Hash local    : ${localHash.slice(0, 16)}...\n` +
+          `Hash on-chain : ${onChainHash.slice(0, 16)}...\n` +
+          `Essayez un autre nœud : ptf config set-api <autre-url>`
+        );
+      }
+    }
+  }
+
+  return { task, offline: this.isOffline() };
+}
+```
+
+---
+
+### Règle d'archivage décentralisé
+
+N'importe quel nœud peut initier l'archivage d'une tâche clôturée. Le premier nœud à soumettre un arweaveId valide gagne — le contrat rejette les soumissions suivantes (déjà archivé). Cela évite de dépendre de PTF Corp pour que les archives soient créées.
+
+```
+Tâche passe à "validated"
+  → événement ArchiveTrigger diffusé dans le réseau gossip
+  → N nœuds tentent d'archiver en parallèle
+  → Premier nœud à soumettre un arweaveId valide → accepté on-chain
+  → Les autres reçoivent AlreadyArchived → abandonnent
+  → Tous les nœuds évictent leur copie locale via ArchiveConfirmed
+```
+
+---
+
+### Ce qui est stocké où — récapitulatif final
+
+| Donnée | On-chain | Nœuds PTF (actif) | Arweave (archivé) |
+|---|---|---|---|
+| Hash métadonnées tâche | ✓ permanent | — | — |
+| Hash métadonnées projet | ✓ permanent | — | — |
+| Arweave ID | ✓ après clôture | — | — |
+| Contenu métadonnées (tâche active) | — | ✓ tous les nœuds | — |
+| Contenu métadonnées (tâche clôturée) | — | évicté | ✓ permanent |
+| États financiers (escrow, soldes) | ✓ permanent | cache read-only | — |
+| Résultats validation | — | PostgreSQL | ✓ archivé |
+| Preuves PTF Agent | — | PostgreSQL | ✓ archivé |
+| Code source | — | jamais | — |
+| Clés privées | — | jamais | — |
+
+---
+
 ## Réseau PTF (broadcast décentralisé)
 
 Le réseau PTF est un réseau de nœuds décentralisé qui diffuse les tâches disponibles à tous les participants. Il est distinct de la blockchain : la chaîne configurée enregistre les états définitifs via le BAL, le réseau PTF diffuse les opportunités en temps quasi-réel.
@@ -5073,14 +5473,19 @@ PostgreSQL est un **cache de lecture** pour les données financières on-chain. 
 
 ### Source de vérité par type de données
 
-| Donnée                    | Source de vérité | PostgreSQL        |
-|---------------------------|------------------|-------------------|
-| Solde USDC escrow         | On-chain         | Cache (read-only) |
-| Solde crédits PTF         | On-chain         | Cache (read-only) |
-| Score réputation          | On-chain         | Cache (read-only) |
-| Statut tâche              | On-chain         | Replica via events|
-| Résultats validation      | PostgreSQL       | Source de vérité  |
-| Sessions utilisateur      | Redis            | Source de vérité  |
+| Donnée                              | Source de vérité        | PostgreSQL / Nœuds      |
+|-------------------------------------|-------------------------|-------------------------|
+| Solde USDC escrow                   | On-chain                | Cache (read-only)       |
+| Solde crédits PTF                   | On-chain                | Cache (read-only)       |
+| Score réputation                    | On-chain                | Cache (read-only)       |
+| Statut tâche                        | On-chain                | Replica via events      |
+| Hash métadonnées tâche/projet       | On-chain (MetadataRegistry) | —                   |
+| Arweave ID (tâches archivées)       | On-chain (MetadataRegistry) | —                   |
+| Contenu métadonnées (tâches actives)| Nœuds PTF (MetadataStore)   | Map<hash, content>  |
+| Contenu métadonnées (tâches closes) | Arweave                 | évicté des nœuds        |
+| Résultats validation                | PostgreSQL              | Source de vérité        |
+| Preuves PTF Agent                   | PostgreSQL + Arweave    | Source de vérité        |
+| Sessions utilisateur                | Redis                   | Source de vérité        |
 
 **Règles :**
 - PostgreSQL ne met JAMAIS à jour les données financières directement
@@ -5261,12 +5666,15 @@ interface PlatformKPIs {
 | Frontend | Next.js 14 + TailwindCSS | Interface web, dashboard multi-projets — Vercel free (dev) / Vercel Pro en prod |
 | Backend API | Node.js + TypeScript + GraphQL (Apollo) | Logique métier |
 | Base de données | PostgreSQL 16 | Données relationnelles, timers, punitions — auto-hébergé sur VPS Hetzner (gratuit) ; Neon free tier en dev |
-| Cache / Locks (Sentinel) | Redis 7 — Sentinel (1 master + 2 replicas + 3 sentinels) | Sessions JWT, locks distribués (anti-collision Redlock), rate limiting — auto-hébergé sur VPS Hetzner (gratuit) ; Upstash free tier en dev |
+| Cache / Locks (Sentinel) | Redis 7 — Sentinel (1 master + 2 replicas + 3 sentinels) | Sessions JWT, locks distribués (anti-collision Redlock), rate limiting |
 | Cache / Queues (Cluster) | Redis 7 — Cluster (3 shards × 2 replicas = 6 nœuds) | BullMQ queues (timers, notifications, punishments), cache listings |
 | Job Queue | BullMQ (Redis Cluster) | Cron jobs TimerService, alertes deadline, expiration |
 | Blockchain | Via BAL (défaut : Polygon PoS) | Smart contracts, paiements, EIP-712 — extensible à toute chaîne EVM ou non-EVM |
+| Smart contracts | ProjectRegistry, EscrowVault, CreditToken, ReputationRegistry, **MetadataRegistry** | MetadataRegistry : hash des métadonnées + Arweave IDs ancré on-chain |
+| MetadataStore (nœuds) | Map<hash, content> en mémoire + disque | Stockage distribué des métadonnées actives — éviction après archivage |
+| Archive permanente | Arweave | Métadonnées des tâches/projets clôturés — accessible sans PTF, pour toujours |
 | Sandbox dev | Docker + gVisor | Environnement isolé projets privés |
-| Réseau PTF | Nœuds P2P (libp2p) | Broadcast décentralisé des tâches |
+| Réseau PTF | Nœuds P2P (libp2p) | Broadcast tâches + gossip métadonnées (hash, content) |
 | LLM (utilisateur) | Clé API fournie par le développeur/créateur (`ptf config set-llm`) | TaskGeneratorService + DocumentGeneratorService — PTF ne gère pas de compte LLM centralisé |
 | RPC Blockchain | RPC publics gratuits (défaut) — Alchemy/Infura si >1M req/mois | polygon-rpc.com, cloudflare-eth.com, bsc-dataseed.binance.org, api.avax.network… |
 | Indexeur on-chain | The Graph — hosted service (gratuit petits volumes) | Réputation cross-chaîne, historique tâches, queries multi-chaîne |
