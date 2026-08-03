@@ -22,6 +22,8 @@ model Project {
   lastSyncAt   DateTime?
   escrowBalance Decimal @default(0) @db.Decimal(18, 6)
   merkleRoot   String?
+  // Content-addressed storage — hash of immutable project fields.
+  metadataHash String?
   status       String   @default("draft")
   language     String?
   stack        String[]
@@ -75,6 +77,11 @@ model Task {
   rewardToken       String?
   commitHash        String?
   branchRef         String?
+  // Content-addressed storage — hash of immutable task fields, anchored on-chain.
+  // Computed at creation (bulkCreate/create), verified on read.
+  // claim_pending is a valid transient status (set before on-chain call, rolled back on failure).
+  metadataHash      String?
+  arweaveId         String?   // ar://txId — set when task reaches "validated"
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 

@@ -9,11 +9,13 @@ export class MockChainAdapter implements IChainAdapter {
     reputationRegistry: "0x0000000000000000000000000000000000000004",
   };
 
-  private balances = new Map<string, bigint>();
-  private softLocks = new Map<string, bigint>();
-  private reputations = new Map<string, bigint>();
-  private banned = new Set<string>();
-  private txCounter = 0;
+  private balances      = new Map<string, bigint>();
+  private softLocks     = new Map<string, bigint>();
+  private reputations   = new Map<string, bigint>();
+  private banned        = new Set<string>();
+  private txCounter     = 0;
+  private metadataHashes = new Map<string, string>();   // taskId/projectId → hash
+  private archiveIds     = new Map<string, string>();   // taskId/projectId → arweaveId
 
   constructor(chainId = "mock") {
     this.chainId = chainId;
@@ -155,5 +157,36 @@ export class MockChainAdapter implements IChainAdapter {
 
   isValidAddress(address: string): boolean {
     return /^0x[0-9a-fA-F]{40}$/.test(address);
+  }
+
+  // ── Content-addressed metadata (mock) ──────────────────────────────────────
+
+  async registerTaskMetadata(taskId: string, hash: string): Promise<string> {
+    this.metadataHashes.set(taskId, hash);
+    return this.mockTxHash();
+  }
+
+  async registerProjectMetadata(projectId: string, hash: string): Promise<string> {
+    this.metadataHashes.set(projectId, hash);
+    return this.mockTxHash();
+  }
+
+  async setTaskArchiveId(taskId: string, arweaveId: string, _contentHash: string): Promise<string> {
+    this.archiveIds.set(taskId, arweaveId);
+    return this.mockTxHash();
+  }
+
+  async setProjectArchiveId(projectId: string, arweaveId: string, _contentHash: string): Promise<string> {
+    this.archiveIds.set(projectId, arweaveId);
+    return this.mockTxHash();
+  }
+
+  async verifyTaskMetadata(taskId: string, contentHash: string): Promise<boolean> {
+    const stored = this.metadataHashes.get(taskId);
+    return stored !== undefined && stored === contentHash;
+  }
+
+  async getTaskMetadataHash(taskId: string): Promise<string | null> {
+    return this.metadataHashes.get(taskId) ?? null;
   }
 }

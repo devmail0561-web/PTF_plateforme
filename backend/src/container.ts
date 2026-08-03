@@ -17,6 +17,8 @@ import {
 import { GithubService } from "./services/github.service.js";
 import { EscrowService } from "./services/escrow.service.js";
 import { ValidationService } from "./services/validation.service.js";
+import { MetadataService } from "./services/metadata.service.js";
+import { MockStorageProvider } from "./services/storage.provider.js";
 import type { IServiceContainer } from "./graphql/context.js";
 
 // ── Redis factory ──────────────────────────────────────────────────────────────
@@ -131,12 +133,22 @@ export function buildContainer(): {
   const walletService     = new WalletService(chainRegistry);
   const projectService    = new ProjectService(prisma, chainRegistry, githubService);
   const punishmentService = new PunishmentService(prisma, chainRegistry, reputationService);
+
+  // MetadataService — uses MockStorageProvider in dev (no Arweave key).
+  // In production, replace MockStorageProvider with ArweaveStorageAdapter.
+  const storageProvider = new MockStorageProvider();
+  const metadataService = new MetadataService(
+    chainRegistry.getDefault(),
+    storageProvider,
+  );
+
   const taskService       = new TaskService(
     prisma,
     chainRegistry,
     reputationService,
     walletService,
-    redisSentinel   // Redlock runs on Sentinel
+    redisSentinel,    // Redlock runs on Sentinel
+    metadataService,
   );
   const timerService      = new TimerService(prisma, punishmentService, redisQueue);  // BullMQ on Cluster
   const escrowService     = new EscrowService(prisma, chainRegistry, reputationService);

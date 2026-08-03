@@ -76,6 +76,13 @@ const PROJECT_REGISTRY_ABI = [
   "function updateMerkleRoot(bytes32 projectId, bytes32 newRoot) external",
   "function verifyTask(bytes32 projectId, bytes32 taskId, bytes32[] proof) view returns (bool)",
   "function registerProject(bytes32 projectId, address projectOwner, uint8 projectType, uint8 rewardMode) external",
+  // Content-addressed metadata
+  "function registerTaskMetadata(bytes32 taskId, bytes32 hash) external",
+  "function registerProjectMetadata(bytes32 projectId, bytes32 hash) external",
+  "function setTaskArchiveId(bytes32 taskId, string arweaveId, bytes32 contentHash) external",
+  "function setProjectArchiveId(bytes32 projectId, string arweaveId, bytes32 contentHash) external",
+  "function verifyTaskMetadata(bytes32 taskId, bytes32 contentHash) view returns (bool)",
+  "function taskMetadataHash(bytes32 taskId) view returns (bytes32)",
 ];
 
 const ESCROW_VAULT_ABI = [
@@ -320,6 +327,61 @@ export abstract class EvmAdapterBase implements IChainAdapter {
       taskIdBytes,
       proof
     ) as Promise<boolean>;
+  }
+
+  // ── Content-addressed metadata ───────────────────────────────────────────────
+
+  async registerTaskMetadata(taskId: string, hash: string): Promise<string> {
+    const [s, fb] = this.signers();
+    const tId = taskId.startsWith("0x") ? taskId : ethers.keccak256(ethers.toUtf8Bytes(taskId));
+    return this.rpc(
+      async () => { const tx = await new ethers.Contract(this.contractAddresses.projectRegistry, PROJECT_REGISTRY_ABI, s).registerTaskMetadata(tId, hash); return tx.hash as string; },
+      fb ? async () => { const tx = await new ethers.Contract(this.contractAddresses.projectRegistry, PROJECT_REGISTRY_ABI, fb).registerTaskMetadata(tId, hash); return tx.hash as string; } : undefined
+    );
+  }
+
+  async registerProjectMetadata(projectId: string, hash: string): Promise<string> {
+    const [s, fb] = this.signers();
+    const pId = projectId.startsWith("0x") ? projectId : ethers.keccak256(ethers.toUtf8Bytes(projectId));
+    return this.rpc(
+      async () => { const tx = await new ethers.Contract(this.contractAddresses.projectRegistry, PROJECT_REGISTRY_ABI, s).registerProjectMetadata(pId, hash); return tx.hash as string; },
+      fb ? async () => { const tx = await new ethers.Contract(this.contractAddresses.projectRegistry, PROJECT_REGISTRY_ABI, fb).registerProjectMetadata(pId, hash); return tx.hash as string; } : undefined
+    );
+  }
+
+  async setTaskArchiveId(taskId: string, arweaveId: string, contentHash: string): Promise<string> {
+    const [s, fb] = this.signers();
+    const tId = taskId.startsWith("0x") ? taskId : ethers.keccak256(ethers.toUtf8Bytes(taskId));
+    return this.rpc(
+      async () => { const tx = await new ethers.Contract(this.contractAddresses.projectRegistry, PROJECT_REGISTRY_ABI, s).setTaskArchiveId(tId, arweaveId, contentHash); return tx.hash as string; },
+      fb ? async () => { const tx = await new ethers.Contract(this.contractAddresses.projectRegistry, PROJECT_REGISTRY_ABI, fb).setTaskArchiveId(tId, arweaveId, contentHash); return tx.hash as string; } : undefined
+    );
+  }
+
+  async setProjectArchiveId(projectId: string, arweaveId: string, contentHash: string): Promise<string> {
+    const [s, fb] = this.signers();
+    const pId = projectId.startsWith("0x") ? projectId : ethers.keccak256(ethers.toUtf8Bytes(projectId));
+    return this.rpc(
+      async () => { const tx = await new ethers.Contract(this.contractAddresses.projectRegistry, PROJECT_REGISTRY_ABI, s).setProjectArchiveId(pId, arweaveId, contentHash); return tx.hash as string; },
+      fb ? async () => { const tx = await new ethers.Contract(this.contractAddresses.projectRegistry, PROJECT_REGISTRY_ABI, fb).setProjectArchiveId(pId, arweaveId, contentHash); return tx.hash as string; } : undefined
+    );
+  }
+
+  async verifyTaskMetadata(taskId: string, contentHash: string): Promise<boolean> {
+    const [s] = this.signers();
+    const tId = taskId.startsWith("0x") ? taskId : ethers.keccak256(ethers.toUtf8Bytes(taskId));
+    return this.rpc(
+      () => new ethers.Contract(this.contractAddresses.projectRegistry, PROJECT_REGISTRY_ABI, s).verifyTaskMetadata(tId, contentHash) as Promise<boolean>
+    );
+  }
+
+  async getTaskMetadataHash(taskId: string): Promise<string | null> {
+    const [s] = this.signers();
+    const tId = taskId.startsWith("0x") ? taskId : ethers.keccak256(ethers.toUtf8Bytes(taskId));
+    return this.rpc(async () => {
+      const h = await new ethers.Contract(this.contractAddresses.projectRegistry, PROJECT_REGISTRY_ABI, s).taskMetadataHash(tId) as string;
+      return h === ethers.ZeroHash ? null : h;
+    });
   }
 
   async verifyEIP712Signature(

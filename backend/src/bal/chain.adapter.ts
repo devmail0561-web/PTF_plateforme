@@ -71,6 +71,14 @@ export interface IChainAdapter {
     proof: string[]
   ): Promise<boolean>;
 
+  // Content-addressed metadata
+  registerTaskMetadata(taskId: string, hash: string): Promise<string>;
+  registerProjectMetadata(projectId: string, hash: string): Promise<string>;
+  setTaskArchiveId(taskId: string, arweaveId: string, contentHash: string): Promise<string>;
+  setProjectArchiveId(projectId: string, arweaveId: string, contentHash: string): Promise<string>;
+  verifyTaskMetadata(taskId: string, contentHash: string): Promise<boolean>;
+  getTaskMetadataHash(taskId: string): Promise<string | null>;
+
   // EIP-712
   verifyEIP712Signature(
     domain: Record<string, unknown>,

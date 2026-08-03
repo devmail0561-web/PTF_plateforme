@@ -2,6 +2,8 @@ import type { PrismaClient, Task } from "@prisma/client";
 import type { IChainRegistry } from "../bal/chain.registry.js";
 import type { IReputationService } from "./reputation.service.js";
 import type { IWalletService } from "./wallet.service.js";
+import type { IMetadataService } from "./metadata.service.js";
+import { extractTaskHashableFields, hashMetadata } from "./metadata.service.js";
 import type {
   TaskFilter,
   PublicTaskView,
@@ -103,7 +105,8 @@ export class TaskService implements ITaskService {
     private readonly chainRegistry: IChainRegistry,
     private readonly reputationService: IReputationService,
     private readonly walletService: IWalletService,
-    redis: AnyRedis
+    redis: AnyRedis,
+    private readonly metadataService?: IMetadataService,
   ) {
     this.redlock = new Redlock([redis], { retryCount: 3, retryDelay: 200 });
   }
@@ -127,7 +130,7 @@ export class TaskService implements ITaskService {
       ? this.reputationService.calculatePoints(scoring, durationDays)
       : 0;
 
-    return this.prisma.task.create({
+    const task = await this.prisma.task.create({
       data: {
         id: taskId,
         projectId,
@@ -154,6 +157,16 @@ export class TaskService implements ITaskService {
         rewardToken: draft.rewardAmount ? "PTF" : undefined,
       },
     });
+
+    // Compute and store the metadata hash immediately after creation so the
+    // field is available for on-chain registration at publish time.
+    const metadataHash = hashMetadata(extractTaskHashableFields(task));
+    await this.prisma.task.update({
+      where: { id: task.id },
+      data:  { metadataHash },
+    });
+
+    return { ...task, metadataHash };
   }
 
   async bulkCreate(projectId: string, drafts: TaskDraft[]): Promise<Task[]> {
@@ -485,6 +498,25 @@ export class TaskService implements ITaskService {
       where: { id: taskId },
       data: { status: "expired" },
     });
+  }
+
+  // Called by ValidationService / EscrowService after peer-review approval.
+  // Transitions task to "validated" and triggers async archival to Arweave.
+  async validate(taskId: string): Promise<Task> {
+    const task = await this.prisma.task.update({
+      where: { id: taskId },
+      data:  { status: "validated" },
+    });
+
+    // Fire-and-forget archive — non-blocking. If it fails, ReconciliationWorker
+    // or any other node can retry via setTaskArchiveId (contract deduplicates).
+    if (this.metadataService) {
+      this.metadataService.archiveTask(task).catch((err: unknown) => {
+        console.error(`[TaskService] Archive failed for ${taskId} — will be retried:`, err);
+      });
+    }
+
+    return task;
   }
 
   async computeMerkleRoot(projectId: string): Promise<string> {

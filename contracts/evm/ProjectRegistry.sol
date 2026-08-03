@@ -33,6 +33,20 @@ contract ProjectRegistry is Ownable, ReentrancyGuard {
     // projectId → taskId → bool (task is claimed/submitted/validated)
     mapping(bytes32 => mapping(bytes32 => bool)) private _claimedTasks;
 
+    // ── Content-Addressed Metadata ────────────────────────────────────────────
+    // Stores keccak256 of immutable task/project metadata JSON (sorted keys).
+    // Content lives off-chain (PTF nodes + Arweave); this is the cryptographic anchor.
+    // Any client can verify integrity: keccak256(content) == taskMetadataHash[taskId].
+    mapping(bytes32 => bytes32) public taskMetadataHash;
+    mapping(bytes32 => bytes32) public projectMetadataHash;
+
+    // Arweave permanent archive IDs — set when task reaches "validated" or project "archived".
+    // ar://txId — content accessible at https://arweave.net/<txId> forever.
+    mapping(bytes32 => string)  public taskArchiveId;
+    mapping(bytes32 => string)  public projectArchiveId;
+    mapping(bytes32 => bool)    private _taskArchived;
+    mapping(bytes32 => bool)    private _projectArchived;
+
     // Addresses authorized to register projects (PTF backend)
     mapping(address => bool) public registrars;
 
@@ -46,6 +60,10 @@ contract ProjectRegistry is Ownable, ReentrancyGuard {
     event TaskClaimed(bytes32 indexed projectId, bytes32 indexed taskId);
     event ProjectLocked(bytes32 indexed projectId);
     event ProjectDeactivated(bytes32 indexed projectId);
+    event TaskMetadataRegistered(bytes32 indexed taskId, bytes32 hash);
+    event ProjectMetadataRegistered(bytes32 indexed projectId, bytes32 hash);
+    event TaskArchived(bytes32 indexed taskId, string arweaveId);
+    event ProjectArchived(bytes32 indexed projectId, string arweaveId);
 
     error ProjectNotFound();
     error ProjectAlreadyExists();
@@ -53,6 +71,10 @@ contract ProjectRegistry is Ownable, ReentrancyGuard {
     error TaskAlreadyClaimed();
     error NotRegistrar();
     error NotProjectOwner();
+    error MetadataAlreadyRegistered();
+    error AlreadyArchived();
+    error HashMismatch();
+    error EmptyArweaveId();
 
     modifier onlyRegistrar() {
         if (!registrars[msg.sender]) revert NotRegistrar();
@@ -183,5 +205,100 @@ contract ProjectRegistry is Ownable, ReentrancyGuard {
     function deactivate(bytes32 projectId) external onlyOwner projectExists(projectId) {
         _projects[projectId].active = false;
         emit ProjectDeactivated(projectId);
+    }
+
+    // ── Content-Addressed Metadata ────────────────────────────────────────────
+
+    /**
+     * Register the keccak256 hash of a task's immutable metadata.
+     * Called by PTF backend at bulkCreate / ptf tasks publish.
+     * The hash covers all fields that must not change after publication
+     * (title, context, constraints, punishments, scoring, etc.) but NOT
+     * mutable fields (status, claimedAt, devAddress).
+     */
+    function registerTaskMetadata(bytes32 taskId, bytes32 hash)
+        external
+        onlyRegistrar
+    {
+        if (taskMetadataHash[taskId] != bytes32(0)) revert MetadataAlreadyRegistered();
+        taskMetadataHash[taskId] = hash;
+        emit TaskMetadataRegistered(taskId, hash);
+    }
+
+    /**
+     * Register the keccak256 hash of a project's immutable metadata.
+     * Called at project creation (ptf init).
+     */
+    function registerProjectMetadata(bytes32 projectId, bytes32 hash)
+        external
+        onlyRegistrar
+    {
+        if (projectMetadataHash[projectId] != bytes32(0)) revert MetadataAlreadyRegistered();
+        projectMetadataHash[projectId] = hash;
+        emit ProjectMetadataRegistered(projectId, hash);
+    }
+
+    /**
+     * Anchor an Arweave archive ID for a validated task.
+     * Called by any PTF node after pushing content to Arweave.
+     * The caller provides the expected hash — the contract verifies it matches
+     * the registered hash. Content never touches the contract (gas-efficient).
+     *
+     * First valid call wins; subsequent calls revert with AlreadyArchived.
+     * This allows any node to archive without relying on PTF Corp.
+     */
+    function setTaskArchiveId(
+        bytes32 taskId,
+        string  calldata arweaveId,
+        bytes32 contentHash     // keccak256(content) computed off-chain by caller
+    ) external {
+        if (_taskArchived[taskId])                  revert AlreadyArchived();
+        if (bytes(arweaveId).length == 0)           revert EmptyArweaveId();
+        if (taskMetadataHash[taskId] == bytes32(0)) revert MetadataAlreadyRegistered(); // not registered
+        if (contentHash != taskMetadataHash[taskId]) revert HashMismatch();
+
+        taskArchiveId[taskId]  = arweaveId;
+        _taskArchived[taskId]  = true;
+        emit TaskArchived(taskId, arweaveId);
+    }
+
+    /**
+     * Same as setTaskArchiveId but for projects (status "archived").
+     */
+    function setProjectArchiveId(
+        bytes32 projectId,
+        string  calldata arweaveId,
+        bytes32 contentHash
+    ) external {
+        if (_projectArchived[projectId])                  revert AlreadyArchived();
+        if (bytes(arweaveId).length == 0)                 revert EmptyArweaveId();
+        if (projectMetadataHash[projectId] == bytes32(0)) revert MetadataAlreadyRegistered();
+        if (contentHash != projectMetadataHash[projectId]) revert HashMismatch();
+
+        projectArchiveId[projectId]  = arweaveId;
+        _projectArchived[projectId]  = true;
+        emit ProjectArchived(projectId, arweaveId);
+    }
+
+    /**
+     * Pure view — any client can verify off-chain content without gas.
+     * Returns true if keccak256(content) matches the registered hash.
+     */
+    function verifyTaskMetadata(bytes32 taskId, bytes32 contentHash)
+        external
+        view
+        returns (bool)
+    {
+        bytes32 registered = taskMetadataHash[taskId];
+        return registered != bytes32(0) && contentHash == registered;
+    }
+
+    function verifyProjectMetadata(bytes32 projectId, bytes32 contentHash)
+        external
+        view
+        returns (bool)
+    {
+        bytes32 registered = projectMetadataHash[projectId];
+        return registered != bytes32(0) && contentHash == registered;
     }
 }
