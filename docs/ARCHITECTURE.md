@@ -1608,7 +1608,7 @@ async function modifyTask(taskId: string, updates: Partial<Task>): Promise<void>
         );
     }
     await db.tasks.update(taskId, updates);
-    await chainAdapter.updateMerkleRoot(task.projectId); // mise à jour on-chain
+    await chainAdapter.updateTaskSetHash(task.projectId, computeTaskSetHash(taskIds)); // mise à jour on-chain
 }
 
 async function deleteTask(taskId: string): Promise<void> {
@@ -2555,8 +2555,8 @@ interface ChainAdapter {
   readonly isEVM: boolean;
 
   // Projets
-  registerProject(projectId: string, owner: string, merkleRoot: string, rewardMode: string): Promise<TxHash>;
-  updateMerkleRoot(projectId: string, merkleRoot: string): Promise<TxHash>;
+  registerProject(projectId: string, owner: string, taskSetHash: string, rewardMode: string): Promise<TxHash>;
+  updateTaskSetHash(projectId: string, taskSetHash: string): Promise<TxHash>;
 
   // Escrow (projets paid uniquement)
   depositEscrow(projectId: string, amount: bigint, token: StablecoinRef): Promise<TxHash>;
@@ -3008,13 +3008,13 @@ struct Project {
     RewardMode rewardMode;  // Free = non-rémunéré, Paid = rémunéré
     uint256    totalBudget; // en CreditToken (USDC-pegged) — 0 pour les projets Free
     uint256    commission;  // commission PTF prélevée upfront — 0 pour les projets Free
-    bytes32    merkleRoot;  // racine de l'arbre Merkle des tâches
+    bytes32    taskSetHash; // keccak256(sorted taskIds) — remplace merkleRoot
     uint256    createdAt;
     ProjectStatus status;   // Open | InProgress | Completed | Archived
 }
 
-function registerProject(bytes32 projectId, bytes32 merkleRoot, uint256 budget) external;
-function updateMerkleRoot(bytes32 projectId, bytes32 newRoot) external onlyBackend;
+function registerProject(bytes32 projectId, bytes32 taskSetHash, uint256 budget) external;
+function updateTaskSetHash(bytes32 projectId, bytes32 newHash) external onlyBackend;
 function getProject(bytes32 projectId) external view returns (Project memory);
 
 // Enregistrement on-chain d'un claim validé avec hash des conditions signées
@@ -3632,8 +3632,8 @@ ptf tasks publish --project <projectId>
 # - Si free : aucun paiement (confirmation de publication uniquement)
 # - Transaction on-chain (via ChainAdapter) : registerProject sur ProjectRegistry (avec rewardMode)
 # - Si paid : Transaction on-chain (via ChainAdapter) : deposit sur EscrowVault (reward pool + commission PTF)
-# - Calcule les taskIds (Hash Merkle) et le networkId pour chaque tâche
-# - Met à jour la merkleRoot sur ProjectRegistry
+# - Calcule les taskIds et le networkId pour chaque tâche
+# - Calcule le taskSetHash = keccak256(sorted taskIds) et le met à jour sur ProjectRegistry
 # - Broadcast dans le réseau PTF (tâches publiques en clair, privées avec métadonnées seules)
 # - Affiche : N tâches publiées | paid: escrow déposé, commission PTF prélevée | free: aucun escrow
 ```
@@ -3692,8 +3692,8 @@ ptf push
 
 # Actions :
 # - Lit les fichiers dans tasks/*.yaml
-# - Calcule les taskIds (Hash Merkle) et le networkId pour chaque tâche
-# - Met à jour la merkleRoot sur ProjectRegistry
+# - Calcule les taskIds et le networkId pour chaque tâche
+# - Calcule le taskSetHash = keccak256(sorted taskIds) et le met à jour sur ProjectRegistry
 # - Crée/met à jour les tâches dans le backend PTF
 # - Calcule les récompenses via le moteur d'évaluation du coût
 # - Broadcast dans le réseau PTF (tâches publiques en clair, privées avec métadonnées seules)
@@ -3875,11 +3875,11 @@ ptf wallet status
 
 ### `ptf wallet deposit`
 
-Recharge le compte en crédits PTF en envoyant des fonds vers les **adresses officielles PTF publiées dans le réseau** (vérifiées via Merkle root avant tout transfert).
+Recharge le compte en crédits PTF en envoyant des fonds vers les **adresses officielles PTF publiées dans le réseau** (vérifiées via `platformHash` avant tout transfert).
 
 ```bash
 ptf wallet deposit --chain polygon --amount 50 --token USDC
-# → Récupère l'adresse officielle PTF depuis le réseau (vérifiée via Merkle root)
+# → Récupère l'adresse officielle PTF depuis le réseau (vérifiée via platformHash)
 # → Affiche l'adresse vérifiée + montant à envoyer
 # → Attend la confirmation on-chain
 # → Crédite le compte en PTF credits (1:1 avec USDC)
@@ -3894,15 +3894,24 @@ ptf wallet withdraw --amount 25.5 --to 0x...   # minimum 1.0 PTF
 **Vérification des adresses officielles PTF avant dépôt :**
 
 ```typescript
-// L'algo vérifie l'adresse de destination AVANT d'autoriser le transfert
+// L'algo vérifie l'adresse de destination AVANT d'autoriser le transfert.
+// Pas de preuve de chemin — recalcul direct du hash sur le contenu complet.
 async function verifyPlatformAddress(chainId: string, address: string): Promise<boolean> {
     const broadcast = await network.getLatestBroadcast();
-    const proof     = await network.getMerkleProof(address);
-    return MerkleTree.verify(broadcast.merkleRoots.platform, address, proof);
+    // 1. Vérifier la signature PTF sur le broadcast
+    const broadcastHash = keccak256(JSON.stringify(sortKeysDeep(broadcast)));
+    const signer = ethers.verifyMessage(broadcastHash, broadcast.signature);
+    if (signer !== PTF_OFFICIAL_ADDRESS) return false;
+    // 2. Vérifier que platformHash couvre les adresses reçues
+    const computed = keccak256(JSON.stringify(sortKeysDeep(broadcast.platformAddresses)));
+    if (computed !== broadcast.hashes.platform) return false;
+    // 3. Vérifier que l'adresse cible est dans les adresses officielles
+    return broadcast.platformAddresses.escrowVault[chainId] === address
+        || broadcast.platformAddresses.creditReceiver[chainId] === address;
 }
 ```
 
-Le client ne doit **jamais** envoyer des fonds à une adresse non vérifiée. La CLI PTF effectue cette vérification automatiquement et bloque tout transfert vers une adresse non présente dans la Merkle root officielle.
+Le client ne doit **jamais** envoyer des fonds à une adresse non vérifiée. La CLI PTF effectue cette vérification automatiquement et bloque tout transfert vers une adresse absente du `platformHash` officiel.
 
 ### `ptf wallet convert`
 
@@ -4327,31 +4336,96 @@ Résultats signés envoyés à l'API PTF
 
 ---
 
-## Système de tâches Merkle
+## Système d'intégrité des tâches — Task Set Hash
 
-### Construction de l'arbre
+### Pourquoi pas Merkle
+
+L'arbre de Merkle est conçu pour permettre à un client de **prouver l'appartenance d'un élément sans avoir accès à la liste complète** — c'est sa valeur principale (preuve de chemin O(log n)).
+
+Dans PTF, cette propriété n'est jamais utilisée : le client a toujours accès à la liste complète des tâches via l'API. La preuve de chemin Merkle n'apporte donc rien en pratique, pour un coût significatif :
+
+| Critère | Merkle tree | Task Set Hash |
+|---|---|---|
+| Algorithme côté backend | O(n log n) construction | O(n) — tri + concat + keccak256 |
+| Complexité du code | ~25 lignes (niveaux, paires, sort) | 5 lignes |
+| Preuve d'appartenance on-chain | O(log n) calldata | Non requise (liste complète disponible) |
+| Verification d'appartenance | verifyTask(proof[]) — jamais appelé | Recalcul direct côté client |
+| Surface d'attaque | Algo de construction + vérification | Uniquement keccak256 |
+| Résultat on-chain | `bytes32 merkleRoot` | `bytes32 taskSetHash` |
+
+**Le Task Set Hash est fonctionnellement équivalent pour PTF, plus simple, et sans preuve de chemin inutile.**
+
+---
+
+### Construction des identifiants
 
 ```
-projectId   = keccak256(ownerAddress || projectName || timestamp)
-              → généré automatiquement par ptf init, jamais saisi manuellement
+projectId    = keccak256(ownerAddress || projectName || timestamp)
+               → généré automatiquement par ptf init, jamais saisi manuellement
 
-taskId      = keccak256(projectId || parentTaskId || task_metadata || nonce)
-              où parentTaskId = projectId pour les tâches racines
+taskId       = keccak256(projectId || parentTaskId || task_metadata || nonce)
+               où parentTaskId = projectId pour les tâches racines
 
-networkId   = keccak256(taskId || broadcast_timestamp || node_id)
+networkId    = keccak256(taskId || broadcast_timestamp || node_id)
 
-merkleRoot  = racine de l'arbre de Merkle construit sur tous les taskIds
+taskSetHash  = keccak256(sorted_taskIds_concatenated)
+               → remplace merkleRoot — représente l'ensemble des tâches du projet
 ```
+
+### Calcul du Task Set Hash
+
+```typescript
+// backend/src/services/task.service.ts
+function computeTaskSetHash(taskIds: string[]): string {
+  if (taskIds.length === 0) return ethers.ZeroHash;
+
+  // Tri déterministe : même résultat quel que soit l'ordre d'insertion
+  const sorted = [...taskIds]
+    .map((id) => id.startsWith("0x") ? id : ethers.keccak256(ethers.toUtf8Bytes(id)))
+    .sort();
+
+  return ethers.keccak256(ethers.concat(sorted));
+}
+```
+
+**Propriétés :**
+- **Déterministe** : le tri garantit que deux nœuds calculant le hash depuis la même liste d'IDs obtiennent le même résultat, quel que soit l'ordre d'insertion.
+- **Sensible à tout changement** : ajouter, supprimer ou modifier un taskId change le hash.
+- **Non-falsifiable** : le hash est ancré on-chain dans `ProjectRegistry`. Un nœud servant une liste modifiée produit un hash différent — détecté immédiatement.
 
 ### Vérification d'intégrité
 
-Pour vérifier qu'une tâche T appartient bien au projet P et n'a pas été altérée :
+```
+Vérification que la liste de tâches d'un projet n'a pas été falsifiée :
 
-1. Recalculer `taskId` depuis les données de la tâche
-2. Construire le chemin Merkle depuis `taskId` jusqu'à `merkleRoot`
-3. Comparer le `merkleRoot` calculé avec celui stocké on-chain dans `ProjectRegistry`
+  1. Client récupère la liste des taskIds depuis un nœud PTF
+  2. Client recalcule : computeTaskSetHash(taskIds)
+  3. Client compare avec ProjectRegistry.taskSetHash[projectId] (on-chain)
+  4. ✓ Égal → liste intègre
+  5. ✗ Différent → nœud malveillant ou corrompu → switch vers un autre nœud
+```
 
-Toute modification d'une tâche (métadonnées, récompense, contraintes, `claimCriteria`, `punishments`) invalide son `taskId` et donc la `merkleRoot` du projet, rendant la falsification détectable immédiatement.
+Cette vérification ne nécessite pas de preuve de chemin. Le client envoie la liste complète, le contrat (ou le client lui-même) recalcule et compare — O(n) en temps, O(1) en stockage on-chain.
+
+### Verrouillage à la publication
+
+Le `taskSetHash` est calculé et ancré on-chain lors de `ptf tasks publish`. Une fois qu'une tâche est claimée, le hash est verrouillé (`locked = true`) — aucune modification de la liste n'est possible tant qu'une tâche est en cours.
+
+```
+ptf tasks publish
+  → computeTaskSetHash(all taskIds)
+  → ProjectRegistry.updateTaskSetHash(projectId, hash)
+  → Toute tentative de modifier la liste après un claim → revert ProjectLocked_()
+```
+
+### Appartenance d'une tâche à un projet
+
+La preuve qu'une tâche appartient à un projet ne nécessite pas de preuve cryptographique séparée dans PTF — elle est garantie par deux mécanismes cumulatifs :
+
+1. **`taskId` contient `projectId`** dans son calcul : `keccak256(projectId || ...)`. Un taskId ne peut pas appartenir à deux projets différents.
+2. **`taskSetHash` couvre tous les taskIds** : si un taskId n'est pas dans la liste qui a produit le hash ancré on-chain, le recalcul diverge.
+
+La fonction `verifyTask(projectId, taskId, proof[])` du contrat reste disponible comme outil d'audit ponctuel — elle n'est pas appelée dans le flux courant.
 
 ### Gestion des dépendances
 
@@ -4821,12 +4895,12 @@ Le réseau PTF est un réseau de nœuds décentralisé qui diffuse les tâches d
 
 ### NetworkBroadcast — données officielles PTF publiées dans le réseau
 
-PTF publie en permanence ses données officielles dans le réseau, signées par la clé officielle PTF. Ces données sont vérifiables par n'importe quel nœud via les Merkle roots.
+PTF publie en permanence ses données officielles dans le réseau, signées par la clé officielle PTF. Ces données sont vérifiables par n'importe quel nœud via des hash d'ensemble (Task Set Hash).
 
 ```typescript
 interface PlatformAddresses {
-  // Adresses officielles PTF publiées on-chain et dans le réseau PTF
-  // Vérifiables par n'importe qui via la Merkle root du réseau
+  // Adresses officielles PTF publiées on-chain et dans le réseau PTF.
+  // Vérifiables via platformHash — keccak256 du contenu sérialisé.
   escrowVault:     Record<string, string>; // par chaîne : { polygon: "0x...", ethereum: "0x..." }
   creditReceiver:  Record<string, string>; // adresses de réception pour les recharges
   treasury:        Record<string, string>; // trésorerie PTF
@@ -4834,25 +4908,27 @@ interface PlatformAddresses {
 
 interface NetworkBroadcast {
   platformAddresses: PlatformAddresses;   // adresses officielles par chaîne
-  merkleRoots: {
-    projects: string;   // Merkle root de tous les projets actifs
-    tasks:    string;   // Merkle root de toutes les tâches publiées
-    platform: string;   // Merkle root des données plateforme (adresses, config)
+  hashes: {
+    projects: string;   // keccak256(sorted active projectIds) — Task Set Hash
+    tasks:    string;   // keccak256(sorted published taskIds) — Task Set Hash
+    platform: string;   // keccak256(JSON.stringify(platformAddresses, sorted_keys))
   };
   lastUpdatedAt: Date;
-  signature:     string; // signé par la clé PTF officielle
+  signature:     string; // signé par la clé PTF officielle (personal_sign EIP-191)
 }
 
-// Vérification par n'importe quel nœud du réseau
-async function verifyPlatformData(data: any, proof: MerkleProof): Promise<boolean> {
-    const broadcast = await network.getLatestBroadcast();
-    return MerkleTree.verify(broadcast.merkleRoots.platform, data, proof);
+// Vérification par n'importe quel nœud — pas de preuve de chemin nécessaire
+function verifyPlatformData(broadcast: NetworkBroadcast): boolean {
+  const computed = keccak256(JSON.stringify(sortKeysDeep(broadcast.platformAddresses)));
+  return computed === broadcast.hashes.platform;
+  // + vérifier la signature PTF sur keccak256(JSON.stringify(broadcast))
 }
 
 // Utilisation lors d'un dépôt :
 // 1. Client récupère la dernière broadcast du réseau PTF
-// 2. Vérifie l'adresse de réception via la Merkle root platform
-// 3. Seulement alors envoie les fonds
+// 2. Vérifie broadcast.hashes.platform == keccak256(platformAddresses)
+// 3. Vérifie la signature PTF officielle sur le broadcast
+// 4. Seulement alors envoie les fonds vers l'adresse vérifiée
 ```
 
 **Topologie :**
@@ -5017,7 +5093,7 @@ Entreprise / Créateur
        Backend (Project Service + Task Service):
          1. Si paid : Calcule coût total (reward pool + commission PTF grille 8–12%) → demande confirmation paiement
             Si free : aucun paiement requis
-         2. Transaction on-chain (via ChainAdapter) : registerProject (merkleRoot, rewardMode)
+         2. Transaction on-chain (via ChainAdapter) : registerProject (taskSetHash, rewardMode)
          3. Si paid : Transaction on-chain (via ChainAdapter) : deposit EscrowVault (reward pool + commission PTF)
             Si free : aucune interaction avec EscrowVault
          4. Calcul taskIds + networkIds
@@ -5051,8 +5127,8 @@ Client
 Développeur/Client
   -> ptf push (CLI)
   -> Backend (Task Service):
-       1. Calcul taskIds (Merkle) + networkIds
-       2. Mise à jour merkleRoot sur ProjectRegistry
+       1. Calcul taskIds + networkIds
+       2. Calcul taskSetHash = keccak256(sorted taskIds) + mise à jour sur ProjectRegistry
        3. Stockage en PostgreSQL
   -> Task Service -> Réseau PTF (broadcast):
        - Tâches publiques : toutes métadonnées + contenu en clair
@@ -5305,7 +5381,7 @@ Le réseau PTF est accessible sans authentification pour toutes les opérations 
 | `ptf generate` | Appelle le backend avec le projectId |
 | `ptf tasks preview` | Mute les drafts liés au projet |
 | `ptf tasks mine` | Données filtrées par identité |
-| `ptf tasks publish` | Dépôt escrow + Merkle root on-chain |
+| `ptf tasks publish` | Dépôt escrow + taskSetHash on-chain |
 | `ptf task claim` | Écriture on-chain + soft-lock PTF |
 | `ptf task cancel` | Écriture on-chain |
 | `ptf submit` | Push + enregistrement on-chain |
@@ -5402,7 +5478,7 @@ type Mutation {
 
   # Wallet — recharge et conversion
   depositCredits(chainId: String!, amount: Float!, token: String!): DepositResult!
-  # → Retourne l'adresse officielle PTF vérifiée (Merkle root) + instructions de dépôt
+  # → Retourne l'adresse officielle PTF vérifiée (platformHash) + instructions de dépôt
   convertCurrency(from: String!, amount: Float!): ConversionQuote!
   # → Retourne ptfCredits, rate, fee, expiresAt (taux garanti 60s)
 
