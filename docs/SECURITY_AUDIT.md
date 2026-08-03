@@ -1366,6 +1366,230 @@ Tant que le `MetadataStore` distribué (phase 2) n'est pas implémenté, les mé
 
 ---
 
+## Ce qu'on cherche dans les audits
+
+Chaque audit PTF cherche des défauts dans quatre dimensions. Les dimensions sont communes à toutes les couches — contrats, backend, CLI. Seules les manifestations concrètes changent selon la couche.
+
+---
+
+### Dimension 1 — Correctness (comportement correct)
+
+**Question centrale : le code fait-il exactement ce qu'il est censé faire, ni plus ni moins ?**
+
+Ce qu'on cherche :
+- **Logique incorrecte** — une condition inversée, une soustraction au lieu d'une addition, un comparateur `<` au lieu de `<=`
+- **État incohérent** — la DB dit `claimed`, la blockchain dit `open`
+- **Résultat incorrect** — un hash calculé différemment selon le chemin d'exécution, un montant arrondi incorrectement
+- **Champ oublié** — un champ immuable exclu de `extractTaskHashableFields`, une vérification absente dans un resolver
+
+**Manifestations par couche :**
+
+| Couche | Exemples concrets |
+|---|---|
+| Contrats | `verifiedTotal != totalAmount` au lieu de `<`, distribution 80/20 tautologique, `mintedUTXOs` confondu avec `spentUTXOs` |
+| Backend | `claim_pending` rollback qui écrase un claim légitime, `DEFAULT_PUNISHMENTS` appliquées sans log, delta réputation négatif non borné |
+| CLI | `filesChanged` comptant la ligne résumé de `git diff --stat`, `saveUserConfig` ignorant `undefined` au lieu de supprimer |
+
+---
+
+### Dimension 2 — Sécurité (résistance aux attaques)
+
+**Question centrale : un acteur malveillant peut-il obtenir plus que ce qu'il est autorisé à obtenir ?**
+
+Ce qu'on cherche, par catégorie :
+
+**Contrôle d'accès :**
+- Fonction appelable sans authentification alors qu'elle devrait l'exiger
+- Ownership non vérifié — n'importe qui peut agir sur la ressource d'autrui
+- `onlyOwner` EOA sans multisig — clé unique = point de compromission
+
+**Injection :**
+- Shell : `shellEscape` insuffisant, `execFile` avec args contenant des metacharacters passés à un sous-processus shell
+- GraphQL : depth trop permissif, complexity non bornée, input non validé passé directement à une requête
+- Prompt LLM : contenu user injecté dans le prompt système du TaskGeneratorService
+
+**Replay et double-spend :**
+- Signature EIP-712 sans nonce ou sans deadline → rejouable
+- UTXO consommé deux fois dans le même appel (intra-call) ou entre deux appels (cross-call)
+- Nonce challenge-response en mémoire → rejouable après redémarrage
+
+**Race conditions (TOCTOU) :**
+- Lecture → vérification → écriture sans verrou atomique
+- `findMany` hors transaction puis `updateMany` → deux appels concurrents lisent le même snapshot
+
+**Fuite d'information :**
+- Stack trace exposé en production
+- Clé privée loggée dans `console.error` sur erreur RPC
+- Données privées d'un projet `private` visibles via `mine: true`
+- `eip712Signature` retourné dans l'API publique
+
+**Griefing (bloquer sans voler) :**
+- Clamer toutes les tâches d'un projet sans les réaliser
+- Soumettre un arweaveId invalide avant le nœud légitime pour bloquer l'archivage
+- Remplir le stream `cache-events` pour saturer les consumers
+
+---
+
+### Dimension 3 — Résilience (comportement sous stress et pannes)
+
+**Question centrale : le système se comporte-t-il correctement quand quelque chose échoue ou est soumis à une charge anormale ?**
+
+Ce qu'on cherche :
+- **Crash mid-flight** — que se passe-t-il si le process s'arrête entre l'écriture DB et l'appel on-chain ?
+- **Panne partielle** — Redis indisponible, RPC blockchain timeout, PostgreSQL lent
+- **Charge anormale** — 100 claims simultanés, 1000 invalidations cache/s, 100 expirations simultanées
+- **Retry storm** — un job BullMQ qui échoue et se relance en boucle sature-t-il la DB ?
+- **State divergence** — après un crash, la réconciliation converge-t-elle vers le bon état ?
+- **Idempotence** — un worker qui re-traite un event déjà traité produit-il le même résultat ?
+
+**Manifestations par couche :**
+
+| Couche | Exemples concrets |
+|---|---|
+| Contrats | `nonReentrant` tient-il sous appels récursifs ? `Pausable` bloque-t-il effectivement toutes les fonctions financières ? |
+| Backend | `claim_pending` rollback vs ReconciliationWorker simultanés, `softUnlock` concurrent pour le même dev, BullMQ job TTL trop court |
+| Workers | queryFilter sur 2000 blocs timeout RPC, stale `claim_pending` rollbacké alors que l'on-chain a confirmé, deposit.worker stub actif en prod |
+| CLI | `ptf submit` interrompu après push mais avant soumission GraphQL, tracker.json corrompu |
+
+---
+
+### Dimension 4 — Complétude (rien n'est oublié)
+
+**Question centrale : y a-t-il des cas limites, des chemins d'erreur, ou des invariants qui ne sont pas vérifiés ?**
+
+Ce qu'on cherche :
+- **Dead code actif** — du code jamais appelé qui pourrait l'être par erreur ou par un attaquant
+- **Cas limite non traités** — liste vide, montant zéro, adresse nulle, chaîne inconnue, TTL expiré exactement à la milliseconde
+- **Invariants non documentés** — `sum(unspent) + sum(locked) == balance` vérifié nulle part en production
+- **Migrations manquantes** — nouveau champ Prisma sans migration, ancien schéma GraphQL incompatible
+- **TODOs en production** — `// TODO: Notification via NotificationService` dans TimerService
+- **Stubs non remplacés** — `MockStorageProvider` en production, `deposit.worker` stub
+
+---
+
+### Format de sortie attendu par les agents
+
+Tout agent d'audit retourne ses findings en JSON structuré. Format commun à toutes les couches :
+
+```json
+{
+  "module": "backend-claim",
+  "file": "backend/src/services/task.service.ts",
+  "line": 347,
+  "severity": "critical | high | medium | low | informational",
+  "dimension": "correctness | security | resilience | completeness",
+  "category": "string — ex: race-condition, injection, access-control, state-divergence",
+  "title": "Titre court (< 60 chars)",
+  "description": "Description technique précise du problème",
+  "attack_scenario": "Inputs / état initial → actions → résultat incorrect",
+  "recommendation": "Correction précise avec code si applicable",
+  "confidence": "high | medium | low"
+}
+```
+
+**Sévérités :**
+- `critical` — exploitation directe sans précondition, perte de fonds ou compromission complète
+- `high` — exploitation sous conditions réalistes, impact significatif
+- `medium` — exploitation sous conditions spécifiques, impact modéré
+- `low` — amélioration de robustesse, impact faible
+- `informational` — observation sans impact sécurité direct
+
+**Convergence inter-agents :** un finding présent dans ≥2 rapports indépendants est confirmé. Un finding dans 1 seul rapport est marqué "à vérifier manuellement".
+
+---
+
+### Prompts système par type de module
+
+#### Pour les modules `contracts-*`
+
+```
+Tu es un auditeur de smart contracts Solidity expert (niveau Trail of Bits / OpenZeppelin).
+Analyse le code fourni de façon EXHAUSTIVE et INDÉPENDANTE — sans voir les résultats d'autres agents.
+
+Cherche des défauts dans ces 4 dimensions :
+1. CORRECTNESS : logique incorrecte, état incohérent, résultat incorrect, champ oublié
+2. SECURITY : reentrancy, overflow, access control, EIP-712 (nonce/deadline/domain), replay, front-running, griefing
+3. RESILIENCE : comportement sous panne partielle, idempotence, pause/unpause couvre tout
+4. COMPLETENESS : dead code, cas limites (montant zéro, adresse nulle), invariants non vérifiés
+
+Pour chaque finding, retourne un objet JSON avec les champs :
+module, file, line, severity (critical|high|medium|low|informational),
+dimension (correctness|security|resilience|completeness),
+category, title, description, attack_scenario, recommendation, confidence.
+
+Retourne un tableau JSON uniquement. Pas de texte avant ou après.
+```
+
+#### Pour les modules `backend-*`
+
+```
+Tu es un auditeur de sécurité backend Node.js/TypeScript expert.
+Analyse le code fourni de façon EXHAUSTIVE et INDÉPENDANTE.
+
+Contexte PTF : système financier décentralisé. Les opérations de claim,
+submit, validate impliquent des fonds USDC réels. Toute incohérence
+d'état peut bloquer des fonds ou les détourner.
+
+Cherche des défauts dans ces 4 dimensions :
+1. CORRECTNESS : logique incorrecte, état DB/on-chain incohérent, champ oublié dans hash/sérialisation
+2. SECURITY : injection (shell, GraphQL, LLM), TOCTOU, auth guards manquants, fuite d'info, replay
+3. RESILIENCE : crash mid-flight, retry storm, panne Redis/RPC, idempotence des workers
+4. COMPLETENESS : TODOs en production, stubs non remplacés, cas limites non gérés
+
+Pour chaque finding, retourne un objet JSON avec les champs :
+module, file, line, severity (critical|high|medium|low|informational),
+dimension (correctness|security|resilience|completeness),
+category, title, description, attack_scenario, recommendation, confidence.
+
+Retourne un tableau JSON uniquement. Pas de texte avant ou après.
+```
+
+#### Pour les modules `cli-*`
+
+```
+Tu es un auditeur de sécurité CLI TypeScript expert.
+Analyse le code fourni de façon EXHAUSTIVE et INDÉPENDANTE.
+
+Contexte PTF : CLI utilisé sur la machine locale de l'utilisateur.
+La clé privée ne quitte jamais la machine — toute fuite est catastrophique.
+Le CLI exécute des commandes git et interagit avec un backend réseau.
+
+Cherche des défauts dans ces 4 dimensions :
+1. CORRECTNESS : logique incorrecte, calcul de hash incorrect, sérialisation non déterministe
+2. SECURITY : injection shell, fuite clé privée (log, mémoire V8), phishing nonce,
+   node discovery non validée, git push vers remote arbitraire
+3. RESILIENCE : crash mid-submit, tracker.json corrompu, redémarrage perd le nonce
+4. COMPLETENESS : dead code utilisable par erreur, cas limites non gérés (liste vide, TTL expiré)
+
+Pour chaque finding, retourne un objet JSON avec les champs :
+module, file, line, severity (critical|high|medium|low|informational),
+dimension (correctness|security|resilience|completeness),
+category, title, description, attack_scenario, recommendation, confidence.
+
+Retourne un tableau JSON uniquement. Pas de texte avant ou après.
+```
+
+#### Pour le module `load-behavior`
+
+```
+Tu es un expert en tests de charge et comportements émergents distribués.
+Analyse le code fourni sous l'angle de la résilience sous stress.
+
+Conçois des scénarios de charge adversariaux pour chacune de ces situations :
+1. 100 devs clament la même tâche simultanément
+2. 1000 invalidations cache/s sur Redis Stream
+3. ReconciliationWorker crash à chaque étape du claim (avant DB, entre DB et on-chain, après on-chain)
+4. 100 deadlines expirent en même temps dans BullMQ
+5. Redis Sentinel bascule sur un replica en plein milieu d'un claim
+
+Pour chaque scénario, décris : état initial → actions concurrentes → état final attendu → état final réel possible.
+Identifie les invariants qui pourraient être violés.
+Retourne un tableau JSON avec les champs :
+scenario, invariant_violated, state_before, concurrent_actions, state_after_expected, state_after_possible, severity, recommendation.
+```
+
+---
+
 ## Stratégie d'audit modulaire
 
 ### Principes
