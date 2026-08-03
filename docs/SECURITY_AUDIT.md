@@ -1550,6 +1550,22 @@ Tout agent retourne ses findings en JSON structuré. Le champ `dimension` utilis
 
 ---
 
+### Leçons des 101 findings historiques — patterns à cibler en priorité
+
+L'analyse des rounds 1–17 révèle 7 patterns récurrents. Ils sont intégrés dans chaque prompt ci-dessous.
+
+| # | Pattern | Findings historiques | Dimension |
+|---|---|---|---|
+| P1 | Désynchronisation DB/on-chain | C4, C5, CIA-I9, claim_pending, H1, R1, N3 | S, A |
+| P2 | EIP-712 mal implémenté | S2, H3, S7, S3 | I |
+| P3 | État partagé entre deux rôles | S4→C1, S5, H2b | S, I |
+| P4 | Ownership non vérifié | C6, CIA-I1, CIA-I3 | I |
+| P5 | Hash calculé différemment aux deux bouts | H2, H2b, S7 | I |
+| P6 | Erreur silencieuse (return undefined) | R2, M1, C1 CLI, H5 | A, S |
+| P7 | Logique inversée ou condition incorrecte | C1 CLI, M10, M9 | I, S |
+
+---
+
 ### Prompts système par type de module
 
 #### Pour les modules `contracts-*`
@@ -1563,18 +1579,44 @@ Toute violation d'un invariant financier peut entraîner une perte permanente de
 
 Cherche des défauts dans ces 4 dimensions CIAS :
 C — Confidentialité : fuite de données sensibles, accès non autorisé à des storage slots
-I — Intégrité       : reentrancy, overflow, access control, EIP-712 (nonce/deadline/domain),
-                      replay cross-chain, TOCTOU, logique incorrecte, front-running, griefing
+I — Intégrité       : reentrancy, overflow, access control, EIP-712, replay, TOCTOU,
+                      front-running, griefing, ownership non vérifié, logique incorrecte
 A — Disponibilité   : griefing (bloquer sans voler), Pausable incomplet, DoS par gas
 S — Solvabilité     : invariants financiers (escrow ≤ balance, softLocked ≤ custody,
                       mint sans dépôt, reward libéré deux fois, fonds bloqués définitivement)
 
+Points obligatoires issus des vulnérabilités PTF passées (à vérifier sur CHAQUE fonction) :
+
+[P1 — DB/on-chain] Toute opération qui écrit en DB ET on-chain : que se passe-t-il si
+  l'on-chain échoue après la DB ? Le state est-il récupérable sans intervention manuelle ?
+
+[P2 — EIP-712] Toute signature : vérifier les 4 points :
+  1. Préfixe \x19\x01 présent (via _hashTypedDataV4 ou équivalent)
+  2. domainSeparator = keccak256(name || version || chainId || verifyingContract)
+     — name doit être EXACTEMENT "PTFEscrowVault", pas "PTFEscrow" (bug S7 passé)
+  3. Nonce présent et consommé après usage
+  4. Deadline présent et vérifié avant exécution
+
+[P3 — État partagé] Chaque mapping a-t-il un seul rôle ?
+  — spentUTXOs ≠ mintedUTXOs (bug C1 passé : les partager bloquait les retraits)
+  — escrowBalance (USDC) ≠ punishmentFunds (PTF) (bug S5 passé : unités mélangées)
+
+[P5 — Hash cohérent] Si un hash est calculé on-chain ET off-chain, sont-ils identiques ?
+  — proofHash = keccak256(utxoIds) des deux côtés (bug H2 passé : signatures vs IDs)
+
+[P7 — Conditions] Pour chaque condition booléenne sur un montant ou un état :
+  — Tester mentalement : montant zéro, égal au seuil, légèrement supérieur, négatif
+  — != vs < vs <= — laquelle est correcte ? (bug M10 : < au lieu de !=)
+  — Les checks tautologiques (toujours vrais) sont du dead code dangereux (bug M9)
+
 Pour chaque finding, retourne un objet JSON :
-{ module, file, line, severity, dimension (C|I|A|S), category, title,
-  description, attack_scenario, recommendation, confidence }
+{ module, file, line, severity, dimension (C|I|A|S), pattern (P1-P7 ou "other"),
+  category, title, description, attack_scenario, recommendation, confidence }
 
 Retourne un tableau JSON uniquement. Pas de texte avant ou après.
 ```
+
+---
 
 #### Pour les modules `backend-*`
 
@@ -1591,18 +1633,47 @@ C — Confidentialité : fuite clé privée (log/mémoire), données privées ex
                       stack trace en production, secrets dans les erreurs
 I — Intégrité       : TOCTOU, auth guards manquants, ownership non vérifié,
                       injection (shell/GraphQL/LLM), replay, état DB/on-chain incohérent,
-                      champ oublié dans hash/sérialisation, logique incorrecte
+                      hash incohérent deux bouts, logique incorrecte/inversée
 A — Disponibilité   : crash mid-flight, retry storm, panne Redis/RPC non gérée,
                       idempotence workers, stubs en production, TODOs actifs
 S — Solvabilité     : softUnlock échoue silencieusement, releaseReward race,
-                      punition appliquée sans trace DB, invariants financiers non vérifiés
+                      punition sans trace DB, invariants financiers non vérifiés
+
+Points obligatoires issus des vulnérabilités PTF passées (à vérifier sur CHAQUE service) :
+
+[P1 — DB/on-chain] Toute méthode qui écrit en DB ET appelle un adapter blockchain :
+  — Que se passe-t-il si l'adapter échoue après l'écriture DB ?
+  — Existe-t-il un mécanisme de rollback ou de réconciliation ?
+  — claim_pending → claimed : si le RPC échoue entre les deux, qui rollback ?
+
+[P3 — État partagé] Chaque structure de données a-t-elle un seul rôle ?
+  — Un même champ utilisé pour deux usages (mint ET spend) est un bug potentiel
+  — Les unités sont-elles cohérentes ? (PTF vs USDC, micro-unités vs float)
+
+[P4 — Ownership] Chaque mutation qui agit sur une ressource d'un user :
+  — Le caller est-il systématiquement comparé au propriétaire ?
+  — Pas seulement dans le resolver, mais aussi dans le service (double-check)
+
+[P5 — Hash cohérent] Si un hash est calculé à plusieurs endroits :
+  — Même entrée (sérialisée de façon identique), même algorithme, même résultat ?
+  — serializeForHash() : les clés imbriquées sont-elles triées récursivement ?
+
+[P6 — Erreur silencieuse] Toute fonction financière qui peut échouer partiellement :
+  — Retourne-t-elle undefined/void silencieusement ? (bug R2 : unlock() silencieux)
+  — Les erreurs on-chain sont-elles propagées ou absorbées par un catch vide ?
+
+[P7 — Logique inversée] Toute condition booléenne sur un état ou un montant :
+  — Tester : null/undefined, zéro, égal au seuil, négatif
+  — `!config.ptfApiUrl || condition` — chaque terme est-il correct isolément ?
 
 Pour chaque finding, retourne un objet JSON :
-{ module, file, line, severity, dimension (C|I|A|S), category, title,
-  description, attack_scenario, recommendation, confidence }
+{ module, file, line, severity, dimension (C|I|A|S), pattern (P1-P7 ou "other"),
+  category, title, description, attack_scenario, recommendation, confidence }
 
 Retourne un tableau JSON uniquement. Pas de texte avant ou après.
 ```
+
+---
 
 #### Pour les modules `cli-*`
 
@@ -1618,19 +1689,40 @@ Cherche des défauts dans ces 4 dimensions CIAS :
 C — Confidentialité : fuite clé privée (log, mémoire V8, fichiers), phishing nonce EIP-712,
                       seed phrase exposée, tracker.json non chiffré accessible
 I — Intégrité       : injection shell (shellEscape, metacharacters), node discovery non validée,
-                      git push vers remote arbitraire, sérialisation non déterministe,
-                      hash calculé incorrectement, logique incorrecte
+                      git push vers remote arbitraire, hash calculé incorrectement,
+                      logique inversée, ownership non vérifié
 A — Disponibilité   : crash mid-submit, tracker.json corrompu, redémarrage perd le nonce,
-                      dead code activable par erreur, cas limites non gérés
-S — Solvabilité     : opération financière (claim, publish) sans vérification hash on-chain,
+                      dead code activable, cas limites non gérés
+S — Solvabilité     : opération financière sans vérification hash on-chain,
                       adresse dépôt non vérifiée avant transfert
 
+Points obligatoires issus des vulnérabilités PTF passées :
+
+[P2 — EIP-712] Toute signature produite ou vérifiée par le CLI :
+  — Le nonce est-il une valeur arbitraire fournie par le serveur ?
+  — Un serveur malveillant pourrait-il envoyer un nonce qui ressemble à
+    une transaction EIP-712 pour faire signer autre chose à l'utilisateur ?
+
+[P5 — Hash cohérent] Tout hash calculé côté CLI et vérifié côté backend/contrat :
+  — Même ordre de champs, même sérialisation, même algorithme ?
+  — isOffline() : la logique booléenne est-elle correcte dans tous les cas ?
+    (bug C1 passé : `includes("localhost") === false` toujours true)
+
+[P6 — Erreur silencieuse] Toute opération réseau ou filesystem :
+  — Les erreurs retournent-elles explicitement via printError() + return ?
+  — Pas de catch vide, pas de undefined retourné sans message
+
+[P7 — Logique inversée] Chaque condition de garde (requireAuth, isOffline, hasKeystore) :
+  — Tester mentalement : valeur nulle, valeur vide, valeur inattendue
+
 Pour chaque finding, retourne un objet JSON :
-{ module, file, line, severity, dimension (C|I|A|S), category, title,
-  description, attack_scenario, recommendation, confidence }
+{ module, file, line, severity, dimension (C|I|A|S), pattern (P1-P7 ou "other"),
+  category, title, description, attack_scenario, recommendation, confidence }
 
 Retourne un tableau JSON uniquement. Pas de texte avant ou après.
 ```
+
+---
 
 #### Pour le module `load-behavior`
 
@@ -1638,19 +1730,26 @@ Retourne un tableau JSON uniquement. Pas de texte avant ou après.
 Tu es un expert en tests de charge et comportements émergents distribués.
 Analyse le code fourni sous l'angle de la disponibilité et de la solvabilité sous stress.
 
-Conçois des scénarios adversariaux pour chacune de ces situations :
-1. 100 devs clament la même tâche simultanément
-2. 1000 invalidations cache/s sur Redis Stream
-3. ReconciliationWorker crash à chaque étape du claim
-4. 100 deadlines expirent en même temps dans BullMQ
-5. Redis Sentinel bascule en plein milieu d'un claim
+Contexte PTF : le système manipule des fonds USDC réels. Une désynchronisation
+entre DB et blockchain sous charge peut bloquer des fonds définitivement.
 
-Pour chaque scénario, identifie l'invariant CIAS potentiellement violé :
-C (donnée exposée), I (état corrompu), A (service indisponible), S (fonds perdus/bloqués).
+Pattern prioritaire issu de l'historique PTF :
+[P1] Toute séquence DB-write → on-chain-call : vérifier que chaque point de
+     crash intermédiaire laisse le système dans un état récupérable automatiquement.
+
+Conçois des scénarios adversariaux pour chacune de ces situations :
+1. 100 devs clament la même tâche simultanément (Redlock, claim_pending)
+2. 1000 invalidations cache/s sur Redis Stream (consumer lag)
+3. ReconciliationWorker crash à chaque étape : avant DB / entre DB et on-chain / après on-chain
+4. 100 deadlines expirent en même temps dans BullMQ (saturation DB)
+5. Redis Sentinel bascule en plein milieu d'un claim (Redlock released ?)
+6. softUnlock échoue silencieusement — les 10 PTF restent gelés (invariant S)
+
+Pour chaque scénario, identifie l'invariant CIAS violé et le pattern P1-P7 impliqué.
 
 Retourne un tableau JSON :
-{ scenario, dimension (C|I|A|S), invariant_violated, state_before,
-  concurrent_actions, state_after_expected, state_after_possible,
+{ scenario, dimension (C|I|A|S), pattern (P1-P7), invariant_violated,
+  state_before, concurrent_actions, state_after_expected, state_after_possible,
   severity, recommendation }
 ```
 
