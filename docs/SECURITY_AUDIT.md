@@ -994,3 +994,372 @@ grep -n 'utxoService' backend/src/services/punishment.service.ts
 | ~~Réconciliation rétroactive après crash prolongé (N3)~~ | ✅ `ReconciliationWorker` — scan périodique depuis `SyncCheckpoint`, backfill + revert stale | Implémenté |
 | ~~DB commit avant confirmation on-chain (CIA-I9)~~ | ✅ `detectStaleSpent()` — revert auto après 10min sans `txHash` | Implémenté |
 | Arithmétique float sur montants | `toFixed(6)` partout, `Math.round(x * 1e6)` pour on-chain | Migrer vers entiers en micro-PTF |
+
+---
+
+## Surface d'attaque du réseau PTF — Cartographie complète
+
+Cette section documente exhaustivement les vecteurs d'attaque du réseau PTF, les limites architecturales, et les mitigations en place ou manquantes. Elle sert de référence pour les audits futurs et les décisions d'architecture.
+
+---
+
+### 1. Surface d'attaque — Couche réseau et transport
+
+#### 1.1 Nœud PTF unique (SPOF actuel)
+
+**Vecteur :** En phase 1, un seul backend PTF sert toutes les requêtes. Une attaque DDoS volumétrique (>300 req/15min par IP) est limitée par le rate limiter, mais une attaque distribuée depuis des milliers d'IPs différentes peut saturer le serveur.
+
+**Limites :**
+- Le rate limiter actuel est par IP — contournable avec un botnet
+- Pas de WAF (Web Application Firewall) ni de protection DDoS de couche 3/4
+- Un seul backend = cible unique
+
+**Mitigations en place :**
+- Rate limiting Redis partagé (300 req/15min global, 20 req/15min auth)
+- Node.js cluster (1 worker/CPU) — absorbe les pics de charge légitimes
+- Circuit breaker RPC — une panne blockchain ne bloque pas le backend
+
+**Mitigations manquantes :**
+- Pas de CDN/WAF devant l'API GraphQL
+- Pas de protection anti-DDoS L3/L4 (Cloudflare, AWS Shield)
+- Pas de géo-blocage pour les origines connues malveillantes
+
+---
+
+#### 1.2 DNS et BGP hijacking
+
+**Vecteur :** Un attaquant contrôlant le DNS ou un AS (Autonomous System) intermédiaire peut rediriger les clients vers un faux nœud PTF servant des données falsifiées ou collectant des sessions JWT.
+
+**Limites :**
+- En phase 1, la CLI est hardcodée sur `https://api.ptf.dev` — un seul point de confiance DNS
+- Pas de certificate pinning dans la CLI
+- Un DNS compromis redirige tout le trafic CLI
+
+**Mitigations en place :**
+- TLS obligatoire — interception passive détectée
+- Vérification des hash de métadonnées on-chain — un faux nœud ne peut pas falsifier le contenu sans être détecté
+
+**Mitigations manquantes :**
+- Pas de DNSSEC sur ptf.dev
+- Pas de certificate pinning CLI
+- Pas de liste de nœuds de confiance vérifiée on-chain (prévu en phase 2)
+
+---
+
+#### 1.3 Interception des JWT de session
+
+**Vecteur :** JWT intercepté en transit (MITM) ou volé depuis le stockage local permet d'usurper l'identité d'un utilisateur.
+
+**Limites :**
+- Les JWT ne sont pas révocables individuellement (stateless) — une fois volé, valide jusqu'à expiration
+- Pas de refresh token — l'utilisateur doit se reconnecter après expiration
+
+**Mitigations en place :**
+- TLS obligatoire en production
+- JWT contient seulement `ptfAddress + exp` — pas de données sensibles
+- La clé privée ne quitte jamais la machine — un JWT volé ne permet que des lectures
+
+**Mitigations manquantes :**
+- Pas de révocation de session individuelle (seulement `ptf auth logout` local)
+- Pas de détection d'utilisation anormale du JWT (géolocalisation, fingerprint)
+
+---
+
+### 2. Surface d'attaque — Couche authentification
+
+#### 2.1 Bruteforce du keystore local
+
+**Vecteur :** Un attaquant accédant au fichier `~/.ptf/keystore/<address>.json` peut tenter de bruteforcer le mot de passe de chiffrement AES-256-GCM.
+
+**Limites :**
+- PBKDF2 600 000 itérations ralentit le bruteforce (~2s par tentative sur CPU moderne)
+- Pas de limite de tentatives locales — un script peut tenter en continu sans être bloqué
+- Mots de passe faibles (8 caractères minimum) restent vulnérables à des dictionnaires ciblés
+
+**Mitigations en place :**
+- AES-256-GCM avec PBKDF2 600k iterations — coût computationnel élevé
+- Sel aléatoire par keystore — pas de rainbow tables possibles
+- Mode 0600 sur le fichier keystore — inaccessible aux autres utilisateurs du système
+
+**Mitigations manquantes :**
+- Pas de limite de tentatives locales
+- Pas d'intégration hardware wallet (Ledger/Trezor)
+- Minimum 8 caractères insuffisant — recommandation non enforced au-delà
+
+---
+
+#### 2.2 Replay d'un nonce de challenge-response
+
+**Vecteur :** Capturer un nonce signé et le rejouer avant expiration pour obtenir un JWT sans posséder la clé privée.
+
+**Limites :**
+- TTL du nonce en mémoire serveur — si le serveur redémarre entre le challenge et la réponse, le nonce est perdu
+
+**Mitigations en place :**
+- Nonce TTL 5 minutes — fenêtre de replay limitée
+- Nonce consommé après utilisation — pas de replay
+
+**Mitigations manquantes :**
+- Nonces stockés en mémoire (pas en Redis) — perte au redémarrage force une nouvelle connexion
+- Pas de binding du nonce à l'adresse IP du demandeur
+
+---
+
+#### 2.3 Usurpation d'adresse PTF
+
+**Vecteur :** Générer une adresse qui ressemble visuellement à une adresse légitime (vanity address attack) pour tromper les créateurs de projets qui payent les rewards.
+
+**Limites :**
+- Adresses affichées en format tronqué `0xAbCd...1234` — 8 premiers + 4 derniers chars
+- Un attaquant avec assez de GPU peut générer une adresse avec le même préfixe et suffixe visible
+
+**Mitigations en place :**
+- Vérification EIP-55 checksum — une adresse avec casse incorrecte est rejetée
+- Ownership prouvé par signature ECDSA — impossible d'usurper sans la clé privée
+
+**Mitigations manquantes :**
+- Affichage tronqué dangereux — afficher l'adresse complète serait plus sûr
+
+---
+
+### 3. Surface d'attaque — Couche backend
+
+#### 3.1 Injection GraphQL
+
+**Vecteur :** Requêtes GraphQL imbriquées profondément (`tasks { project { tasks { project { ... } } } }`) causant des boucles de jointures O(n^k) en base.
+
+**Mitigations en place :**
+- Profondeur max 6 (`depthLimitRule` dans `ApolloServer.validationRules`)
+- Introspection désactivée en production
+- Pagination forcée (max 200 résultats)
+
+**Mitigations manquantes :**
+- Pas de query complexity scoring — une requête large mais peu profonde reste possible
+- Pas de timeout par requête GraphQL
+
+---
+
+#### 3.2 Race condition sur le claim de tâche
+
+**Vecteur :** Deux développeurs tentent de clamer la même tâche simultanément. Sans protection, les deux reçoivent un `ClaimResult` valide.
+
+**Mitigations en place :**
+- Redlock distribué sur Redis Sentinel (TTL 10s)
+- Statut intermédiaire `claim_pending` en DB avant l'appel on-chain
+- Double-check du statut sous lock
+
+**Limites :**
+- Si Redis Sentinel tombe au moment du lock, le claim est refusé (comportement correct — fail-closed)
+- TTL 10s peut être insuffisant si le RPC blockchain est très lent (congestion réseau L2)
+
+---
+
+#### 3.3 Manipulation des `verificationSteps`
+
+**Vecteur :** Un créateur de projet malveillant inclut dans les `verificationSteps` des commandes qui exfiltrent des données ou compromettent le sandbox du développeur.
+
+**Mitigations en place :**
+- Allowlist stricte des commandes autorisées (`npm test`, `npx jest`, `cargo test`, etc.)
+- Sandbox gVisor pour l'exécution — réseau sortant désactivé, filesystem read-only
+- Commandes masquées dans les tâches privées si elles révèlent l'infra interne
+
+**Limites :**
+- L'allowlist est vérifiée par un `startsWith()` — `npm test; curl attacker.com` passerait si la commande commence par `npm test`
+- Pas de parsing AST des commandes — injection via arguments
+
+**Mitigations manquantes :**
+- Parser strict des commandes (séparation binaire/arguments, pas de shell expansion)
+- Validation que la commande n'utilise pas `&&`, `;`, `|`, `$()`
+
+---
+
+#### 3.4 Falsification des métadonnées de tâche
+
+**Vecteur :** Un nœud PTF malveillant modifie le contenu d'une tâche (contexte, verificationSteps, punishments) avant de le servir à un développeur.
+
+**Mitigations en place (nouvelles — CAS):**
+- `MetadataRegistry` on-chain stocke `keccak256(task_json)` à la publication
+- La CLI recalcule le hash à la réception et compare à l'ancre on-chain
+- Un hash différent déclenche un avertissement et un switch vers un autre nœud
+
+**Limites :**
+- En phase 1, la vérification on-chain est optionnelle (appel RPC coûteux) — elle devrait être systématique
+- Si la CLI ne vérifie pas et que l'utilisateur fait confiance au nœud, la falsification passe
+
+**Mitigations manquantes :**
+- Vérification on-chain obligatoire pour les opérations à enjeu financier (claim, publish)
+- Liste noire des nœuds détectés malveillants
+
+---
+
+#### 3.5 Pollution du `NetworkBroadcast`
+
+**Vecteur :** Un nœud malveillant injecte de faux broadcasts (fausses tâches, faux statuts) dans le réseau gossip P2P.
+
+**Mitigations en place :**
+- Chaque broadcast est signé par la clé officielle PTF
+- Les Merkle roots permettent à tout nœud de vérifier la cohérence du broadcast
+
+**Limites :**
+- En phase 1, il n'y a qu'un seul nœud (PTF Corp) — pas de réseau P2P réel
+- La clé de signature PTF est un point de centralisation — si compromise, des broadcasts falsifiés semblent légitimes
+
+**Mitigations manquantes :**
+- Rotation de la clé de signature PTF
+- Multi-signature sur les broadcasts critiques
+
+---
+
+### 4. Surface d'attaque — Couche smart contracts
+
+#### 4.1 Reentrancy sur EscrowVault
+
+**Vecteur :** Un token ERC-777 (avec hooks `tokensReceived`) utilisé comme `usdcToken` permettrait un appel rentrant dans `releaseTaskReward` avant que `softLocked[dev]` soit mis à jour.
+
+**Mitigations en place :**
+- `nonReentrant` (OpenZeppelin) sur toutes les fonctions de transfert
+- Pattern checks-effects-interactions respecté
+- `SafeERC20.safeTransfer` au lieu de `transfer` direct
+- USDC (standard ERC-20 sans hooks) — pas de callback possible
+
+**Limites :**
+- Si PTF accepte un jour un stablecoin ERC-777, le pattern hooks devient un vecteur
+- La contrainte "ERC-20 standard SANS hooks" n'est pas enforced on-chain
+
+---
+
+#### 4.2 Front-running du claim on-chain
+
+**Vecteur :** Un observateur du mempool voit une transaction `claimTask(taskId, devAddress, conditionsHash)` en attente, la copie avec une gas price plus élevée et sa propre adresse, et se retrouve à clamer la tâche avant le développeur légitime.
+
+**Limites :**
+- Sur Polygon (PoS), le mempool est visible publiquement
+- Les transactions L2 ont des temps de confirmation de quelques secondes — fenêtre courte mais réelle
+
+**Mitigations en place :**
+- `conditionsHash` inclut le `taskId` et les conditions — sans accès au contenu off-chain, l'attaquant ne peut pas valider la tâche
+
+**Mitigations manquantes :**
+- Commit-reveal scheme pour le claim — soumission d'un hash first, révélation ensuite
+- Utilisation d'un relayer privé (Flashbots) pour les transactions critiques
+
+---
+
+#### 4.3 Griefing — tâche bloquée indéfiniment
+
+**Vecteur :** Un développeur réclame une tâche (10 PTF soft-locked), n'avance pas, et annule juste avant le deadline (>50% de la durée écoulée) pour minimiser la pénalité tout en bloquant la tâche pendant toute la durée.
+
+**Mitigations en place :**
+- Pénalité `lateDelivery` appliquée si >50% de la durée est écoulée
+- `TimerService` expire automatiquement la tâche à deadline et applique la pénalité
+- Score de réputation dégradé — le développeur perdra accès aux futures tâches si réputation trop basse
+
+**Limites :**
+- Un développeur avec une haute réputation peut griffer plusieurs tâches avant que son score soit trop bas
+- Les pénalités configurables par le créateur peuvent être très faibles
+
+---
+
+#### 4.4 Oracle manipulation (prix PTF/USDC)
+
+**Vecteur :** Si le taux de conversion PTF/USDC est manipulé via flash loan sur le pool DEX utilisé comme oracle, un attaquant peut deposit peu d'USDC et obtenir beaucoup de PTF (ou vice-versa).
+
+**Limites :**
+- Chainlink est utilisé comme oracle — résistant aux flash loans (TWAP + circuit breaker)
+- Mais si Chainlink est down ou stale, le CurrencyConverter peut accepter des taux périmés
+
+**Mitigations en place :**
+- `IOracleProvider.isStale()` vérifie l'âge du prix
+- `lockRate()` garantit le taux pendant 60 secondes
+
+**Mitigations manquantes :**
+- Pas de circuit breaker sur un décrochage de prix brutal (>10% en 1 bloc)
+- Pas de fallback oracle si Chainlink est down
+
+---
+
+### 5. Limites architecturales fondamentales
+
+Ces limites ne sont pas des bugs — ce sont des contraintes structurelles de l'architecture actuelle. Les corriger nécessite des changements d'architecture majeurs.
+
+#### 5.1 PTF Corp est un point de confiance central
+
+Tout passe par PTF Corp en phase 1 :
+- Seule entité autorisée à appeler `onlyBackend` / `onlyRegistrar` sur les contrats
+- Seule entité à signer les `NetworkBroadcast`
+- Seule entité à archiver sur Arweave (en pratique, même si techniquement ouvert)
+- Si PTF Corp est compromise, tout le système l'est
+
+**Chemin vers la décentralisation :** DAO + multisig + `NodeRegistry` (phase 2-3).
+
+---
+
+#### 5.2 La logique de validation est off-chain et centralisée
+
+Les `verificationSteps` sont exécutés dans un sandbox gVisor géré par PTF. Un résultat `pass` ne peut pas être vérifié indépendamment par un tiers — il faut faire confiance à PTF Agent.
+
+**Conséquence :** PTF Corp peut valider une soumission frauduleuse ou rejeter une soumission correcte. Les preuves signées par l'agent sont vérifiables (signature ECDSA) mais pas le processus d'exécution lui-même (pas de TEE/SGX).
+
+---
+
+#### 5.3 Le modèle UTXO off-chain n'est pas la source de vérité
+
+Les UTXOs sont gérés en PostgreSQL (DB PTF). La blockchain est la source de vérité financière mais les UTXOs individuels ne sont pas représentés on-chain — seuls les soldes agrégés le sont.
+
+**Conséquence :** En cas de divergence entre PostgreSQL et la blockchain (crash, bug de reconciliation), le `ReconciliationWorker` peut ne pas récupérer tous les états — des fonds peuvent rester bloqués.
+
+---
+
+#### 5.4 Métadonnées des tâches actives centralisées
+
+Tant que le `MetadataStore` distribué (phase 2) n'est pas implémenté, les métadonnées des tâches actives n'existent que dans PostgreSQL de PTF Corp. Si la DB est perdue, les specs des tâches actives sont perdues (les hash on-chain survivent, mais pas le contenu).
+
+**Mitigation partielle :** L'archivage Arweave se déclenche à la validation — les tâches terminées sont protégées. Seules les tâches en cours sont vulnérables.
+
+---
+
+### 6. Matrice de risque
+
+| Vecteur | Probabilité | Impact | Mitigation actuelle | Priorité |
+|---|---|---|---|---|
+| DDoS backend | Élevée | Disponibilité | Rate limiting Redis | 🟠 Moyen |
+| DNS/BGP hijacking | Faible | Critique | TLS + hash verification | 🟡 Bas |
+| Bruteforce keystore local | Faible | Élevé | PBKDF2 600k iter | 🟡 Bas |
+| Replay nonce auth | Très faible | Élevé | TTL 5min + consume | 🟢 Résiduel |
+| Injection GraphQL profonde | Faible | Moyen | depthLimitRule max 6 | 🟡 Bas |
+| Race condition claim | Faible | Élevé | Redlock + claim_pending | 🟡 Bas |
+| verificationSteps injection | Moyenne | Élevé | Allowlist + gVisor | 🟠 Moyen |
+| Falsification métadonnées | Faible | Élevé | CAS hash verification | 🟡 Bas |
+| Front-running claim | Faible | Moyen | Peu d'impact pratique | 🟡 Bas |
+| Griefing tâches | Moyenne | Faible | Pénalités + expiration | 🟡 Bas |
+| Oracle manipulation | Très faible | Élevé | Chainlink TWAP | 🟢 Résiduel |
+| Reentrancy EscrowVault | Très faible | Critique | nonReentrant + patterns | 🟢 Résiduel |
+| PTF Corp compromise | Faible | Catastrophique | Aucune (phase 1) | 🔴 Élevé |
+| Perte DB PostgreSQL | Très faible | Élevé | Backup + Arweave partiel | 🟠 Moyen |
+
+---
+
+### 7. Recommandations prioritaires
+
+**Priorité haute — à traiter avant mainnet :**
+
+1. **Parser strict des `verificationSteps`** — remplacer `startsWith()` par un vrai parser qui sépare binaire et arguments, interdit `&&`, `;`, `|`, `$()`
+2. **Vérification on-chain obligatoire** pour claim et publish — pas optionnelle
+3. **DNSSEC sur ptf.dev** + publication du fingerprint TLS dans le DNS
+4. **Multisig sur les fonctions `onlyOwner`** des contrats (Gnosis Safe 3-of-5)
+5. **Timelock 24h** sur les opérations d'admin des contrats
+
+**Priorité moyenne — post-lancement :**
+
+6. **WAF/CDN** devant l'API GraphQL (Cloudflare Workers)
+7. **Query complexity scoring** en plus du depth limit
+8. **NodeRegistry on-chain** — liste des nœuds de confiance vérifiés (phase 2)
+9. **Certificate pinning CLI** — vérification du certificat TLS en plus du DNS
+10. **Migration vers entiers micro-PTF** — éliminer l'arithmétique float
+
+**Priorité basse — long terme :**
+
+11. **TEE/SGX pour PTF Agent** — remote attestation vérifiable de l'exécution des tests
+12. **Commit-reveal scheme** pour les claims on-chain — anti front-running
+13. **DAO + slashing** — décentraliser le contrôle de PTF Corp
+14. **Rotation automatique** de la clé de signature PTF Corp
