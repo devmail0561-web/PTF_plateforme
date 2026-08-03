@@ -50,22 +50,16 @@ taskCommand
 
     printTask(task, true);
 
+    const { printSectionHeader } = await import("../utils/display.js");
+    printSectionHeader("Comment soumettre");
     console.log(
-      "\n" +
-        chalk.bold.cyan("━━━ Comment soumettre ━━━") +
-        "\n\n" +
-        chalk.bold("  Via CLI :") + "\n" +
-        chalk.dim("  $ ") + chalk.cyan("ptf submit") + "\n" +
-        chalk.dim("    Branche, commit et task ID sont auto-détectés.") + "\n" +
-        chalk.dim("    Override si besoin : ptf submit --branch <b> --commit <sha>") + "\n\n" +
-        chalk.bold("  Via Web UI :") + "\n" +
-        "  1. Bouton \"Submit Task\" sur la page de la tâche\n" +
-        "  2. Renseigner branche + hash de commit\n\n" +
-        chalk.bold("  Après soumission :") + "\n" +
-        "  1. Validation automatique (tests, lint, contraintes)\n" +
-        "  2. Peer review (3 reviewers Expert ≥ 2000 pts)\n" +
-        "  3. Validation client (auto-approbation après 72h)\n" +
-        "  4. Reward libéré"
+      "   " + chalk.dim("$ ") + chalk.cyan("ptf submit") +
+      chalk.dim("  — branche et commit auto-détectés") + "\n\n" +
+      "   " + chalk.bold("Après soumission") + "\n" +
+      "   " + chalk.dim("1.") + " Validation automatique (tests, lint)" + "\n" +
+      "   " + chalk.dim("2.") + " Peer review (3 experts ≥ 2000 pts)" + "\n" +
+      "   " + chalk.dim("3.") + " Validation client (auto après 72h)" + "\n" +
+      "   " + chalk.dim("4.") + " Reward libéré"
     );
   });
 
@@ -159,22 +153,30 @@ taskCommand
     const isPaid = task.rewardMode === "paid";
     const projectMode = isPaid ? "Projet rémunéré (paid)" : "Projet public (free — réputation)";
 
-    console.log(
-      "\n" +
-        chalk.bold(`Conditions de la tâche [${taskId.slice(0, 12)}...] — ${projectMode} :\n`) +
-        `  - Durée     : ${task.duration} (deadline : ${new Date(deadline).toLocaleDateString("fr-FR")})\n` +
-        (isPaid
-          ? `  - Reward    : ${chalk.green.bold(task.reward!.amount + " " + task.reward!.token)} (libéré à validation)\n` +
-            `  - Garantie  : 10 PTF soft-locked pendant la tâche\n`
-          : `  - Reward    : ${chalk.cyan("+" + (task.reputationPoints ?? "?") + " pts réputation")} (projet public free)\n`) +
-        `  - Pénalités :\n` +
-        `      Retard          : -${isPaid ? task.punishments.lateDelivery.credits + " crédits / " : ""}${task.punishments.lateDelivery.reputation} pts réputation\n` +
-        `      Bug critique    : -${isPaid ? task.punishments.criticalBug.credits + " crédits / " : ""}${task.punishments.criticalBug.reputation} pts réputation\n` +
-        `      Bug mineur      : -${isPaid ? task.punishments.nonCriticalBug.credits + " crédits / " : ""}${task.punishments.nonCriticalBug.reputation} pts réputation\n` +
-        `      Code malveillant: -${isPaid ? task.punishments.maliciousCode.credits + " crédits / " : ""}${task.punishments.maliciousCode.reputation} pts réputation\n` +
-        `  - Langues requises  : ${task.constraints.languages.join(", ")}\n` +
-        `  - Tests requis      : couverture > ${task.constraints.minTestCoverage}%\n`
-    );
+    const { printSectionHeader: printSec } = await import("../utils/display.js");
+    printSec(`Conditions — ${projectMode}`);
+
+    const row = (label: string, value: string) =>
+      console.log("   " + chalk.dim(label.padEnd(18)) + value);
+
+    row("Durée",    `${task.duration}  ${chalk.dim("→ " + new Date(deadline).toLocaleDateString("fr-FR"))}`);
+    row("Reward",   isPaid
+      ? chalk.green.bold(task.reward!.amount + " " + task.reward!.token) + chalk.dim("  (libéré à validation)")
+      : chalk.cyan("+" + (task.reputationPoints ?? "?") + " pts rep") + chalk.dim("  (free)"));
+    if (isPaid) row("Garantie", chalk.yellow("10 PTF soft-locked"));
+    row("Langues",  task.constraints.languages.join(", "));
+    row("Couverture", `> ${task.constraints.minTestCoverage}%`);
+
+    console.log("\n   " + chalk.dim("Pénalités"));
+    const pen = (label: string, p: { credits?: number; reputation: number }) => {
+      const ptf = isPaid && p.credits ? chalk.red(`-${p.credits} PTF`) + chalk.dim("  ") : "";
+      console.log("   " + chalk.dim("  " + label.padEnd(18)) + ptf + chalk.red(`-${p.reputation} pts rép.`));
+    };
+    pen("Retard",           task.punishments.lateDelivery);
+    pen("Bug critique",     task.punishments.criticalBug);
+    pen("Bug mineur",       task.punishments.nonCriticalBug);
+    pen("Code malveillant", task.punishments.maliciousCode);
+    console.log();
 
     const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
       {
@@ -296,21 +298,17 @@ taskCommand
       pushed: false,
     });
 
-    printSuccess(`Tâche réclamée avec succès !\n`);
+    printSuccess("Tâche réclamée");
     console.log(
-      `  Tâche ID      : ${chalk.dim(result.taskId)}\n` +
-        `  Branche       : ${chalk.cyan(branch)}\n` +
-        `  Repo          : ${chalk.dim(repoPath)}\n` +
-        `  Réclamé à     : ${new Date(result.claimedAt).toLocaleString("fr-FR")}\n` +
-        `  Deadline      : ${formatDeadlineCountdown(result.deadline)}\n` +
-        `  Conditions    : ${chalk.dim(conditionsHash.slice(0, 16) + "...")} (ancré on-chain)\n`
+      `   ${chalk.dim("ID         : ")}${chalk.dim(result.taskId.slice(0, 12) + "…")}\n` +
+      `   ${chalk.dim("Branche    : ")}${chalk.cyan(branch)}\n` +
+      `   ${chalk.dim("Deadline   : ")}${formatDeadlineCountdown(result.deadline)}\n` +
+      `   ${chalk.dim("Conditions : ")}${chalk.dim(conditionsHash.slice(0, 16) + "…")} ${chalk.dim("(ancré on-chain)")}\n`
     );
-
     console.log(
-      chalk.dim("\nWorkflow :") + "\n" +
-        chalk.dim("  1. Implémentez dans ") + chalk.cyan(branch) + "\n" +
-        chalk.dim("  2. Committez normalement (git commit)") + "\n" +
-        chalk.dim("  3. Quand terminé : ") + chalk.cyan("ptf submit") + chalk.dim(" (push + soumission auto)")
+      "   " + chalk.dim("Workflow : code → ") +
+      chalk.cyan("git commit") + chalk.dim(" → ") +
+      chalk.cyan("ptf submit")
     );
   });
 
@@ -387,9 +385,9 @@ taskCommand
         { taskId }
       );
       spinner.succeed("Annulation confirmée.");
-    } catch (err) {
+    } catch {
       spinner.fail("Échec de l'annulation côté serveur.");
-      printError((err as Error).message);
+      printError("Impossible d'annuler cette tâche — service non joignable.");
       return;
     }
 

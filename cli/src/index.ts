@@ -19,6 +19,7 @@ import {
 } from "./commands/projects.js";
 import { reportCommand } from "./commands/report.js";
 import chalk from "chalk";
+import { printError } from "./utils/display.js";
 
 function buildProgram(repl = false): Command {
   const prog = new Command("ptf")
@@ -144,13 +145,9 @@ async function startRepl(): Promise<void> {
   const { printBanner } = await import("./utils/display.js");
   printBanner("0.1.0");
 
-  console.log(
-    chalk.dim("   Tapez une commande (ex: tasks, wallet, help) ou ") +
-    chalk.bold("exit") +
-    chalk.dim(" pour quitter.\n")
-  );
-
-  const PROMPT = chalk.cyan.bold("ptf") + chalk.dim(" › ");
+  // Prompt doit être du texte brut — readline compte les octets pour positionner
+  // le curseur. Les codes ANSI décalent le calcul et font bouger le prompt.
+  const PROMPT = "ptf ❯ ";
   let rl: ReturnType<typeof createInterface>;
   let exiting = false;
 
@@ -161,6 +158,17 @@ async function startRepl(): Promise<void> {
       prompt: PROMPT,
       terminal: true,
     });
+
+    // readline avec terminal:true active déjà emitKeypressEvents sur stdin.
+    // Ctrl+L n'est pas géré par readline Node.js — on l'intercepte ici.
+    const onKeypress = (_ch: unknown, key: { ctrl?: boolean; name?: string } | undefined) => {
+      if (key?.ctrl && key.name === "l") {
+        process.stdout.write("\x1b[2J\x1b[H"); // clear + curseur en haut
+        iface.prompt(true);
+      }
+    };
+    process.stdin.on("keypress", onKeypress);
+
 
     iface.on("line", (line) => {
       const input = line.trim();
@@ -196,22 +204,22 @@ async function startRepl(): Promise<void> {
             ? (err as { code: string }).code
             : undefined;
           if (code === "commander.helpDisplayed" || code === "commander.version" || code === "commander.help") {
-            const parts = input.split(/\s+/);
-            const matched = findCommand(prog, parts);
-            if (matched && matched.commands.length > 0) {
-              const subs = matched.commands.map((c) => c.name());
-              console.log(
-                "  " + chalk.cyan(matched.name()) +
-                chalk.dim(" — sous-commandes : ") +
-                subs.join(", ")
-              );
-              console.log(chalk.dim(`     Aide : ptf ${parts.join(" ")} --help`));
+            // helpInformation() retourne le texte sans passer par writeOut/writeErr
+            const parts = input.split(/\s+/).filter(Boolean);
+            let cmd: import("commander").Command = prog;
+            for (const p of parts.filter(p => !p.startsWith("-"))) {
+              const sub = cmd.commands.find((c) => c.name() === p || c.aliases().includes(p));
+              if (!sub) break;
+              cmd = sub;
             }
+            process.stdout.write(cmd.helpInformation());
           } else if (code === "commander.unknownCommand" || code === "commander.unknownOption" || code === "commander.invalidArgument") {
-            console.log(chalk.red("  ✗") + "  Commande inconnue : " + chalk.bold(input));
-            console.log(chalk.dim("     Tapez help pour voir les commandes disponibles."));
+            printError(
+              "Commande inconnue : " + chalk.bold(input) + "\n" +
+              chalk.dim("Tapez help pour voir les commandes disponibles.")
+            );
           } else if (err instanceof Error) {
-            console.log(chalk.red("  ✗") + "  " + err.message);
+            printError(err.message);
           }
         }
 
@@ -222,6 +230,7 @@ async function startRepl(): Promise<void> {
     });
 
     iface.on("close", () => {
+      process.stdin.removeListener("keypress", onKeypress);
       if (exiting) process.exit(0);
     });
 

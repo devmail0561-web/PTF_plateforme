@@ -91,11 +91,10 @@ export function saveProjectConfig(
 export function requireAuth(): PtfUserConfig {
   const cfg = loadUserConfig();
   if (!cfg.sessionToken) {
-    const msg =
+    throw new Error(
       "Vous devez être connecté pour effectuer cette action.\n" +
-      "Connectez-vous : ptf auth login";
-    console.error(msg);
-    throw new Error(msg);
+      "Connectez-vous : ptf auth login"
+    );
   }
   return cfg;
 }
@@ -103,10 +102,10 @@ export function requireAuth(): PtfUserConfig {
 export function requireProjectConfig(dir?: string): PtfProjectConfig {
   const config = loadProjectConfig(dir);
   if (!config) {
-    const msg = "Aucun projet PTF trouvé dans ce répertoire ou ses parents.\n" +
-      "Initialisez un projet avec : ptf init --name <nom> --type public";
-    console.error(msg);
-    throw new Error(msg);
+    throw new Error(
+      "Aucun projet PTF trouvé dans ce répertoire ou ses parents.\n" +
+      "Initialisez un projet avec : ptf init --name <nom> --type public"
+    );
   }
   return config;
 }

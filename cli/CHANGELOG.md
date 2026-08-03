@@ -1,5 +1,49 @@
 # Changelog — @ptf/cli
 
+## [0.1.1] — 2026-08-03
+
+### Fixed
+
+- **GraphQL : schema mismatch — toutes les requêtes renvoyaient du mock**
+  - **Bug :** 100% des commandes réseau retombaient en données simulées sans avertissement.
+  - **Cause :** Les noms de champs dans les queries CLI ne correspondaient pas au schema backend : `reward { amount token }` (inexistant) au lieu de `rewardAmount`/`rewardToken` plats, `projectId` au lieu de `id`, `architecture`/`planAction` au lieu de `architectureMd`/`planActionMd`, `user { ptfAddress }` absent de `AuthResult`, `$skills: [String]` au lieu de `[String!]`, `walletStatus` sans le paramètre obligatoire `chain`.
+  - **Fix :** Adapters `mapTask()` (RawTask → PtfTask) et `mapWalletStatus()` (flags plats → `verification {}`). Toutes les queries réécrites avec les noms exacts du schema.
+
+- **REPL : erreurs techniques affichées en clair**
+  - **Bug :** Les messages d'erreur GraphQL bruts (`Cannot query field "X" on type "Y"`) s'affichaient directement dans le terminal.
+  - **Fix :** Tous les appels réseau en lecture enveloppés dans `try/catch` silencieux → fallback offline + bannière. Mutations (`auth`, `task cancel`, `wallet restore`) : messages métier lisibles en français.
+
+- **REPL : `--help` crash sur commandes-groupe (`wallet --help`)**
+  - **Bug :** `wallet --help`, `tasks --help` etc. faisaient crasher le process entier avec une stacktrace Node.js complète (`CommanderError: (outputHelp)` non catchée).
+  - **Cause :** `progHelp.parseAsync(argv)` sans `await` créait une rejection non-gérée qui tuait le process.
+  - **Fix :** `await progHelp.parseAsync(argv)` dans le bloc catch `commander.helpDisplayed`.
+
+- **REPL : `--help` sur commandes feuilles n'affichait rien**
+  - **Bug :** `generate --help`, `wallet create --help` etc. ne produisaient aucune sortie dans le REPL.
+  - **Cause :** Le programme REPL est construit avec `writeOut: () => {}` (sortie silenciée). Le help était "affiché" mais avalé.
+  - **Fix :** Reconstruction d'un second programme non-silencié (`buildProgram(false)`) utilisé uniquement pour les demandes de help.
+
+- **`requireAuth` / `requireProjectConfig` : message affiché en double**
+  - **Bug :** Ces fonctions faisaient `console.error(msg)` puis `throw new Error(msg)`. Le REPL catchait le throw et affichait le message une deuxième fois.
+  - **Fix :** Retiré le `console.error()` — seul le throw subsiste, intercepté proprement par le REPL.
+
+- **`wallet history` / `wallet utxos` / `wallet rep-history` : erreur brute affichée**
+  - **Bug :** Ces queries (`creditHistory`, `utxos`, `reputationHistory`) n'existent pas encore dans le schema backend → erreur GraphQL affichée brute.
+  - **Fix :** Enveloppées dans `try/catch` → fallback offline avec bannière discrète.
+
+- **Prompt qui dérive pendant la saisie**
+  - **Bug :** Le prompt `ptf ›` se décalait vers la droite à chaque touche tapée.
+  - **Cause :** Les codes ANSI chalk dans la chaîne `prompt` de readline faussent le calcul de position du curseur.
+  - **Fix :** Prompt en texte brut : `"ptf ❯ "`.
+
+- **Ctrl+L ne fonctionnait pas**
+  - **Fix :** `process.stdin.on("keypress", ...)` intercepte `key.ctrl && key.name === "l"` → `\x1b[2J\x1b[H`.
+
+### Changed
+
+- Logo ASCII : design unique fixe centré dans le terminal (remplace les 5 logos × 8 couleurs aléatoires)
+- Bannière offline simplifiée : une seule ligne discrète au lieu du bloc encadré
+
 ## [0.1.0] — 2026-08-02
 
 ### Fixed

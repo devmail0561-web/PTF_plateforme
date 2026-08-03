@@ -102,8 +102,11 @@ authCommand
     let privateKey: string;
     try {
       ({ privateKey } = unlockWallet(address, password));
-    } catch (err) {
-      printError((err as Error).message);
+    } catch {
+      printError(
+        "Mot de passe incorrect ou keystore corrompu.\n" +
+        chalk.dim("Vérifiez votre mot de passe et réessayez.")
+      );
       return;
     }
 
@@ -116,12 +119,11 @@ authCommand
     try {
       const result = await client.requestAuthChallenge(address);
       nonce = result.nonce;
-    } catch (err) {
+    } catch {
       printError(
-        `Impossible de contacter le service PTF : ${(err as Error).message}\n` +
+        "Impossible de contacter le service PTF.\n" +
         chalk.dim("Vérifiez votre connexion ou utilisez --offline.")
       );
-      // Effacer la clé privée de la mémoire
       privateKey = "";
       return;
     }
@@ -136,9 +138,9 @@ authCommand
     try {
       const result = await client.verifyAuthChallenge(address, nonce, signature);
       sessionToken = result.token;
-    } catch (err) {
+    } catch {
       printError(
-        `Échec de l'authentification : ${(err as Error).message}\n` +
+        "Échec de l'authentification.\n" +
         chalk.dim("La signature n'a pas pu être vérifiée par le service.")
       );
       return;

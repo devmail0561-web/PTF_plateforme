@@ -34,10 +34,10 @@ walletCommand
     const { default: inquirer } = await import("inquirer");
 
     console.log(
-      "\n" + chalk.bold("Création d'un wallet PTF\n") +
-      chalk.dim("─".repeat(50)) + "\n" +
-      "Un keypair secp256k1 va être généré sur cette machine.\n" +
-      chalk.yellow("La clé privée ne quittera jamais votre appareil.\n")
+      "\n" + chalk.bold("   Création d'un wallet PTF") + "\n" +
+      "   " + chalk.dim("─".repeat(48)) + "\n" +
+      "   Un keypair secp256k1 sera généré localement.\n" +
+      "   " + chalk.yellow("La clé privée ne quitte jamais votre machine.") + "\n"
     );
 
     const { password, confirm } = await inquirer.prompt<{ password: string; confirm: string }>([
@@ -64,33 +64,32 @@ walletCommand
     const wallet = createWallet(password);
 
     console.log(
-      "\n" + chalk.green.bold("✓ Wallet créé !\n") +
-      chalk.dim("─".repeat(50)) + "\n" +
-      `  Adresse PTF : ${chalk.cyan.bold(wallet.address)}\n` +
-      `  Keystore    : ${chalk.dim(wallet.keystorePath)}\n`
-    );
-
-    console.log(
-      chalk.yellow.bold("\n  ⚠  SEED PHRASE — À SAUVEGARDER IMMÉDIATEMENT\n") +
-      chalk.yellow("  ┌" + "─".repeat(46) + "┐") + "\n" +
-      chalk.yellow("  │") + "                                              " + chalk.yellow("│") + "\n"
+      "\n" +
+      "   " + chalk.green("✓") + " " + chalk.bold("Wallet créé") + "\n" +
+      "   " + chalk.dim("Adresse  : ") + chalk.cyan.bold(wallet.address) + "\n" +
+      "   " + chalk.dim("Keystore : ") + chalk.dim(wallet.keystorePath) + "\n"
     );
 
     const words = wallet.mnemonic.split(" ");
-    for (let i = 0; i < words.length; i += 3) {
-      const line = words.slice(i, i + 3)
-        .map((w, j) => `${String(i + j + 1).padStart(2)}. ${w.padEnd(12)}`)
-        .join("  ");
-      console.log(chalk.yellow("  │  ") + chalk.bold(line) + chalk.yellow("  │"));
+    const innerW = 54;
+    const hbar   = "─".repeat(innerW);
+
+    console.log("   " + chalk.yellow("⚠  Seed phrase — à sauvegarder immédiatement"));
+    console.log("   " + chalk.dim("┌" + hbar + "┐"));
+
+    for (let i = 0; i < words.length; i += 4) {
+      const cells = words.slice(i, i + 4).map((w, j) =>
+        `${String(i + j + 1).padStart(2)}. ${w.padEnd(10)}`
+      );
+      const content = cells.join("  ");
+      const pad = Math.max(0, innerW - content.length - 2);
+      console.log("   " + chalk.dim("│") + "  " + chalk.bold(content) + " ".repeat(pad) + "  " + chalk.dim("│"));
     }
 
+    console.log("   " + chalk.dim("└" + hbar + "┘"));
     console.log(
-      chalk.yellow("  │") + "                                              " + chalk.yellow("│") + "\n" +
-      chalk.yellow("  └" + "─".repeat(46) + "┘") + "\n\n" +
-      chalk.red("  ATTENTION : Ces 12 mots sont la seule façon de récupérer\n") +
-      chalk.red("  votre wallet si vous perdez le fichier keystore.\n") +
-      chalk.red("  Notez-les sur papier et gardez-les en lieu sûr.\n") +
-      chalk.red("  Ne les partagez jamais — ils donnent accès à tous vos fonds.\n")
+      "\n   " + chalk.red("Ces 12 mots sont le seul moyen de récupérer votre wallet.") + "\n" +
+      "   " + chalk.red("Notez-les sur papier — ne les partagez jamais.") + "\n"
     );
 
     const { confirmed } = await inquirer.prompt<{ confirmed: boolean }>([
@@ -121,9 +120,9 @@ walletCommand
     const { default: inquirer } = await import("inquirer");
 
     console.log(
-      "\n" + chalk.bold("Restauration d'un wallet PTF\n") +
-      chalk.dim("─".repeat(50)) + "\n" +
-      "Entrez vos 12 mots (seed phrase) pour restaurer votre wallet.\n"
+      "\n" + chalk.bold("   Restauration d'un wallet PTF") + "\n" +
+      "   " + chalk.dim("─".repeat(48)) + "\n" +
+      "   Entrez vos 12 mots pour restaurer l'accès à votre wallet.\n"
     );
 
     const { mnemonic, password, confirm } = await inquirer.prompt<{
@@ -163,8 +162,11 @@ walletCommand
     let wallet;
     try {
       wallet = restoreWallet(mnemonic, password);
-    } catch (err) {
-      printError((err as Error).message);
+    } catch {
+      printError(
+        "Seed phrase invalide ou mot de passe incorrect.\n" +
+        chalk.dim("Vérifiez les 12 mots et réessayez.")
+      );
       return;
     }
 
@@ -246,9 +248,9 @@ walletCommand
     }
 
     console.log(
-      "\n" + chalk.red.bold("  ⚠  SUPPRESSION IRRÉVERSIBLE\n") +
-      chalk.red(`  Le keystore de ${address} sera supprimé.\n`) +
-      chalk.red("  Sans votre seed phrase, ce wallet sera perdu définitivement.\n")
+      "\n   " + chalk.red("⚠  Suppression irréversible") + "\n" +
+      "   " + chalk.dim(`Keystore de ${address} supprimé.`) + "\n" +
+      "   " + chalk.red("Sans seed phrase, ce wallet sera perdu définitivement.") + "\n"
     );
 
     const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
@@ -343,17 +345,27 @@ walletCommand
         { type: "soft_unlocked",       direction: "credit", amount: 10.0,   taskId: "0xghi…", chain: "polygon", txHash: null,      note: "10 PTF guarantee released on task cancel", createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
       ].slice(0, limit);
     } else {
-      const result = await client.query<{
-        creditHistory: typeof entries;
-      }>(
-        `query($address: String!, $limit: Int, $type: String) {
-          creditHistory(address: $address, limit: $limit, type: $type) {
-            type direction amount utxoId taskId chain txHash note createdAt
-          }
-        }`,
-        { address, limit, type: options.type ?? null }
-      );
-      entries = result.creditHistory;
+      try {
+        const result = await client.query<{
+          creditHistory: typeof entries;
+        }>(
+          `query($address: String!, $limit: Int, $type: String) {
+            creditHistory(address: $address, limit: $limit, type: $type) {
+              type direction amount utxoId taskId chain txHash note createdAt
+            }
+          }`,
+          { address, limit, type: options.type ?? null }
+        );
+        entries = result.creditHistory;
+      } catch {
+        printOfflineBanner();
+        entries = [
+          { type: "reward_earned",       direction: "credit", amount: 150.0, taskId: "0xabc…", chain: "polygon", txHash: "0x001…", note: null,                                       createdAt: new Date(Date.now() - 86400000 * 2).toISOString() },
+          { type: "soft_locked",         direction: "debit",  amount: 10.0,  taskId: "0xdef…", chain: "polygon", txHash: null,      note: "10 PTF guarantee locked on task claim",   createdAt: new Date(Date.now() - 86400000 * 3).toISOString() },
+          { type: "punishment_deducted", direction: "debit",  amount: 20.0,  taskId: "0xghi…", chain: "polygon", txHash: "0x002…", note: "punishment:lateDelivery",                  createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
+          { type: "soft_unlocked",       direction: "credit", amount: 10.0,  taskId: "0xghi…", chain: "polygon", txHash: null,      note: "10 PTF guarantee released on task cancel", createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
+        ].slice(0, limit);
+      }
     }
 
     // Totaux
@@ -423,17 +435,26 @@ walletCommand
         { delta: 180, reason: "task_validated",           taskId: "0xmno…", chain: "polygon", txHash: "0x005…", createdAt: new Date(Date.now() - 86400000 * 30).toISOString() },
       ].slice(0, limit);
     } else {
-      const result = await client.query<{
-        reputationHistory: typeof entries;
-      }>(
-        `query($address: String!, $limit: Int) {
-          reputationHistory(address: $address, limit: $limit) {
-            delta reason taskId chain txHash createdAt
-          }
-        }`,
-        { address, limit }
-      );
-      entries = result.reputationHistory;
+      try {
+        const result = await client.query<{
+          reputationHistory: typeof entries;
+        }>(
+          `query($address: String!, $limit: Int) {
+            reputationHistory(address: $address, limit: $limit) {
+              delta reason taskId chain txHash createdAt
+            }
+          }`,
+          { address, limit }
+        );
+        entries = result.reputationHistory;
+      } catch {
+        printOfflineBanner();
+        entries = [
+          { delta: 100, reason: "task_validated",          taskId: "0xabc…", chain: "polygon", txHash: "0x001…", createdAt: new Date(Date.now() - 86400000 * 2).toISOString() },
+          { delta: -10, reason: "punishment:lateDelivery", taskId: "0xdef…", chain: "polygon", txHash: "0x002…", createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
+          { delta: 110, reason: "task_validated",          taskId: "0xghi…", chain: "polygon", txHash: "0x003…", createdAt: new Date(Date.now() - 86400000 * 15).toISOString() },
+        ].slice(0, limit);
+      }
     }
 
     const totalGained = entries.filter(e => e.delta > 0).reduce((s, e) => s + e.delta, 0);
@@ -507,10 +528,12 @@ walletCommand
           { address, status: options.status ?? null, chain: options.chain ?? null }
         );
         utxos = result.utxos;
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        printError(`Erreur récupération UTXOs : ${msg}`);
-        return;
+      } catch {
+        printOfflineBanner();
+        utxos = [
+          { id: "0x" + "a1".repeat(32), amount: 150.0, sourceType: "task_reward", sourceId: "0x" + "01".repeat(32), chain: "polygon", status: "unspent", createdAt: new Date(Date.now() - 86400000 * 2).toISOString() },
+          { id: "0x" + "b2".repeat(32), amount: 60.0,  sourceType: "task_reward", sourceId: "0x" + "02".repeat(32), chain: "polygon", status: "unspent", createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
+        ].filter(u => !options.status || u.status === options.status);
       }
     }
 

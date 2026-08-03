@@ -17,6 +17,7 @@ import {
   printInfo,
   printSuccess,
   printWarning,
+  printSectionHeader,
   formatDeadlineCountdown,
   printEstimation,
   colorStatus,
@@ -126,7 +127,7 @@ tasksCommand
       return;
     }
 
-    console.log(chalk.bold(`\n   ${myTasks.length} tâche(s) réclamée(s) :\n`));
+    printSectionHeader(`${myTasks.length} tâche(s) réclamée(s)`);
 
     myTasks.forEach((task, i) => {
       const countdown = task.deadline
@@ -214,13 +215,12 @@ tasksCommand
     // can revisit them — only rejected tasks are permanently removed.
     saveDraftTasks([...approved, ...skipped]);
 
+    printSectionHeader("Résumé de la revue");
     console.log(
-      "\n" +
-        chalk.bold("Résumé de la revue :") +
-        `\n  Approuvées : ${chalk.green(String(approved.length))}` +
-        `\n  Rejetées   : ${chalk.red(String(rejected.length))}` +
-        `\n  Passées    : ${chalk.yellow(String(skipped.length))}` +
-        `\n  Total      : ${tasks.length}`
+      `   ${chalk.dim("Approuvées : ")}${chalk.green(String(approved.length))}\n` +
+      `   ${chalk.dim("Rejetées   : ")}${chalk.red(String(rejected.length))}\n` +
+      `   ${chalk.dim("Passées    : ")}${chalk.yellow(String(skipped.length))}\n` +
+      `   ${chalk.dim("Total      : ")}${tasks.length}`
     );
 
     if (approved.length > 0) {
@@ -259,11 +259,11 @@ tasksCommand
     const commission = totalReward * commissionRate;
     const totalDeposit = totalReward + commission;
 
+    printSectionHeader("Publication des tâches");
     console.log(
-      "\n" + chalk.bold("Publication des tâches — Résumé\n") +
-        `  Projet     : ${chalk.cyan(config.name)}\n` +
-        `  Tâches     : ${tasks.length}\n` +
-        `  Mode       : ${config.rewardMode}\n`
+      `   ${chalk.dim("Projet  : ")}${chalk.cyan(config.name)}\n` +
+      `   ${chalk.dim("Tâches  : ")}${tasks.length}\n` +
+      `   ${chalk.dim("Mode    : ")}${config.rewardMode}\n`
     );
 
     if (config.rewardMode === "paid") {
@@ -278,12 +278,9 @@ tasksCommand
 
       console.log(
         "\n" +
-          chalk.yellow.bold("⚠  Paiement requis avant publication\n") +
-          chalk.dim(
-            `Vous devrez déposer ${totalDeposit.toFixed(4)} PTF sur la chaîne ${config.chain}\n` +
-              "en escrow avant que les tâches soient visibles dans le réseau PTF.\n" +
-              chalk.dim("Le montant PTF est au taux marché au moment du dépôt.")
-          )
+        "   " + chalk.yellow("⚠  Paiement requis avant publication") + "\n" +
+        "   " + chalk.dim(`Dépôt escrow : ${totalDeposit.toFixed(4)} PTF (chaîne ${config.chain})`) + "\n" +
+        "   " + chalk.dim("Montant PTF calculé au taux marché au moment du dépôt.") + "\n"
       );
     }
 

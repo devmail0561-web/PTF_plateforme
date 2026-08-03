@@ -25,20 +25,34 @@ export function shortAddr(addr: string): string {
 
 // ── Core print helpers ─────────────────────────────────────────────────────────
 
+function printLines(icon: string, msg: string): void {
+  const indent = "       "; // 7 chars — aligne avec icon (2) + 2 spaces + icon (1) + 2 spaces
+  const lines  = msg.split("\n");
+  console.log(icon + "  " + lines[0]);
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i]) console.log(indent + lines[i]);
+  }
+}
+
 export function printSuccess(msg: string): void {
-  console.log(chalk.green("  ✓") + "  " + msg);
+  printLines(chalk.green("  ✓"), msg);
 }
 
 export function printError(msg: string): void {
-  console.error(chalk.red("  ✗") + "  " + msg);
+  const lines  = msg.split("\n");
+  const indent = "       ";
+  process.stderr.write(chalk.red("  ✗") + "  " + lines[0] + "\n");
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i]) process.stderr.write(indent + lines[i] + "\n");
+  }
 }
 
 export function printWarning(msg: string): void {
-  console.warn(chalk.yellow("  ⚠") + "  " + msg);
+  printLines(chalk.yellow("  ⚠"), msg);
 }
 
 export function printInfo(msg: string): void {
-  console.log(chalk.blue("  ℹ") + "  " + msg);
+  printLines(chalk.blue("  ℹ"), msg);
 }
 
 export function printDim(msg: string): void {
@@ -55,83 +69,32 @@ export function printSectionHeader(title: string): void {
 
 // ── Logo banner ────────────────────────────────────────────────────────────────
 
-const LOGOS: string[][] = [
-  [ // Block heavy
-    "   ██████╗ ████████╗███████╗",
-    "   ██╔══██╗╚══██╔══╝██╔════╝",
-    "   ██████╔╝   ██║   █████╗  ",
-    "   ██╔═══╝    ██║   ██╔══╝  ",
-    "   ██║        ██║   ██║     ",
-    "   ╚═╝        ╚═╝   ╚═╝     ",
-  ],
-  [ // Slant
-    "       ____  ______  ______",
-    "      / __ \\/_  __/ / ____/",
-    "     / /_/ / / /   / /_    ",
-    "    / ____/ / /   / __/    ",
-    "   / /     / /   / /       ",
-    "  /_/     /_/   /_/        ",
-  ],
-  [ // ANSI Shadow
-    "   ██████  ████████ ███████",
-    "   ██   ██    ██    ██     ",
-    "   ██████     ██    █████  ",
-    "   ██         ██    ██     ",
-    "   ██         ██    ██     ",
-    "   ▀▀         ▀▀    ▀▀     ",
-  ],
-  [ // Isometric
-    "      ___       ___       ___  ",
-    "     /\\  \\     /\\  \\     /\\  \\ ",
-    "    /::\\  \\    \\:\\  \\   /::\\  \\",
-    "   /:/\\:\\__\\   /::\\__\\ /:/\\:\\__\\",
-    "   \\:\\/:/  /  /:/\\/__/ \\:\\ \\/__/",
-    "    \\::/  /   \\/__/     \\:\\__\\  ",
-    "     \\/__/               \\/__/  ",
-  ],
-  [ // Cyberpunk
-    "   ╔═══╗ ╔════╗ ╔═══╗",
-    "   ║   ║ ║    ║ ║    ",
-    "   ╠═══╝ ║    ║ ╠══╗ ",
-    "   ║     ║    ║ ║    ",
-    "   ║     ╚════╝ ║    ",
-    "   ▪        ▪    ▪    ",
-  ],
-];
-
-const LOGO_COLORS: Array<(s: string) => string> = [
-  (s) => chalk.cyan.bold(s),
-  (s) => chalk.magenta.bold(s),
-  (s) => chalk.green.bold(s),
-  (s) => chalk.yellow.bold(s),
-  (s) => chalk.blue.bold(s),
-  (s) => chalk.red.bold(s),
-  (s) => chalk.hex("#8B5CF6").bold(s),
-  (s) => chalk.hex("#F97316").bold(s),
+const LOGO = [
+  "██████╗ ████████╗███████╗",
+  "██╔══██╗╚══██╔══╝██╔════╝",
+  "██████╔╝   ██║   █████╗  ",
+  "██╔═══╝    ██║   ██╔══╝  ",
+  "██║        ██║   ██║     ",
+  "╚═╝        ╚═╝   ╚═╝     ",
 ];
 
 export function printBanner(version = "0.1.0"): void {
-  const logo  = LOGOS[Math.floor(Math.random() * LOGOS.length)];
-  const color = LOGO_COLORS[Math.floor(Math.random() * LOGO_COLORS.length)];
+  const logoW = Math.max(...LOGO.map((l) => l.trimEnd().length));
+  const termW = Math.max(process.stdout.columns ?? 80, 50);
+  const pad   = " ".repeat(Math.max(2, Math.floor((termW - logoW) / 2)));
 
   console.log();
-  for (const line of logo) {
-    console.log(color(line));
+  for (const line of LOGO) {
+    console.log(chalk.cyan.bold(pad + line));
   }
   console.log();
+  console.log(pad + chalk.white.bold("Pay-Task Framework") + "  " + chalk.dim(`v${version}`));
+  console.log(pad + chalk.dim("Réseau décentralisé de tâches rémunérées"));
+  console.log(pad + chalk.dim("─".repeat(42)));
   console.log(
-    "   " + chalk.white.bold("Pay-Task Framework") +
-    "  " + chalk.bgCyan.black(` v${version} `)
-  );
-  console.log("   " + chalk.dim("Écosystème décentralisé de tâches rémunérées"));
-  console.log("   " + chalk.dim("─".repeat(46)));
-  console.log(
-    "   " +
-    [["tasks", "Parcourir les tâches"], ["wallet", "Gérer ses crédits"],
-     ["auth", "Se connecter"], ["generate", "IA → tâches"]]
-      .map(([cmd]) => color(cmd))
-      .join(chalk.dim("  ·  ")) +
-    chalk.dim("  ·  ") + chalk.dim("ptf --help")
+    pad +
+    ["tasks", "wallet", "auth", "generate"].map((c) => chalk.cyan(c)).join(chalk.dim("  ·  ")) +
+    chalk.dim("  ·  --help")
   );
   console.log();
 }
@@ -139,14 +102,8 @@ export function printBanner(version = "0.1.0"): void {
 // ── Offline banner ─────────────────────────────────────────────────────────────
 
 export function printOfflineBanner(): void {
-  const W  = 54;
-  const msg = "  Backend PTF indisponible — données simulées";
-  const pad = Math.max(0, W - msg.length - 2);
   console.log(
-    "\n" +
-    chalk.yellow("   ┌─ ") + chalk.yellow.bold("MODE OFFLINE") + chalk.yellow(" " + "─".repeat(W - 14) + "┐\n") +
-    chalk.yellow("   │") + chalk.dim(msg + " ".repeat(pad)) + chalk.yellow("│\n") +
-    chalk.yellow("   └" + "─".repeat(W) + "┘\n")
+    "\n" + chalk.yellow("  ⚠  Mode offline") + chalk.dim(" — données simulées\n")
   );
 }
 
@@ -404,39 +361,34 @@ export function printEstimation(est: {
   totalDeposit: number;
   byPhase?: { name: string; taskCount: number; rewardPool: number }[];
 }): void {
-  const W = 58;
-  const line = "═".repeat(W);
-
-  const fill = (label: string, value: string) => {
-    const content = "  " + label + value;
-    const pad = Math.max(0, W - stripAnsi(content).length);
-    return "║" + content + " ".repeat(pad) + "║";
+  const W    = 54;
+  const line = "─".repeat(W);
+  const row  = (label: string, value: string) => {
+    const raw = "  " + label;
+    const pad = Math.max(1, W - raw.length - stripAnsi(value).length - 2);
+    console.log("   " + chalk.dim("│") + raw + " ".repeat(pad) + value + "  " + chalk.dim("│"));
   };
 
-  console.log("\n╔" + line + "╗");
-  console.log(fill(chalk.bold("PTF — Estimation du projet"), ""));
-  console.log("╠" + line + "╣");
-  console.log(fill("Tâches estimées       :  ", chalk.cyan(`~${est.taskCount} tâches`)));
-  console.log(fill("Effort total          :  ", chalk.cyan(`~${est.totalEffortHours} heures-dev`)));
-  console.log(fill("Reward pool suggéré   :  ", chalk.green.bold(est.rewardPoolSuggested.toFixed(0) + " PTF")));
-  console.log(fill(`Commission (${(est.commissionRate * 100).toFixed(0)}%)       :  `, chalk.yellow(est.commissionAmount.toFixed(0) + " PTF")));
-  console.log(fill("Total à déposer       :  ", chalk.green.bold(est.totalDeposit.toFixed(0) + " PTF")));
-  console.log("╠" + line + "╣");
-  console.log(fill(chalk.dim("Grille commission (réf. USD)"), ""));
-  console.log(fill(chalk.dim("  < 5 000 USD    → "), chalk.dim("12 %")));
-  console.log(fill(chalk.dim("  5–50 000 USD   → "), chalk.dim("10 %")));
-  console.log(fill(chalk.dim("  > 50 000 USD   → "), chalk.dim(" 8 %")));
+  console.log("\n   " + chalk.dim("┌" + line + "┐"));
+  row(chalk.bold("Estimation du projet"), "");
+  console.log("   " + chalk.dim("├" + line + "┤"));
+  row("Tâches estimées      ", chalk.cyan(`~${est.taskCount}`));
+  row("Effort total         ", chalk.cyan(`~${est.totalEffortHours} h`));
+  row("Reward pool          ", chalk.green.bold(est.rewardPoolSuggested.toFixed(0) + " PTF"));
+  row(`Commission (${(est.commissionRate * 100).toFixed(0)}%)     `, chalk.yellow(est.commissionAmount.toFixed(0) + " PTF"));
+  row(chalk.bold("Total à déposer      "), chalk.green.bold(est.totalDeposit.toFixed(0) + " PTF"));
+  console.log("   " + chalk.dim("├" + line + "┤"));
+  row(chalk.dim("< 5k USD → 12%   5–50k → 10%   >50k → 8%"), "");
 
   if (est.byPhase && est.byPhase.length > 0) {
-    console.log("╠" + line + "╣");
-    console.log(fill(chalk.bold("Décomposition par phase"), ""));
+    console.log("   " + chalk.dim("├" + line + "┤"));
     for (const p of est.byPhase) {
-      console.log(fill(
-        chalk.dim(truncate(p.name, 16).padEnd(16) + "  "),
-        chalk.dim(`${p.taskCount} tâches  ~${p.rewardPool.toFixed(0)} PTF`)
-      ));
+      row(
+        chalk.dim(truncate(p.name, 20).padEnd(20)),
+        chalk.dim(`${p.taskCount} tâches  ${p.rewardPool.toFixed(0)} PTF`)
+      );
     }
   }
 
-  console.log("╚" + line + "╝");
+  console.log("   " + chalk.dim("└" + line + "┘"));
 }

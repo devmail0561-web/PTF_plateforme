@@ -1,8 +1,8 @@
 # PTF — Progression du projet
 
-> Version : **V0.2.8-alpha** — Dernière mise à jour : **2026-08-02**
+> Version : **V0.2.9-alpha** — Dernière mise à jour : **2026-08-03**
 >
-> Commits récents : `1c88d8b` audit sécurité 43 findings → `353eb30` 7 findings restants → `1822e4c` shell REPL → `(en cours)` fix REPL exitOverride + hints concis
+> Commits récents : `353eb30` 7 findings restants → `1822e4c` shell REPL → `5f31665` audit prompts → `(en cours)` CLI visual overhaul + schema fixes + REPL robustness
 
 ---
 
@@ -49,13 +49,14 @@ Le projet est désormais séparé en deux dépôts distincts :
 **14 commandes — ESM — Commander.js + ethers.js v6 + chalk v5**
 
 **Shell interactif REPL :**
-- `ptf` sans arguments → entre dans le prompt `ptf ›` avec banner
+- `ptf` sans arguments → entre dans le prompt `ptf ❯ ` (texte brut, curseur stable)
 - Commandes exécutées en boucle (ex: `tasks list`, `wallet status`)
-- `exit` / `quit` pour quitter — `clear` pour effacer l'écran
+- `exit` / `quit` pour quitter — `clear` / `Ctrl+L` pour effacer l'écran
 - Mode one-shot conservé : `ptf <commande>` exécute et quitte
-- Logo ASCII aléatoire à chaque lancement (5 designs × 8 couleurs)
-- Commandes de groupe sans sous-commande (ex: `tasks`, `wallet`) → hint concis des sous-commandes disponibles (plus d'affichage du help entier, plus de crash du REPL)
+- Logo ASCII fixe centré dans le terminal (aligné, plus de designs aléatoires)
+- `--help` sur toutes les commandes (feuilles incluses) s'affiche correctement dans le REPL
 - `exitOverride` propagé à toutes les sous-commandes — aucune commande ne peut tuer le REPL
+- Toutes les erreurs passent par `printError` — jamais de message brut serveur ni de stacktrace visible
 
 | Catégorie | Commandes |
 |---|---|
@@ -66,10 +67,19 @@ Le projet est désormais séparé en deux dépôts distincts :
 | Workflow dev | `commit`, `submit`, `status` |
 | Utilitaires | `config`, `report`, `contributors` |
 
-**Logique free/paid correcte (corrigée `2026-08-02`) :**
+**Connexion backend réelle (corrigée `2026-08-03`) :**
+- Toutes les requêtes GraphQL utilisent les noms de champs exacts du schema backend
+- `$skills: [String!]` (non `[String]`), `rewardAmount`/`rewardToken` plats, `id` (non `projectId`), `architectureMd`/`planActionMd`
+- Adapters `mapTask()` et `mapWalletStatus()` : schema plat → types CLI imbriqués
+- `walletStatus(address, chain)` : paramètre `chain` obligatoire ajouté (défaut `"mock"`)
+- `verifyChallenge` : champ `user { ptfAddress }` retiré (non présent dans `AuthResult`)
+- Tous les appels réseau en lecture entouré de `try/catch` silencieux → fallback offline propre
+- Erreurs métier dans `auth`, `task`, `wallet` : messages lisibles, jamais de message brut serveur
+
+**Logique free/paid correcte :**
 - `free` = projet public open source → reward en **points de réputation**
 - `paid` = escrow PTF, reward PTF au taux marché, garantie 10 PTF
-- `isPaid` basé sur `task.rewardMode === "paid"` (plus sur `reward.amount > 0`)
+- `isPaid` basé sur `task.rewardMode === "paid"`
 - Affichage CLI : `+70 pts rep (free)` en cyan / montant PTF en vert pour `paid`
 
 **Wallet BIP-39 (clé ne quitte jamais la machine) :**
