@@ -1366,292 +1366,219 @@ Tant que le `MetadataStore` distribué (phase 2) n'est pas implémenté, les mé
 
 ---
 
-## Stratégie d'audit et plan de correction
+## Stratégie d'audit modulaire
 
-### Principes directeurs
+### Principes
 
-Trois règles guident la séquence des audits et des corrections :
+Un **module d'audit** est une unité autonome : périmètre défini, déclencheur précis, critère de sortie binaire. Les modules sont indépendants — un module bloqué ne retarde pas les autres. Ils se composent en **rounds** selon le contexte (pré-testnet, testnet, mainnet, incident).
 
-1. **Corriger avant d'auditer ce qui en dépend** — les contrats smart sont la couche la plus critique et la plus coûteuse à corriger post-déploiement. Ils sont audités et gelés en premier. Le backend s'adapte aux contrats, pas l'inverse.
-
-2. **Audit indépendant de l'implémentation** — chaque dimension est auditée par un agent distinct qui n'a pas accès aux résultats des autres (workflow adversarial). La convergence de deux agents sur un même finding confirme sa réalité.
-
-3. **Corriger au plus proche de l'état actuel** — un audit sur une base de code qui a bougé depuis le précédent audit est partiellement invalide. Chaque round d'audit est suivi d'une correction immédiate avant le round suivant.
-
----
-
-### État de départ — ce qui est déjà en place
-
-Avant de planifier les prochains audits, inventaire honnête de l'existant :
-
-**Smart contracts — protections déjà présentes :**
-- `EscrowVault` : `Pausable`, `ReentrancyGuard`, `nonReentrant` sur toutes les fonctions de transfert, `SafeERC20`, checks-effects-interactions
-- `ProjectRegistry` : `onlyRegistrar`, `onlyOwner`, guards `projectExists`
-- Pas de multisig ni timelock — `onlyOwner` = EOA PTF Corp (point critique)
-
-**Backend — protections déjà présentes :**
-- `assertSafeCommand()` : `execFile` (pas de shell), whitelist binaires, `FORBIDDEN_ARGS`, longueur max 200 chars
-- Rate limiting Redis partagé (300/15min global, 20/15min auth)
-- Redlock distribué sur Redis Sentinel pour les claims
-- `depthLimitRule` (max 6) sur Apollo GraphQL
-- Introspection GraphQL désactivée en production
-- Graceful shutdown SIGTERM/SIGINT
-
-**Ce qui manque concrètement :**
-- Metacharacters shell (`&&`, `;`, `|`, `$()`, backticks) non bloqués dans les arguments de `assertSafeCommand`
-- Pas de multisig sur `onlyOwner` des contrats
-- Pas de timelock sur les opérations admin
-- Pas de query complexity scoring (seulement depth limit)
-- Pas de headers HTTP de sécurité (CSP, HSTS, X-Frame-Options)
-- Nonces auth en mémoire (pas Redis) — perdus au redémarrage
-- `TODO: Notification via NotificationService` dans TimerService
+**Trois règles invariantes :**
+1. Corriger avant d'auditer ce qui en dépend — les contrats sont gelés en premier.
+2. Chaque agent audite sans voir les résultats des autres — la convergence confirme.
+3. Tout nouveau code non audité déclenche son module avant mise en production.
 
 ---
 
-### Phase A — Avant testnet (blockers absolus)
+### Catalogue des modules
 
-**Fenêtre : 2–3 semaines**
-Ces items bloquent le déploiement testnet. Un contrat déployé avec un `onlyOwner` EOA ne peut pas être corrigé sans redéploiement.
+Chaque module est autonome et peut être lancé seul ou composé avec d'autres.
 
-#### A-1 : Multisig + Timelock sur les contrats (semaine 1)
+---
 
-**Fichiers :** `ProjectRegistry.sol`, `EscrowVault.sol`, `CreditToken.sol`, `ReputationRegistry.sol`
+#### MODULE : `contracts-admin`
+**Périmètre :** `onlyOwner`, multisig Gnosis Safe, TimelockController  
+**Fichiers :** `ProjectRegistry.sol`, `EscrowVault.sol`, `CreditToken.sol`, `ReputationRegistry.sol`  
+**Déclencheur :** avant tout déploiement contrat OU modification d'une fonction admin  
+**Dépendances :** aucune  
+**Critère de sortie :** 0 finding Critical/High + test simulé compromission 2/5 clés Safe
 
-**Actions :**
+**Corrections requises avant audit :**
 ```
-1. Déployer Gnosis Safe 3-of-5 sur Polygon Amoy
+1. Déployer Gnosis Safe 3-of-5 (testnet : Polygon Amoy)
 2. Transférer ownership de tous les contrats vers le Safe
-3. Déployer TimelockController (OpenZeppelin) — délai 24h
-4. Les fonctions onlyOwner critiques passent par le Timelock :
-   - addRegistrar / removeRegistrar
-   - pause / unpause
-   - setTreasury
-   - addMinter / removeMinter (CreditToken)
-5. Les fonctions opérationnelles fréquentes (addOperator) restent
-   accessibles directement par le Safe sans timelock
+3. Déployer TimelockController OpenZeppelin — délai 24h testnet / 48h mainnet
+4. Fonctions via Timelock : addRegistrar, removeRegistrar, pause, unpause,
+   setTreasury, addMinter, removeMinter
+5. Fonctions sans Timelock (opérationnelles) : addOperator
 ```
 
-**Test :** Simuler une attaque — compromettre une clé du Safe (2/5) ne suffit pas à exécuter une action.
+**Agents :** 2 indépendants — access control + economic attack surface
 
 ---
 
-#### A-2 : Metacharacters shell dans assertSafeCommand (semaine 1)
+#### MODULE : `contracts-metadata`
+**Périmètre :** `registerTaskMetadata`, `setTaskArchiveId`, `verifyTaskMetadata`  
+**Fichiers :** `ProjectRegistry.sol` (section MetadataRegistry)  
+**Déclencheur :** modification des fonctions metadata du contrat  
+**Dépendances :** `contracts-admin` complété  
+**Critère de sortie :** 0 finding Critical/High
 
-**Fichier :** `backend/src/services/validation.service.ts`
+**Questions clés pour les agents :**
+- Peut-on enregistrer un hash zéro ?
+- Peut-on écraser un hash existant (`MetadataAlreadyRegistered` tient-il) ?
+- `setTaskArchiveId` : le check `contentHash != registered` est-il correct ?
+- Griefing : un attaquant peut-il bloquer l'archivage en soumettant un faux arweaveId avant le nœud légitime ?
 
-**Problème confirmé :** `execFile` ne passe pas par le shell, donc `npm test; curl attacker.com` échouerait réellement — `execFile` passe la chaîne entière comme argument unique au binaire `npm`. Ce n'est pas un vrai vecteur avec `execFile`.
+---
 
-**Mais :** si un arg contient `$(...)` et est passé à un sous-processus qui lui fait appel au shell (ex: un Makefile ou script npm), l'injection peut être indirecte.
+#### MODULE : `backend-claim`
+**Périmètre :** `TaskService.claim()`, pattern `claim_pending`, rollback compensatoire  
+**Fichiers :** `backend/src/services/task.service.ts`  
+**Déclencheur :** modification du flow claim OU avant testnet  
+**Dépendances :** aucune (indépendant des contrats)  
+**Critère de sortie :** 0 finding Critical/High + test 100 claims simultanés
 
-**Actions :**
+**Questions clés :**
+- Le rollback vers `open` est-il atomique si le RPC échoue entre `claim_pending` et `claimed` ?
+- Que se passe-t-il si `ReconciliationWorker` détecte un `claim_pending` stale et le rollback simultanément avec une retry du client ?
+- Le TTL Redlock 10s couvre-t-il la latence P99 sur Polygon en cas de congestion ?
+
+---
+
+#### MODULE : `backend-cache`
+**Périmètre :** `NodeCacheService`, invalidation, Redis Stream `cache-events`  
+**Fichiers :** `backend/src/services/node-cache.service.ts`, intégration dans `task.service.ts` et `project.service.ts`  
+**Déclencheur :** ajout ou modification du cache — **peut être lancé maintenant**  
+**Dépendances :** aucune  
+**Critère de sortie :** cohérence garantie sous 100 writes/s + 0 stale read après invalidation
+
+**Questions clés :**
+- Un write concurrent peut-il remettre une entrée invalidée en cache (race entre `putTask` et `invalidateTask`) ?
+- Le stream consumer `consumeInvalidations` survit-il à une déconnexion Redis sans perte d'événements ?
+- TTL 30s sur les statuts : acceptable pour `tasks mine` (données personnelles) sachant qu'on bypass le cache sur `devAddress` ?
+- Que se passe-t-il si le seed PostgreSQL au démarrage est interrompu à mi-chemin ?
+
+---
+
+#### MODULE : `backend-metadata`
+**Périmètre :** `MetadataService`, `serializeForHash`, `archiveTask`, `verifyTask`  
+**Fichiers :** `backend/src/services/metadata.service.ts`, `storage.provider.ts`  
+**Déclencheur :** modification du service métadonnées  
+**Dépendances :** `contracts-metadata`  
+**Critère de sortie :** 0 finding Critical/High + test archivage Arweave testnet
+
+**Questions clés :**
+- `sortKeysDeep` : couvre-t-il les tableaux d'objets (verificationSteps, outOfScope) ?
+- Si `archiveTask` échoue après le push Arweave mais avant `setTaskArchiveId`, la tâche est archivée sur Arweave mais pas on-chain. Qui recouvre ?
+- `extractTaskHashableFields` : un champ oublié permettrait-il une falsification non détectée ?
+
+---
+
+#### MODULE : `backend-http`
+**Périmètre :** headers sécurité, rate limiting Redis, complexity scoring GraphQL, nonces Redis  
+**Fichiers :** `backend/src/server.ts`, `backend/src/services/auth.service.ts`, `backend/src/services/validation.service.ts`  
+**Déclencheur :** avant testnet — **peut être lancé maintenant, indépendamment**  
+**Dépendances :** aucune  
+**Critère de sortie :** 0 finding High + scan OWASP ZAP sans finding critique
+
+**Corrections requises avant audit :**
 ```typescript
-// Ajouter dans assertSafeCommand() après la vérification FORBIDDEN_ARGS
+// 1. Helmet
+import helmet from "helmet";
+app.use(helmet({ hsts: { maxAge: 31536000 }, contentSecurityPolicy: true }));
+
+// 2. Metacharacters dans assertSafeCommand
 const SHELL_METACHAR_RE = /[;&|`$(){}<>\\!]/;
 for (const arg of args) {
-  if (SHELL_METACHAR_RE.test(arg)) {
-    throw new PtfError(
-      PtfErrorCode.UNAUTHORIZED,
-      `Caractère shell interdit dans l'argument "${arg}"`
-    );
-  }
+  if (SHELL_METACHAR_RE.test(arg)) throw new PtfError(...);
 }
+
+// 3. Complexity scoring GraphQL
+const complexityRule = createComplexityRule({ maximumComplexity: 100, ... });
+
+// 4. Nonces auth → Redis Sentinel TTL 5min
 ```
+
+**Agent :** 1 agent OWASP-focused
 
 ---
 
-#### A-3 : Headers HTTP de sécurité (semaine 1)
+#### MODULE : `load-behavior`
+**Périmètre :** comportement sous charge — claims simultanés, expirations massives, cache sous pression  
+**Déclencheur :** avant mainnet OU après tout changement de concurrence  
+**Dépendances :** `backend-claim`, `backend-cache`  
+**Critère de sortie :** 100 claims simultanés sans double-claim + 0 stale après 1000 invalidations/s
 
-**Fichier :** `backend/src/server.ts`
-
-**Actions :**
-```bash
-npm install helmet
-```
-```typescript
-import helmet from "helmet";
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
-    },
-  },
-  hsts: { maxAge: 31536000, includeSubDomains: true },
-}));
-```
+**Scénarios :**
+1. 100 devs clament la même tâche → 1 seul `claimed`, 99 `TASK_ALREADY_CLAIMED`
+2. 100 deadlines expirent en même temps → TimerService traite sans saturer Redis
+3. Stream `cache-events` : 1000 invalidations/s → L1 cohérent sur tous les workers
+4. ReconciliationWorker crash à chaque étape du claim → DB converge vers état correct
 
 ---
 
-#### A-4 : Nonces auth persistés dans Redis (semaine 1)
+#### MODULE : `escrow-final`
+**Périmètre :** `EscrowVault.sol` complet — withdrawal, soft-lock, punishment, release  
+**Déclencheur :** avant mainnet uniquement (contrat le plus critique)  
+**Dépendances :** `contracts-admin` + tous les modules backend complétés  
+**Critère de sortie :** 0 finding Critical/High après 5 agents indépendants + Slither + Mythril + Foundry 100k runs
 
-**Fichier :** `backend/src/services/auth.service.ts`
-
-**Problème :** Les nonces challenge-response sont actuellement en mémoire. Un redémarrage force l'utilisateur à refaire le challenge — pas critique mais mauvaise UX.
-
-**Actions :** Stocker les nonces dans Redis Sentinel avec TTL 5min. Utiliser la même instance `redisSentinel` que pour les sessions.
-
----
-
-#### A-5 : Query complexity scoring GraphQL (semaine 2)
-
-**Fichier :** `backend/src/server.ts`
-
-**Problème :** Un attaquant peut émettre des queries larges mais peu profondes — `tasks(limit: 200) { title context objective deliverable outOfScope... }` — qui passent le depth limit mais font beaucoup de travail DB.
-
-**Actions :**
-```typescript
-// Score par champ = 1, par relation = 10
-// Max complexité totale = 100
-import { createComplexityRule } from "graphql-query-complexity";
-const complexityRule = createComplexityRule({
-  maximumComplexity: 100,
-  estimators: [fieldExtensionsEstimator(), simpleEstimator({ defaultComplexity: 1 })],
-  onComplete: (complexity) => {
-    if (process.env["NODE_ENV"] !== "production") {
-      console.log(`Query complexity: ${complexity}`);
-    }
-  },
-});
-// Ajouter dans validationRules: [depthLimitRule, complexityRule]
-```
+**Note :** Si budget disponible (30–80k€), remplacer par audit Trail of Bits / OpenZeppelin sur ce seul module.
 
 ---
 
-#### A-6 : Audit round 18 — contrats + backend (semaine 2-3)
+### Composition des rounds
 
-**Périmètre :**
-- `ProjectRegistry.sol` — nouvelles fonctions MetadataRegistry (registerTaskMetadata, setTaskArchiveId)
-- `EscrowVault.sol` — vérifier que Pausable + Timelock sont correctement branchés
-- `backend/src/services/metadata.service.ts` — nouveau service, non encore audité
-- `backend/src/services/task.service.ts` — pattern `claim_pending` + rollback compensatoire
+Les modules se composent selon le contexte. Un round = N modules lancés en parallèle ou en séquence selon leurs dépendances.
 
-**Dimensions d'audit (4 agents indépendants) :**
-1. **Contrats** — reentrancy, access control, MetadataRegistry hash manipulation
-2. **Backend métadonnées** — cohérence hash, archivage Arweave, eviction
-3. **Claim flow** — `claim_pending` + rollback, race condition, double-claim
-4. **Intégration** — cohérence entre contrats et backend après A-1 à A-5
+```
+ROUND IMMÉDIAT (maintenant, indépendants) :
+  backend-cache      ← NodeCacheService vient d'être ajouté
+  backend-http       ← corrections helmet/nonces/complexity pendantes
 
-**Critère de sortie :** 0 finding Critical/High non corrigé.
+ROUND PRÉ-TESTNET (modules avec dépendances résolues) :
+  contracts-admin    ← bloquant testnet
+  contracts-metadata ← après contracts-admin
+  backend-claim      ← indépendant, peut démarrer en parallèle
+  backend-metadata   ← après contracts-metadata
+
+ROUND TESTNET (sous charge réelle) :
+  load-behavior      ← après backend-claim + backend-cache
+
+ROUND MAINNET (avant déploiement) :
+  escrow-final       ← dernier verrou avant fonds réels
+```
+
+**Règle de composition :** deux modules sans dépendance entre eux s'exécutent en parallèle. Un module avec dépendance attend uniquement que ses dépendances directes aient leur critère de sortie — pas que le round entier soit terminé.
 
 ---
 
-### Phase B — Testnet (3–6 mois)
+### Déploiement progressif mainnet
 
-**Déclencheur :** Validation de la Phase A, 0 finding bloquant.
-
-#### B-1 : Déploiement Polygon Amoy
+**Déclencheur :** `escrow-final` validé + testnet stable 4 semaines sans incident.
 
 ```
-Semaine 1 :
-  - Déployer les 4 contrats + multisig Gnosis Safe + Timelock
-  - Vérifier les contrats sur Polygonscan Amoy
-  - Configurer le backend sur VPS Hetzner CX21
+Semaine 1  : déploiement contrats mainnet
+  — Gnosis Safe 3-of-5 (clone testnet), Timelock 48h
+  — Garde-fou : escrow max 1 000 USDC par projet
 
-Semaine 2-4 :
-  - 10 utilisateurs internes, projets fictifs
-  - Monitoring : Grafana Cloud + Loki + Better Uptime
+Mois 1     : 5 projets pilotes, reward pool < 500 USDC
+  — Monitoring 24/7, circuit breaker EscrowVault activé
 
-Mois 2-3 :
-  - Beta ouverte, montants fictifs, vraie charge
-  - Activer le ReconciliationWorker sur les vrais contrats
-  - Tester MetadataService.archiveTask() sur Arweave testnet
-
-Mois 4-5 :
-  - Simulation mainnet — mêmes montants que les projets pilotes prévus
-  - Load test : 100 claims simultanés, vérifier Redlock tient
-
-Mois 6 :
-  - Audit round 19 — testnet complet (focus: comportements emergents sous charge)
-  - Critère de sortie : 0 incident critique sur 4 semaines consécutives
+Mois 2     : levée des limites si aucun incident
 ```
 
-#### B-2 : Audit round 19 — testnet sous charge
+**Items post-mainnet progressifs :**
 
-**Dimensions :**
-1. **Race conditions réelles** — 50 devs clament la même tâche simultanément
-2. **ReconciliationWorker sous charge** — crash simulé à différentes étapes du claim
-3. **MetadataStore** — nœuds qui servent des données corrompues (test de la vérification hash CLI)
-4. **TimerService** — expiration massive de tâches (100 deadlines simultanées)
-
----
-
-### Phase C — Mainnet (après testnet validé)
-
-**Déclencheur :** Testnet stable 4 semaines consécutives sans incident.
-
-#### C-1 : Audit externe optionnel
-
-Si budget disponible : Trail of Bits, OpenZeppelin, Certik sur `EscrowVault.sol` uniquement (le contrat qui touche les fonds USDC réels). Coût estimé : 30–80k€.
-
-Si pas de budget : round 20 avec 5 agents IA indépendants + Slither + Mythril + Foundry fuzz 100k runs. Critère : 0 finding Critical/High après consolidation.
-
-#### C-2 : Déploiement mainnet progressif
-
-```
-Semaine 1 : Déploiement contrats sur Polygon mainnet
-  - Multisig Gnosis Safe déjà testé sur testnet
-  - Timelock 48h en mainnet (vs 24h testnet)
-  - Limit: escrow max 1000 USDC par projet (garde-fou)
-
-Mois 1 : 5 projets pilotes, reward pool < 500 USDC chacun
-  - Monitoring 24/7
-  - Circuit breaker activé sur EscrowVault si anomalie
-
-Mois 2 : Retrait des limites si mois 1 sans incident
-```
-
-#### C-3 : Post-mainnet — items long terme
-
-| Item | Horizon | Prérequis |
+| Module futur | Horizon | Prérequis |
 |---|---|---|
-| Vérification on-chain obligatoire CLI | M+1 | Mainnet stable |
-| NodeRegistry on-chain (phase 2 réseau) | M+3 | Staking économiquement viable |
-| Commit-reveal anti front-running | M+6 | Après mesure du problème réel |
-| TEE/SGX pour PTF Agent | M+12 | Budget infra |
-| DAO + slashing | M+18 | Masse critique nœuds |
+| `cli-verification` — hash on-chain obligatoire | M+1 | Mainnet stable |
+| `network-registry` — NodeRegistry + staking | M+3 | Masse critique nœuds |
+| `dao-governance` — DAO + slashing | M+18 | Économie viable |
 
 ---
 
-### Tableau de bord — état des corrections
+### Tableau de bord des modules
 
-| ID | Description | Statut | Phase |
+| Module | Statut | Peut démarrer | Bloque |
 |---|---|---|---|
-| A-1 | Multisig + Timelock contrats | 🔴 À faire | Avant testnet |
-| A-2 | Metacharacters shell assertSafeCommand | 🔴 À faire | Avant testnet |
-| A-3 | Headers HTTP helmet | 🔴 À faire | Avant testnet |
-| A-4 | Nonces auth dans Redis | 🔴 À faire | Avant testnet |
-| A-5 | Query complexity scoring GraphQL | 🔴 À faire | Avant testnet |
-| A-6 | Audit round 18 (contrats + backend) | 🔴 À faire | Avant testnet |
-| B-1 | Déploiement Polygon Amoy | 🔴 À faire | Testnet |
-| B-2 | Audit round 19 (testnet sous charge) | 🔴 À faire | Testnet |
-| C-1 | Audit externe / round 20 | 🔴 À faire | Mainnet |
-| C-2 | Déploiement mainnet progressif | 🔴 À faire | Mainnet |
-| C-3 | Vérification on-chain CLI obligatoire | 🔴 À faire | Post-mainnet M+1 |
-| C-4 | NodeRegistry on-chain | 🔴 À faire | Post-mainnet M+3 |
-| C-5 | DAO + slashing | 🔴 À faire | Post-mainnet M+18 |
+| `backend-cache` | 🔴 À auditer | **Maintenant** | — |
+| `backend-http` | 🔴 À corriger + auditer | **Maintenant** | — |
+| `contracts-admin` | 🔴 À corriger + auditer | Dès que disponible | Testnet |
+| `backend-claim` | 🔴 À auditer | **Maintenant** | `load-behavior` |
+| `contracts-metadata` | 🔴 À auditer | Après `contracts-admin` | `backend-metadata` |
+| `backend-metadata` | 🔴 À auditer | Après `contracts-metadata` | Archivage Arweave |
+| `load-behavior` | 🔴 À planifier | Après `backend-claim` + `backend-cache` | Mainnet |
+| `escrow-final` | 🔴 À planifier | Après tous les autres | **Mainnet** |
 
----
-
-### Critères de sortie par phase
-
-**Phase A complète quand :**
-- [ ] Multisig 3-of-5 propriétaire de tous les contrats
-- [ ] Timelock 24h sur fonctions admin
-- [ ] `assertSafeCommand` bloque les metacharacters shell
-- [ ] Headers helmet activés
-- [ ] Nonces auth dans Redis
-- [ ] Complexity scoring actif
-- [ ] Audit round 18 : 0 finding Critical/High
-
-**Phase B complète quand :**
-- [ ] Testnet actif depuis 4 semaines sans incident critique
-- [ ] ReconciliationWorker testé sur vrais events on-chain
-- [ ] MetadataService.archiveTask testé sur Arweave testnet
-- [ ] Load test 100 claims simultanés sans double-claim
-- [ ] Audit round 19 : 0 finding Critical
-
-**Phase C déclenchée quand :**
-- [ ] Phase B validée
-- [ ] Audit final : 0 finding Critical/High
-- [ ] Gnosis Safe multisig testnet → clone mainnet
-- [ ] Escrow max 1000 USDC configuré (garde-fou lancement)
+**Critère de sortie universel pour tous les modules :** 0 finding Critical/High non corrigé avant de déverrouiller les modules dépendants.
