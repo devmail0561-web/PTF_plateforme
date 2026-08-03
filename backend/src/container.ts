@@ -19,6 +19,7 @@ import { EscrowService } from "./services/escrow.service.js";
 import { ValidationService } from "./services/validation.service.js";
 import { MetadataService } from "./services/metadata.service.js";
 import { MockStorageProvider } from "./services/storage.provider.js";
+import { NodeCacheService } from "./services/node-cache.service.js";
 import type { IServiceContainer } from "./graphql/context.js";
 
 // ── Redis factory ──────────────────────────────────────────────────────────────
@@ -97,6 +98,7 @@ export function buildContainer(): {
   redisSentinel: RedisType;
   redisQueue: RedisType | ClusterType;
   timerService: TimerService;
+  nodeCache: NodeCacheService;
 } {
   const prisma = new PrismaClient();
 
@@ -131,7 +133,6 @@ export function buildContainer(): {
   const githubService     = new GithubService();
   const reputationService = new ReputationService(chainRegistry);
   const walletService     = new WalletService(chainRegistry);
-  const projectService    = new ProjectService(prisma, chainRegistry, githubService);
   const punishmentService = new PunishmentService(prisma, chainRegistry, reputationService);
 
   // MetadataService — uses MockStorageProvider in dev (no Arweave key).
@@ -142,6 +143,11 @@ export function buildContainer(): {
     storageProvider,
   );
 
+  // NodeCacheService — L1 (memory) + L2 (Redis) cache for reads.
+  // Seeded from PostgreSQL at startup so the first requests never hit the DB.
+  // Invalidation events propagated via Redis Stream to all workers/nodes.
+  const nodeCache = new NodeCacheService(redisSentinel);
+
   const taskService       = new TaskService(
     prisma,
     chainRegistry,
@@ -149,10 +155,13 @@ export function buildContainer(): {
     walletService,
     redisSentinel,    // Redlock runs on Sentinel
     metadataService,
+    nodeCache,
   );
   const timerService      = new TimerService(prisma, punishmentService, redisQueue);  // BullMQ on Cluster
   const escrowService     = new EscrowService(prisma, chainRegistry, reputationService);
   const validationService = new ValidationService(prisma);
+
+  const projectService    = new ProjectService(prisma, chainRegistry, githubService, nodeCache);
 
   // LLM : MockLLMProvider en dev, à remplacer par un provider réel configuré par l'utilisateur
   const llmProvider = new MockLLMProvider();
@@ -171,5 +180,5 @@ export function buildContainer(): {
     github:        githubService,
   };
 
-  return { services, prisma, redisSentinel, redisQueue, timerService };
+  return { services, prisma, redisSentinel, redisQueue, timerService, nodeCache };
 }

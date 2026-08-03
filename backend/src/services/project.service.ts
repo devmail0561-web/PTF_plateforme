@@ -1,5 +1,6 @@
 import type { PrismaClient, Project } from "@prisma/client";
 import type { IChainRegistry } from "../bal/chain.registry.js";
+import type { NodeCacheService } from "./node-cache.service.js";
 import type { IGithubService } from "./github.service.js";
 import type {
   ProjectFilter,
@@ -59,7 +60,8 @@ export class ProjectService implements IProjectService {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly chainRegistry: IChainRegistry,
-    private readonly githubService: IGithubService
+    private readonly githubService: IGithubService,
+    private readonly cache?: NodeCacheService,
   ) {}
 
   async create(input: CreateProjectInput): Promise<CreateProjectResult> {
@@ -123,7 +125,13 @@ export class ProjectService implements IProjectService {
   }
 
   async findById(id: string): Promise<Project | null> {
-    return this.prisma.project.findUnique({ where: { id } });
+    if (this.cache) {
+      const cached = await this.cache.getProject(id);
+      if (cached) return cached;
+    }
+    const project = await this.prisma.project.findUnique({ where: { id } });
+    if (project && this.cache) this.cache.putProject(project);
+    return project;
   }
 
   async list(filter: ProjectFilter): Promise<PublicProjectView[]> {
@@ -197,6 +205,7 @@ export class ProjectService implements IProjectService {
       where: { id: projectId },
       data: { merkleRoot: root },
     });
+    await this.cache?.invalidateProject(projectId);
 
     const adapter = this.chainRegistry.get(project.chain);
     await adapter.anchorMerkleRoot(projectId, root);

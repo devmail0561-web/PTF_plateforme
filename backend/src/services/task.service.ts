@@ -4,6 +4,7 @@ import type { IReputationService } from "./reputation.service.js";
 import type { IWalletService } from "./wallet.service.js";
 import type { IMetadataService } from "./metadata.service.js";
 import { extractTaskHashableFields, hashMetadata } from "./metadata.service.js";
+import type { NodeCacheService } from "./node-cache.service.js";
 import type {
   TaskFilter,
   PublicTaskView,
@@ -107,6 +108,7 @@ export class TaskService implements ITaskService {
     private readonly walletService: IWalletService,
     redis: AnyRedis,
     private readonly metadataService?: IMetadataService,
+    private readonly cache?: NodeCacheService,
   ) {
     this.redlock = new Redlock([redis], { retryCount: 3, retryDelay: 200 });
   }
@@ -174,24 +176,59 @@ export class TaskService implements ITaskService {
   }
 
   async findById(id: string): Promise<Task | null> {
-    return this.prisma.task.findUnique({ where: { id } });
+    // L1 → L2 → DB
+    if (this.cache) {
+      const cached = await this.cache.getTask(id);
+      if (cached) return cached;
+    }
+    const task = await this.prisma.task.findUnique({ where: { id } });
+    if (task && this.cache) this.cache.putTask(task);
+    return task;
   }
 
   async list(filter: TaskFilter): Promise<Task[]> {
     const limit  = Math.min(filter.limit  ?? 50, 200);
     const offset = filter.offset ?? 0;
+
+    // List cache: store only IDs, then resolve each via findById (hits L1/L2).
+    // Skipped for devAddress queries (personal data — always fresh from DB).
+    const useListCache = this.cache && !filter.devAddress && offset === 0;
+    if (useListCache) {
+      const { NodeCacheService } = await import("./node-cache.service.js");
+      const key = NodeCacheService.listKey({ ...filter, limit });
+      const cachedIds = await this.cache!.getTaskList(key);
+      if (cachedIds) {
+        const tasks = await Promise.all(cachedIds.map((id) => this.findById(id)));
+        return tasks.filter(Boolean) as Task[];
+      }
+
+      const tasks = await this.prisma.task.findMany({
+        where: this.buildWhere(filter),
+        orderBy: { createdAt: "desc" },
+        take: limit,
+        skip: offset,
+      });
+      for (const t of tasks) this.cache!.putTask(t);
+      this.cache!.putTaskList(key, tasks.map((t) => t.id));
+      return tasks;
+    }
+
     return this.prisma.task.findMany({
-      where: {
-        ...(filter.status ? { status: filter.status } : {}),
-        ...(filter.projectId ? { projectId: filter.projectId } : {}),
-        ...(filter.devAddress ? { devAddress: filter.devAddress.toLowerCase() } : {}),
-        ...(filter.minReward ? { rewardAmount: { gte: filter.minReward } } : {}),
-        ...(filter.maxReward ? { rewardAmount: { lte: filter.maxReward } } : {}),
-      },
+      where: this.buildWhere(filter),
       orderBy: { createdAt: "desc" },
       take:    limit,
       skip:    offset,
     });
+  }
+
+  private buildWhere(filter: TaskFilter): Record<string, unknown> {
+    return {
+      ...(filter.status     ? { status: filter.status }                              : {}),
+      ...(filter.projectId  ? { projectId: filter.projectId }                        : {}),
+      ...(filter.devAddress ? { devAddress: filter.devAddress.toLowerCase() }        : {}),
+      ...(filter.minReward  ? { rewardAmount: { gte: filter.minReward } }            : {}),
+      ...(filter.maxReward  ? { rewardAmount: { lte: filter.maxReward } }            : {}),
+    };
   }
 
   async claim(
@@ -351,6 +388,7 @@ export class TaskService implements ITaskService {
         where: { id: taskId },
         data: { status: "claimed", eip712Signature: signature },
       });
+      await this.cache?.invalidateTask(taskId);
 
       return {
         taskId,
@@ -409,6 +447,7 @@ export class TaskService implements ITaskService {
         branchRef,
       },
     });
+    await this.cache?.invalidateTask(taskId);
 
     return {
       taskId,
@@ -472,6 +511,7 @@ export class TaskService implements ITaskService {
           eip712Signature: null,
         },
       });
+      await this.cache?.invalidateTask(taskId);
     } finally {
       await lock.release();
     }
@@ -498,6 +538,7 @@ export class TaskService implements ITaskService {
       where: { id: taskId },
       data: { status: "expired" },
     });
+    await this.cache?.invalidateTask(taskId);
   }
 
   // Called by ValidationService / EscrowService after peer-review approval.
@@ -515,6 +556,9 @@ export class TaskService implements ITaskService {
         console.error(`[TaskService] Archive failed for ${taskId} — will be retried:`, err);
       });
     }
+
+    // Validated tasks are archived — evict from all cache layers.
+    await this.cache?.invalidateTask(taskId);
 
     return task;
   }

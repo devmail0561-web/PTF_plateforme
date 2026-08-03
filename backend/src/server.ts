@@ -37,7 +37,7 @@ const resolvers = {
 };
 
 async function main() {
-  const { services, prisma, redisSentinel, redisQueue, timerService } = buildContainer();
+  const { services, prisma, redisSentinel, redisQueue, timerService, nodeCache } = buildContainer();
 
   const isProd = process.env["NODE_ENV"] === "production";
 
@@ -189,13 +189,28 @@ async function main() {
     console.log(`🚀 PTF Backend démarré sur http://localhost:${PORT}/graphql`);
   });
 
-  // Démarrage du TimerService (expiration tâches + alertes deadline)
+  // Connexion Redis
   if ("status" in redisSentinel && redisSentinel.status === "wait") await redisSentinel.connect();
   if ("status" in redisQueue   && redisQueue.status   === "wait") await (redisQueue as RedisType).connect();
+
+  // Démarrage NodeCache — seed depuis PostgreSQL puis écoute les invalidations
+  await nodeCache.start();
+  const [seedTasks, seedProjects] = await Promise.all([
+    prisma.task.findMany({
+      where: { status: { notIn: ["validated", "archived"] } },
+    }),
+    prisma.project.findMany({
+      where: { status: { not: "archived" } },
+    }),
+  ]);
+  await nodeCache.seed(seedTasks, seedProjects);
+
+  // Démarrage du TimerService (expiration tâches + alertes deadline)
   await timerService.start();
 
   async function shutdown(): Promise<void> {
     await timerService.stop();
+    await nodeCache.stop();
     await prisma.$disconnect();
     await redisSentinel.disconnect();
     await redisQueue.disconnect();
