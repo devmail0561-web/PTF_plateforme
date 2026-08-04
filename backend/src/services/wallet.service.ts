@@ -3,7 +3,17 @@ import type { WalletVerificationResult, CreditBalance } from "../types/index.js"
 import { PtfErrorCode } from "../types/errors.js";
 
 const PTF_DECIMALS = 6;
-const MIN_CLAIM_BALANCE = BigInt(10 * 10 ** PTF_DECIMALS); // 10 PTF
+const PTF_UNIT = 10 ** PTF_DECIMALS;
+const SOFT_LOCK_RATE = 0.10;       // 10% of task reward
+const SOFT_LOCK_MIN  = 10;         // PTF floor
+const SOFT_LOCK_MAX  = 1000;       // PTF ceiling
+
+export function computeSoftLock(taskRewardPTF: number): number {
+  const amount = taskRewardPTF * SOFT_LOCK_RATE;
+  return Math.min(Math.max(amount, SOFT_LOCK_MIN), SOFT_LOCK_MAX);
+}
+
+const MIN_CLAIM_BALANCE = BigInt(SOFT_LOCK_MIN * PTF_UNIT); // 10 PTF minimum
 
 export interface IWalletService {
   verifyWallet(
@@ -12,10 +22,9 @@ export interface IWalletService {
     signedNonce?: string
   ): Promise<WalletVerificationResult>;
   getBalance(address: string, chain: string): Promise<CreditBalance>;
-  softLock(address: string, chain: string, amount: number): Promise<string>;
-  // F2 — Le contrat ne prend qu'une adresse; montant fixe SOFT_LOCK_AMOUNT géré on-chain.
-  softUnlock(address: string, chain: string): Promise<string>;
-  meetsMinBalance(address: string, chain: string): Promise<boolean>;
+  softLock(address: string, chain: string, lockAmount: number): Promise<string>;
+  softUnlock(address: string, chain: string, lockAmount: number): Promise<string>;
+  meetsMinBalance(address: string, chain: string, lockAmount?: number): Promise<boolean>;
 }
 
 export class WalletService implements IWalletService {
@@ -51,13 +60,15 @@ export class WalletService implements IWalletService {
     const isNotBanned = true;
 
     // 5. Ownership (signature du nonce)
+    // signedNonce is the EIP-712 *signature* produced by the client over the typed
+    // data { value: address }. The message being signed is the address itself.
     let ownershipProven = false;
     if (signedNonce && isValidAddress) {
       try {
         const signer = await adapter.verifyEIP712Signature(
           { name: "PTF", version: "1" },
           { Nonce: [{ name: "value", type: "string" }] },
-          { value: signedNonce },
+          { value: address },
           signedNonce
         );
         ownershipProven = signer.toLowerCase() === address.toLowerCase();
@@ -100,20 +111,20 @@ export class WalletService implements IWalletService {
     };
   }
 
-  async softLock(address: string, chain: string, amount: number): Promise<string> {
+  async softLock(address: string, chain: string, lockAmount: number): Promise<string> {
     const adapter = this.chainRegistry.get(chain);
-    return adapter.softLock(address);
+    return adapter.softLock(address, lockAmount);
   }
 
-  // F2 — Délègue directement; le contrat gère SOFT_LOCK_AMOUNT en interne.
-  async softUnlock(address: string, chain: string): Promise<string> {
+  async softUnlock(address: string, chain: string, lockAmount: number): Promise<string> {
     const adapter = this.chainRegistry.get(chain);
-    return adapter.softUnlock(address);
+    return adapter.softUnlock(address, lockAmount);
   }
 
-  async meetsMinBalance(address: string, chain: string): Promise<boolean> {
+  async meetsMinBalance(address: string, chain: string, lockAmount?: number): Promise<boolean> {
     const adapter = this.chainRegistry.get(chain);
     const balance = await adapter.getBalance(address, "PTF");
-    return balance >= MIN_CLAIM_BALANCE;
+    const required = BigInt(Math.round((lockAmount ?? SOFT_LOCK_MIN) * PTF_UNIT));
+    return balance >= required;
   }
 }

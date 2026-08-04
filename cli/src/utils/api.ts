@@ -129,12 +129,15 @@ export class PtfApiClient {
   private readonly apiUrl: string;
   private offline: boolean;
   private readonly apiToken: string | undefined;
+  private readonly chain: string;
 
   constructor(config: PtfUserConfig) {
     this.apiUrl = config.ptfApiUrl ?? "https://api.ptf.dev";
     this.offline = !config.ptfApiUrl;
     // sessionToken est le JWT retourné après challenge-response
     this.apiToken = config.sessionToken ?? (config as unknown as { ptfApiToken?: string }).ptfApiToken;
+    // walletChain is deprecated but still used as fallback for the chain sent to claimTask
+    this.chain = config.walletChain ?? "polygon";
   }
 
   isOffline(): boolean {
@@ -288,8 +291,8 @@ export class PtfApiClient {
     // Note: conditionsHash is computed client-side and compared after the server responds.
     // The server computes its own hash independently; we pass it here only for the post-call check.
     const mutation = `
-      mutation ClaimTask($taskId: String!, $devAddress: String!) {
-        claimTask(taskId: $taskId, devAddress: $devAddress) {
+      mutation ClaimTask($taskId: ID!, $chain: String!) {
+        claimTask(taskId: $taskId, chain: $chain) {
           taskId devAddress claimedAt deadline conditionsHash signature
         }
       }
@@ -300,7 +303,7 @@ export class PtfApiClient {
         "Content-Type": "application/json",
         ...(this.apiToken ? { "Authorization": `Bearer ${this.apiToken}` } : {}),
       },
-      body: JSON.stringify({ query: mutation, variables: { taskId, devAddress } }),
+      body: JSON.stringify({ query: mutation, variables: { taskId, chain: this.chain } }),
     });
     const data = (await res.json()) as {
       data?: { claimTask: ClaimResult };
@@ -333,9 +336,9 @@ export class PtfApiClient {
     }
 
     const mutation = `
-      mutation SubmitTask($taskId: String!, $branch: String!, $commitHash: String!) {
-        submitTask(taskId: $taskId, branch: $branch, commitHash: $commitHash) {
-          taskId commitHash branch submittedAt validationJobId
+      mutation SubmitTask($taskId: ID!, $commitHash: String!, $branchRef: String!) {
+        submitTask(taskId: $taskId, commitHash: $commitHash, branchRef: $branchRef) {
+          taskId commitHash branchRef submittedAt validationJobId
         }
       }
     `;
@@ -345,16 +348,20 @@ export class PtfApiClient {
         "Content-Type": "application/json",
         ...(this.apiToken ? { "Authorization": `Bearer ${this.apiToken}` } : {}),
       },
-      body: JSON.stringify({ query: mutation, variables: { taskId, branch, commitHash } }),
+      body: JSON.stringify({ query: mutation, variables: { taskId, branchRef: branch, commitHash } }),
     });
     const data = (await res.json()) as {
-      data?: { submitTask: SubmitResult };
+      data?: { submitTask: { taskId: string; commitHash: string; branchRef: string; submittedAt: string; validationJobId: string } };
       errors?: { message: string }[];
     };
     if (!data.data?.submitTask) {
       throw new Error(data.errors?.[0]?.message ?? "Submit échoué — réponse vide du serveur");
     }
-    return { result: data.data.submitTask, offline: false };
+    const raw = data.data.submitTask;
+    return {
+      result: { taskId: raw.taskId, commitHash: raw.commitHash, branch: raw.branchRef, submittedAt: raw.submittedAt, validationJobId: raw.validationJobId },
+      offline: false,
+    };
   }
 
   async getWalletStatus(

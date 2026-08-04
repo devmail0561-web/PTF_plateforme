@@ -11,7 +11,7 @@
 
 **Problème :** Des millions de développeurs qualifiés — freelances, chercheurs d'emploi, développeurs en reconversion — n'ont pas accès à une source de revenus stable proportionnelle à leur niveau technique. En parallèle, les entreprises peinent à trouver des contributeurs ponctuels fiables pour leurs projets internes sans passer par des agences coûteuses ou des processus de recrutement longs.
 
-**Solution :** PTF est une plateforme décentralisée qui met en relation des développeurs et des entreprises (ou projets open source) autour de tâches rémunérées. Les développeurs réclament des tâches, soumettent leur code, et sont payés automatiquement en crédits PTF (1 crédit = 1 USDC) via smart contracts sur Polygon. Les entreprises publient leurs projets, bloquent les fonds upfront, et ne paient que pour le travail validé.
+**Solution :** PTF est une plateforme **open-core** qui met en relation des développeurs et des entreprises (ou projets open source) autour de tâches rémunérées. Les développeurs réclament des tâches, soumettent leur code, et sont payés automatiquement en crédits PTF (1 PTF = 1 USDC, stable) via smart contracts sur Polygon. Les entreprises publient leurs projets, bloquent les fonds upfront, et ne paient que pour le travail validé. Le framework (CLI, contrats, backend réseau) est open-source MIT ; le service plateforme (UX, matching, KYC) est propriétaire.
 
 **Marché cible :**
 - **Côté offre :** développeurs freelances, chercheurs d'emploi, étudiants avancés, développeurs open source cherchant à monétiser leurs contributions
@@ -19,7 +19,7 @@
 
 **Business model :** Commission prélevée à la création de chaque projet (% du budget total déposé en escrow). Pas d'abonnement — PTF ne gagne que quand les clients créent des projets et que les développeurs livrent.
 
-**Tokenomics :** 1 crédit PTF = 1 USDC (stable). Les crédits sont gagnés par les développeurs à chaque tâche validée, utilisables dans l'écosystème PTF (reviews, audits) ou convertibles en crypto/fiat.
+**Tokenomics :** 1 PTF = 1 USDC (stable, ancrage 1:1 garanti par réserve USDC auditée en escrow). Les crédits sont gagnés par les développeurs à chaque tâche validée, utilisables dans l'écosystème PTF (reviews, audits) ou convertibles en USDC/fiat via retrait.
 
 **Ask :** €175k–250k seed pour 18 mois de runway — développement de la plateforme, lancement des deux marchés (public + privé), acquisition des 500 premiers projets actifs. Coût infrastructure ultra-réduit grâce aux free tiers et aux VPS Hetzner. Audit smart contracts : 0€ via stratégie automatisée (Slither + Mythril + Foundry + agents IA comparatifs).
 
@@ -198,9 +198,9 @@ Les projets **public free** ne génèrent pas de commission PTF. Le coût platef
 - Un développeur peut payer des crédits PTF pour demander un audit de code avant soumission (optionnel)
 - Un client peut payer des crédits PTF pour une revue d'architecture de son projet avant publication
 
-**Stake PTF :**
-- Les développeurs doivent maintenir un stake en tokens PTF pour accéder aux projets privés rémunérés
-- Le stake génère un rendement modeste (staking rewards financés par les commissions)
+**Garantie d'accès (projets privés) :**
+- Les développeurs doivent maintenir un solde minimum de 10 PTF (= 10 USDC) pour accéder aux projets privés rémunérés — ce solde sert de caution soft-lockée pendant la durée de la tâche
+- Aucun staking ou rendement passif : le modèle est une garantie de bonne exécution, pas un mécanisme financier
 
 **Projets Enterprise :**
 - Pour les grandes entreprises (budget > 200k crédits/an) : contrat cadre avec commission réduite à 6% + support dédié + SLA garanti
@@ -429,11 +429,11 @@ Le budget est significativement réduit par rapport aux plateformes équivalente
 | Risque | Probabilite | Impact | Mitigation |
 |--------|------------|--------|------------|
 | Problème de chicken-and-egg (pas de devs = pas de clients, pas de clients = pas de devs) | Haute | Critique | Phase 1 focalisée sur l'acquisition développeurs d'abord. Seeder la demande avec le programme "1 000 premières tâches gratuites" et les partenariats OSS. |
-| Fraude / collusion (faux reviewers, faux projets) | Moyenne | Majeur | Stake obligatoire pour reviewer + pour projets privés. Algorithme de détection de collusion (graphe de votes). Audit on-chain public. |
-| Volatilité / complexité web3 rebutant les développeurs | Moyenne | Moyen | Abstraction maximale du web3 dans l'UX (wallet créé automatiquement à l'inscription, conversion crédits <-> fiat en 1 clic). Le dev n'a pas besoin de comprendre Polygon pour utiliser PTF. |
-| Régulation MiCA (tokens, stablecoins, crypto-actifs) | Moyenne | Majeur | Conformité MiCA dès le départ (budget légal prévu). CreditToken conçu pour être conforme (réserve USDC auditée, pas de spéculation). Conseil juridique crypto spécialisé. |
+| Fraude / collusion (faux reviewers, faux projets) | Moyenne | Majeur | Solde minimum 10 PTF requis pour reviewer + pour projets privés. Algorithme de détection de collusion (graphe de votes). Audit on-chain public. |
+| Complexité web3 rebutant les développeurs | Moyenne | Moyen | Abstraction maximale du web3 dans l'UX (wallet créé automatiquement à l'inscription, retrait USDC en 1 clic). Le dev n'a pas besoin de comprendre Polygon pour utiliser PTF. |
+| Régulation MiCA (tokens, stablecoins, crypto-actifs) | Moyenne | Majeur | Conformité MiCA dès le départ (budget légal prévu). PTF est un e-money token stable (1:1 USDC), réserve auditée, sans spéculation. Conseil juridique crypto spécialisé. |
 | Entreprises refusant de payer upfront | Moyenne | Moyen | Démontrer la valeur avec les premiers projets réussis. Option "escrow progressif" pour grands projets (dépôt par tranche de phase). |
-| Bug critique dans les smart contracts | Faible | Critique | Mitigé par audit comparatif automatisé (Slither + Mythril + Foundry + agents IA indépendants) + testnet 3–6 mois avant mainnet. Multisig (Gnosis Safe 3-of-5), timelock 24h sur les opérations critiques, circuit-breaker Pausable. Programme de bug bounty. Voir docs/SMART_CONTRACT_AUDIT.md. |
+| Bug critique dans les smart contracts | Faible | Critique | Audit compétitif communautaire (Sherlock ou Code4rena, $15k–40k) + Slither + Mythril + Foundry. Testnet 3–6 mois avant mainnet. Opérateur backend contrôlé par **Gnosis Safe 2-of-3** (multisig), timelock 24h sur les opérations critiques (setTreasury, addMinter), circuit-breaker Pausable. Programme de bug bounty Immunefi. |
 | Plateforme concurrente lancée par GitHub/GitLab | Faible | Majeur | Avance sur les projets privés (PTF Agent = différenciateur unique). Vitesse d'exécution. La réputation on-chain crée un switching cost élevé pour les développeurs. |
 
 ---

@@ -1,15 +1,15 @@
 # PTF — Progression du projet
 
-> Version : **V0.2.9-alpha** — Dernière mise à jour : **2026-08-03**
+> Version : **V0.3.0-alpha** — Dernière mise à jour : **2026-08-04**
 >
-> Commits récents : `353eb30` 7 findings restants → `1822e4c` shell REPL → `5f31665` audit prompts → `(en cours)` CLI visual overhaul + schema fixes + REPL robustness
+> Commits récents : `b1b15d3` CLI REPL refonte → audit backend (round 17, 7 findings) → audit CLI commandes (round 18, 9 findings) → frontend marketplace + corrections ApolloProvider
 
 ---
 
 ## Avancement global
 
 ```
-███████████████████████████████████░░░░░  88%
+█████████████████████████████████████░░░  92%
 ```
 
 | Module | Statut | Progression |
@@ -17,10 +17,10 @@
 | Documentation | ✅ À jour | 100% |
 | CLI (framework) | ✅ Terminé | 100% |
 | Smart contracts EVM | ✅ Terminé | 100% |
-| Audit sécurité (17 rounds — 195 findings) | ✅ Terminé | 100% |
-| Backend framework (réseau) | ⚠️ En cours | 95% |
+| Audit sécurité (18 rounds — 69 findings framework + 195 service) | ✅ Terminé | 100% |
+| Backend framework (réseau) | ✅ Terminé | 98% |
 | ptf_service_plateforme — backend | ⚠️ En cours | 90% |
-| ptf_service_plateforme — frontend | ⚠️ En cours | 70% |
+| ptf_service_plateforme — frontend | ⚠️ En cours | 80% |
 | Infrastructure | ⚠️ En cours | 70% |
 | Blockchain réelle (testnet) | 🔴 À faire | 0% |
 | Solana / Anchor | 🔴 À faire | 0% |
@@ -49,14 +49,24 @@ Le projet est désormais séparé en deux dépôts distincts :
 **14 commandes — ESM — Commander.js + ethers.js v6 + chalk v5**
 
 **Shell interactif REPL :**
-- `ptf` sans arguments → entre dans le prompt `ptf ❯ ` (texte brut, curseur stable)
+- `ptf` sans arguments → entre dans le prompt coloré (curseur stable, wrappers `\x01…\x02`)
 - Commandes exécutées en boucle (ex: `tasks list`, `wallet status`)
 - `exit` / `quit` pour quitter — `clear` / `Ctrl+L` pour effacer l'écran
 - Mode one-shot conservé : `ptf <commande>` exécute et quitte
-- Logo ASCII fixe centré dans le terminal (aligné, plus de designs aléatoires)
+- Logo ASCII dégradé magenta → blueBright → cyan, aligné à gauche (col 2)
+- Texte sous le logo centré par rapport au milieu du logo (jamais à la même colonne)
 - `--help` sur toutes les commandes (feuilles incluses) s'affiche correctement dans le REPL
 - `exitOverride` propagé à toutes les sous-commandes — aucune commande ne peut tuer le REPL
 - Toutes les erreurs passent par `printError` — jamais de message brut serveur ni de stacktrace visible
+
+**Indicateur de statut réseau :**
+- Ping `/health` au démarrage du REPL pour détecter l'état réel
+- Voyant `●` avant le prompt, couleur adaptée :
+  - 🟢 vert   = online + session active
+  - 🟡 jaune  = online sans session
+  - 🔴 rouge  = offline (backend inaccessible ou URL non configurée)
+- Prompt format : `● ptf ❯ ` — `ptf` en fond code (gris sombre), `❯` en cyan bold
+- `printBanner()` affiche un badge `ONLINE`/`OFFLINE` + adresse wallet tronquée sous le logo
 
 | Catégorie | Commandes |
 |---|---|
@@ -67,13 +77,16 @@ Le projet est désormais séparé en deux dépôts distincts :
 | Workflow dev | `commit`, `submit`, `status` |
 | Utilitaires | `config`, `report`, `contributors` |
 
-**Connexion backend réelle (corrigée `2026-08-03`) :**
+**Connexion backend réelle (corrigée `2026-08-03` → `2026-08-04`) :**
 - Toutes les requêtes GraphQL utilisent les noms de champs exacts du schema backend
 - `$skills: [String!]` (non `[String]`), `rewardAmount`/`rewardToken` plats, `id` (non `projectId`), `architectureMd`/`planActionMd`
 - Adapters `mapTask()` et `mapWalletStatus()` : schema plat → types CLI imbriqués
-- `walletStatus(address, chain)` : paramètre `chain` obligatoire ajouté (défaut `"mock"`)
-- `verifyChallenge` : champ `user { ptfAddress }` retiré (non présent dans `AuthResult`)
-- Tous les appels réseau en lecture entouré de `try/catch` silencieux → fallback offline propre
+- `claimTask(taskId, chain)` — `devAddress` supprimé, `chain` depuis config (round 17)
+- `submitTask(taskId, commitHash, branchRef)` — `branch` → `branchRef` aligné schema (round 17)
+- `contributors list` : query `projectContributors` + champs corrects (round 18)
+- `tasks publish` : appels réels `createProject` + `generateTasks` + `publishProject` (round 18)
+- `submit` : `execSync(string)` → `execFileSync(cmd, args)` — injection shell impossible (round 18)
+- `wallet history/utxos` : plus de mocks silencieux — message explicite "à venir" (round 18)
 - Erreurs métier dans `auth`, `task`, `wallet` : messages lisibles, jamais de message brut serveur
 
 **Logique free/paid correcte :**
@@ -117,7 +130,7 @@ Le projet est désormais séparé en deux dépôts distincts :
 
 | Service | Description |
 |---|---|
-| `AuthService` | Nonces en mémoire (TTL 5min), JWT stateless `{ptfAddress}` |
+| `AuthService` | Nonces Redis (TTL 5min, distribué cluster), JWT stateless `{ptfAddress}` |
 | `WalletService` | Solde et soft-lock lus on-chain via `IChainAdapter` |
 | `ProjectService` | Création, publication, ancrage Merkle, vérification licence OSS |
 | `TaskService` | Anti-collision Redlock, cycle de vie complet, vue pub/privé |
@@ -179,8 +192,11 @@ Le projet est désormais séparé en deux dépôts distincts :
 | `/profile` | ✅ | Réputation on-chain, solde on-chain, infos compte |
 | `/settings` | ✅ | Liaison wallet PTF, vérification email, sécurité |
 | `/notifications` | ✅ | Liste, marquer lu / tout lu, badge live, icônes par type |
+| `/marketplace` | ✅ | Tâches réseau PTF — filtres mode/priorité/reward, skeleton, commande CLI par carte |
 | Wallet linking | ✅ | Modal inline remplace `prompt()` — nonce + commande CLI affichés |
-| Marketplace tâches | 🔴 | Accès au réseau PTF depuis le service (optionnel) |
+| ApolloProvider stable | ✅ | Client Apollo non recréé au login — cache préservé (round 18) |
+| `useRequireAuth()` centralisé | ✅ | Hook unique remplace les 5 guards copier-coller (round 18) |
+| Crash `onChainBal` corrigé | ✅ | Guard `!= null` avant `.toFixed()` sur `/profile` (round 18) |
 
 ---
 
@@ -211,15 +227,16 @@ Le projet est désormais séparé en deux dépôts distincts :
 
 | Métrique | Valeur |
 |---|---|
-| Fichiers source totaux (framework) | 71 fichiers |
-| Lignes TypeScript (backend + CLI) | ~8 700 lignes |
+| Fichiers source totaux (framework) | ~75 fichiers |
+| Lignes TypeScript (backend + CLI) | ~9 200 lignes |
 | Lignes Solidity | ~640 lignes |
 | Tests : CLI (Vitest) + Backend Jest (framework) + Service Jest + Contracts (Foundry) | 13 + 25 + 20 + ~60 = **~118 tests** |
 | TypeScript errors | **0** (typecheck passe sur les deux projets) |
 | CI GitHub Actions | ✅ Corrigé (`a9313ca`) — Foundry deps installées dans le CI |
-| Commits framework | 16 |
-| Findings sécurité corrigés | **152 + 43 = 195** (17 rounds d'audit) |
-| Findings ouverts | **0** (7 derniers corrigés commit `353eb30`) |
+| Commits framework | ~20 |
+| Findings sécurité corrigés (framework) | **69** (18 rounds d'audit) |
+| Findings sécurité corrigés (service) | **195** (17 rounds) |
+| Findings ouverts | **0** |
 
 ---
 

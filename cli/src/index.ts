@@ -141,13 +141,52 @@ function findCommand(root: Command, parts: string[]): Command | null {
   return cmd === root ? null : cmd;
 }
 
+async function checkOnline(apiUrl: string | undefined): Promise<boolean> {
+  if (!apiUrl) return false;
+  try {
+    const base = apiUrl.replace(/\/graphql$/, "");
+    const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(2000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function startRepl(): Promise<void> {
   const { printBanner } = await import("./utils/display.js");
-  printBanner("0.1.0");
+  const { loadUserConfig } = await import("./utils/config.js");
+  const cfg = loadUserConfig();
 
-  // Prompt doit être du texte brut — readline compte les octets pour positionner
-  // le curseur. Les codes ANSI décalent le calcul et font bouger le prompt.
-  const PROMPT = "ptf ❯ ";
+  // Ping le backend pour déterminer l'état réel au démarrage
+  const online = await checkOnline(cfg.ptfApiUrl);
+  const authenticated = !!cfg.sessionToken && !cfg.sessionToken.startsWith("offline:");
+
+  printBanner("0.1.0", { online, authenticated, walletAddress: cfg.walletAddress });
+
+  // Le prompt REPL doit wrapper les codes ANSI entre \x01…\x02 (RL_PROMPT_START_IGNORE /
+  // RL_PROMPT_END_IGNORE) pour que readline ignore leur longueur dans le calcul du curseur.
+  // Sans ce wrapping, readline sous-estime la largeur visible et le curseur se décale.
+  const ansi = (s: string) => `\x01${s}\x02`;
+
+  // Voyant de statut : vert = online+auth, jaune = online sans auth, rouge = offline
+  const dotColor = online && authenticated ? "\x1b[1;32m"   // vert
+                 : online                  ? "\x1b[1;33m"   // jaune
+                 :                           "\x1b[1;31m";  // rouge
+
+  const PROMPT =
+    ansi(dotColor)            +   // couleur voyant
+    "●"                       +   // voyant
+    ansi("\x1b[0m")           +   // reset
+    " "                       +
+    ansi("\x1b[1;35m")        +   // bold magenta
+    ansi("\x1b[48;5;236m")    +   // fond code (gris sombre)
+    " ptf "                   +   // texte "code" avec padding
+    ansi("\x1b[0m")           +   // reset
+    " "                       +
+    ansi("\x1b[1;36m")        +   // cyan bold
+    "❯"                       +
+    ansi("\x1b[0m")           +   // reset
+    " ";
   let rl: ReturnType<typeof createInterface>;
   let exiting = false;
 
@@ -213,10 +252,19 @@ async function startRepl(): Promise<void> {
               cmd = sub;
             }
             process.stdout.write(cmd.helpInformation());
-          } else if (code === "commander.unknownCommand" || code === "commander.unknownOption" || code === "commander.invalidArgument") {
+          } else if (code === "commander.unknownCommand") {
             printError(
               "Commande inconnue : " + chalk.bold(input) + "\n" +
               chalk.dim("Tapez help pour voir les commandes disponibles.")
+            );
+          } else if (code === "commander.unknownOption") {
+            printError(
+              "Option inconnue dans : " + chalk.bold(input) + "\n" +
+              chalk.dim("Tapez ") + chalk.cyan(input.split(/\s+/)[0] + " --help") + chalk.dim(" pour voir les options disponibles.")
+            );
+          } else if (code === "commander.invalidArgument") {
+            printError(
+              "Argument invalide : " + chalk.bold(input)
             );
           } else if (err instanceof Error) {
             printError(err.message);

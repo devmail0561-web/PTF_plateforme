@@ -42,10 +42,10 @@ export class MockChainAdapter implements IChainAdapter {
     return this.mockTxHash();
   }
 
-  async softLock(devAddress: string): Promise<string> {
-    const SOFT_LOCK_AMOUNT = BigInt(10 * 10 ** 6);
+  async softLock(devAddress: string, lockAmount: number): Promise<string> {
+    const amount = BigInt(Math.round(lockAmount * 10 ** 6));
     const current = this.softLocks.get(devAddress) ?? 0n;
-    this.softLocks.set(devAddress, current + SOFT_LOCK_AMOUNT);
+    this.softLocks.set(devAddress, current + amount);
     return this.mockTxHash();
   }
 
@@ -53,11 +53,10 @@ export class MockChainAdapter implements IChainAdapter {
     return this.softLocks.get(devAddress) ?? 0n;
   }
 
-  // F2 — Un seul argument, montant fixe 10 PTF (SOFT_LOCK_AMOUNT).
-  async softUnlock(devAddress: string): Promise<string> {
-    const SOFT_LOCK_AMOUNT = BigInt(10 * 10 ** 6);
+  async softUnlock(devAddress: string, lockAmount: number): Promise<string> {
+    const amount = BigInt(Math.round(lockAmount * 10 ** 6));
     const current = this.softLocks.get(devAddress) ?? 0n;
-    this.softLocks.set(devAddress, current >= SOFT_LOCK_AMOUNT ? current - SOFT_LOCK_AMOUNT : 0n);
+    this.softLocks.set(devAddress, current >= amount ? current - amount : 0n);
     return this.mockTxHash();
   }
 

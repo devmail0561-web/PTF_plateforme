@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import { writeFileSync } from "fs";
 import { join } from "path";
 import chalk from "chalk";
@@ -149,7 +149,10 @@ export const submitCommand = new Command("submit")
       for (const step of task.verificationSteps) {
         process.stdout.write(`  ○ ${step.type}: ${chalk.dim(step.command)}...`);
         try {
-          const output = execSync(step.command, {
+          // execFileSync instead of execSync(string) to prevent shell injection
+          // from malicious verificationStep commands (no /bin/sh -c wrapping).
+          const [cmd, ...args] = step.command.trim().split(/\s+/);
+          const output = execFileSync(cmd, args, {
             cwd: repoPath,
             encoding: "utf-8",
             timeout: 120000,

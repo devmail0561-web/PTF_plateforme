@@ -1,6 +1,10 @@
 # PTF — Architecture Technique
 
-**PTF (Pay-Task Framework)** n'est pas seulement une plateforme de mise en relation : c'est un **écosystème cryptographique** qui récompense l'excellence et punit les manquements. Chaque action — claim, soumission, validation, retard, bug, code malveillant — a une conséquence mesurable, traçable et immuable on-chain. La confiance ne repose pas sur des intentions déclarées, mais sur des mécanismes cryptographiques (hashes Merkle, EIP-712, smart contracts), des incitations économiques (skin-in-the-game, garantie minimum, punitions configurables) et une gouvernance décentralisée (DAO, arbitrage).
+**PTF (Pay-Task Framework)** n'est pas seulement une plateforme de mise en relation : c'est un **écosystème cryptographique open-core** qui récompense l'excellence et punit les manquements. Chaque action — claim, soumission, validation, retard, bug, code malveillant — a une conséquence mesurable, traçable et immuable on-chain. La confiance ne repose pas sur des intentions déclarées, mais sur des mécanismes cryptographiques (hashes Merkle, EIP-712, smart contracts), des incitations économiques (skin-in-the-game, garantie minimum, punitions configurables) et une gouvernance sécurisée (multisig Gnosis Safe, timelock, arbitrage).
+
+**Modèle open-core :** le framework PTF (CLI, contrats EVM, backend réseau) est open-source MIT — auditable, forkable, auto-hébergeable. Le service plateforme (UX, matching, KYC, interface web) est propriétaire. Les deux fonctionnent ensemble mais restent indépendants : n'importe qui peut accéder au réseau PTF directement via le CLI sans passer par le service officiel.
+
+**Token PTF :** 1 PTF = 1 USDC (stable, ancrage 1:1 garanti par réserve USDC en escrow). Déployé sur Polygon PoS. L'opérateur backend est contrôlé par un **Gnosis Safe 2-of-3** — aucune transaction sensible (mint, libération d'escrow, punishment) ne peut être exécutée sans 2 signatures humaines.
 
 PTF permet aux développeurs de contribuer à des projets open source non-rémunérés (public free) ou de monétiser leurs compétences en réclamant des tâches rémunérées sur des projets publics rémunérés ou des projets privés d'entreprises (paid), dans un cadre où chaque participant a quelque chose à perdre et quelque chose à gagner.
 
@@ -205,7 +209,7 @@ interface Project {
 |---|---|---|---|
 | Escrow USDC | Non | Oui | Oui |
 | Reward USDC par tâche | Non (0) | Oui | Oui |
-| Garantie 10 PTF requis | Non | Oui | Oui |
+| Garantie PTF requise (10% reward, min 10, max 1000) | Non | Oui | Oui |
 | Pénalité crédits | Non | Oui | Oui |
 | Pénalité réputation | Oui | Oui | Oui |
 | Critères de réclamation | Configurables | Configurables | Configurables |
@@ -307,7 +311,7 @@ interface Task {
 
 **Note :** Le champ `rewardWeight: number` (ancien multiplicateur) est supprimé du schéma canonique. Le calcul de la récompense se fait via l'objet `scoring` (complexity × impact × effort) et le `reward.amount` résultant.
 
-**Note sur les crédits PTF :** Les crédits PTF sont des nombres flottants (`float64`) avec une précision de 6 décimales (aligné sur USDC `decimals: 6`). Le montant minimum de retrait est `1.0 PTF`. Dans `CreditToken.sol`, utiliser `uint256` avec 6 décimales (comme USDC, pas 18 comme ETH). Le frontend affiche toujours les crédits en float.
+**Note sur les crédits PTF :** 1 PTF = 1 USDC (stable, ancrage 1:1). Les crédits PTF sont des nombres flottants (`float64`) avec une précision de 6 décimales (aligné sur USDC `decimals: 6`). Le montant minimum de retrait est `1.0 PTF`. Dans `CreditToken.sol`, utiliser `uint256` avec 6 décimales (comme USDC, pas 18 comme ETH). Le frontend affiche toujours les crédits en float.
 
 ```typescript
 // Crédits PTF : float64, précision 6 décimales (comme USDC)
@@ -1580,23 +1584,49 @@ Le `networkId` est distinct du `taskId` : il identifie la diffusion de la tâche
 ```
 created -> open -> [ptf task claim]
                      Projet free  : wallet + critères + confirmation
-                     Projet paid  : solde PTF + wallet + critères + confirmation
+                     Projet paid  : solde PTF >= garantie + wallet + critères + confirmation
                         |
                         v (confirmation + signature EIP-712 automatique)
-                        |  paid uniquement : + EscrowVault.softLock(10 PTF)
-                   claimed -> submitted -> under_review -> validated
-                                                        -> rejected -> open (rechargée)
-                              -> disputed -> arbitration -> validated
-                                                        -> rejected
+                        |  paid uniquement : + EscrowVault.softLock(clamp(reward×10%, 10, 1000 PTF))
+                   claimed -> submitted ──► [ValidationService automatique < 10 min]
+                                                  │
+                                          tests échouent ──► rejected -> open (rechargeable)
+                                                  │
+                                          tests passent
+                                                  │
+                                                  ▼
+                                           pending_owner ──► [propriétaire notifié]
+                                                  │
+                                    ┌─────────────┼─────────────┐
+                                    │             │             │
+                              approuve         refuse       silence 72h
+                                    │             │             │
+                                    │    motif obligatoire      │
+                                    │             │         [TimerService]
+                                    │      owner_rejected   auto-approve
+                                    │             │             │
+                                    │    dev conteste ?         │
+                                    │    non → open (recharg.)  │
+                                    │    oui → arbitrage        │
+                                    │    reviewers Expert ──────┘
+                                    │    refus abusif → dev payé
+                                    │    + propriétaire pénalisé
+                                    │
+                                    ▼
+                               under_review ──► [EscrowService]
+                                                  │
+                                             validated + paiement
+
 open    -> [TimerService: expiration si non claimée dans délai config]
-claimed -> [TimerService: deadline dépassée] -> expired + PunishmentService (lateDelivery)
+claimed -> [TimerService: deadline dépassée ET pas de soumission] -> expired + PunishmentService
+             RÈGLE : si dev a soumis avant deadline → jamais de punition retard
              free  : uniquement pénalité réputation
              paid  : pénalité crédits + réputation + softUnlock
 ```
 
 **Règle d'immutabilité — tâches réclamées :**
 
-Une tâche ne peut être **modifiée ou supprimée** que lorsqu'elle est en statut `open`. Toute tâche dans un statut postérieur (`claimed`, `submitted`, `under_review`, `disputed`, `validated`, `expired`) est **immuable**.
+Une tâche ne peut être **modifiée ou supprimée** que lorsqu'elle est en statut `open`. Toute tâche dans un statut postérieur (`claimed`, `submitted`, `pending_owner`, `owner_rejected`, `under_review`, `disputed`, `validated`, `expired`) est **immuable**.
 
 ```typescript
 async function modifyTask(taskId: string, updates: Partial<Task>): Promise<void> {
@@ -2000,41 +2030,53 @@ class TimerService {
 }
 ```
 
-### Review Service
+### Review Service (ValidationService)
 
-Orchestre la validation des soumissions en deux étapes successives.
+Orchestre la validation des soumissions en deux étapes automatiques suivies d'une décision propriétaire.
 
-**Étape 1 — Vérification automatique :**
+**Étape 1 — Tests automatiques (< 2 min) :**
 
-- Exécution des tests (fournis par le client dans la spécification de la tâche)
-- Vérification des linters configurés
+- Exécution des `verificationSteps` (fournis par le créateur dans la spécification de la tâche)
 - Contrôle des contraintes : `maxFiles`, `maxLinesPerFile`, `minTestCoverage`
-- Résultat binaire : `pass` ou `fail` (avec rapport détaillé)
+- Analyse statique de sécurité : Semgrep + Snyk (détection code malveillant, dépendances vulnérables)
+- Résultat binaire : `pass` → statut `pending_owner` | `fail` → statut `rejected` (dev corrige et re-soumet)
 
-**Étape 2 — Peer review :**
+**Étape 2 — Décision propriétaire :**
 
-**Règles canoniques de peer review :**
+- Propriétaire notifié dès que les tests passent
+- **Approuve** → statut `under_review` → paiement déclenché
+- **Refuse** (motif obligatoire ≥ 10 caractères) → statut `owner_rejected`
+  - Dev peut accepter le refus → tâche rechargée (`open`)
+  - Dev conteste → arbitrage 3 reviewers Expert (tirés au sort)
+  - Refus abusif confirmé → dev payé + propriétaire pénalisé (commission partielle perdue)
+- **Silence 72h** → auto-approbation par TimerService → statut `under_review` → paiement
+
+**Règle deadline (immuable) :**
 ```
-Peer review standard        : 3 reviewers tirés au sort parmi les développeurs Expert (réputation ≥ 2 000)
-Peer review litige niveau 2 : 3 reviewers Expert (réputation ≥ 2 000) tirés au sort différents des premiers
+Punition lateDelivery = soumission APRÈS deadline uniquement
+Si dev a soumis avant deadline → aucune punition, même si la validation du propriétaire traîne
 ```
+
+**Peer review — rôle limité à l'arbitrage :**
+
+Les reviewers Expert (réputation ≥ 2 000) **n'interviennent pas dans le flux normal**.
+Ils sont convoqués uniquement en cas de litige (dev conteste un refus propriétaire).
 
 **Tableau canonique des niveaux de réputation :**
 ```
 Unranked  :    0 –   99
 Junior    :  100 –  499
 Senior    :  500 – 1999
-Expert    : 2000+       ← éligible peer reviewer
+Expert    : 2000+       ← éligible arbitrage litige
 ```
 
-- Tirage au sort de **3 reviewers** parmi les développeurs **Expert** (réputation ≥ 2 000)
-- Les reviewers disposent d'un délai configurable (ex. 48h) pour rendre leur verdict
-- Vote majoritaire : 2/3 `approve` → soumission validée ; 2/3 `reject` → soumission rejetée
-- En cas de refus, un motif structuré est obligatoire (formulaire contraint côté frontend)
+- Tirage au sort de **3 reviewers Expert** différents du propriétaire et du dev
+- Vote majoritaire : 2/3 `approve` → dev payé + propriétaire pénalisé si refus abusif
+- 2/3 `reject` → refus validé, dev corrige ou abandonne
 
-**Étape 3 — Validation client (projets privés) :**
+**Étape 3 — Paiement (EscrowService) :**
 
-- Le client dispose d'un délai de validation configurable après la peer review (**défaut : 72 heures**)
+- Le statut `under_review` (issu d'une approbation ou d'une auto-approbation) déclenche `releaseTaskReward`
 - Si le client ne répond pas dans ce délai : **auto-approbation** (tâche marquée `completed`, crédits libérés)
 - Délai configurable par projet dans la fourchette [24h – 168h] :
   ```bash
@@ -2109,13 +2151,26 @@ delta_positif = calculateReputationReward(task)   // calculé automatiquement pa
 
 Les scores sont stockés on-chain dans `ReputationRegistry` (immuables, auditables). Une copie locale dans PostgreSQL sert à l'affichage temps réel, aux requêtes de filtrage et à la vérification des `claimCriteria`.
 
-**Garantie minimum (skin-in-the-game) :**
+**Garantie proportionnelle (skin-in-the-game) :**
 
-Pour les **projets paid uniquement**, tout développeur doit maintenir un solde de **10 crédits PTF minimum** (la garantie). Ces crédits sont "soft-lockés" pendant la durée de ses tâches actives :
+Pour les **projets paid uniquement**, une garantie PTF est soft-lockée à chaque claim, calculée ainsi :
 
-- Il est impossible de retirer des fonds en dessous du seuil de 10 PTF × (nombre de tâches paid actives)
-- En cas de punition, les crédits sont déduits en priorité sur ce solde garanti
-- Ce mécanisme assure que chaque développeur a une skin-in-the-game concrète sur chaque tâche paid réclamée
+```
+garantie = clamp(reward × 10%, 10 PTF, 1000 PTF)
+```
+
+Exemples :
+| Récompense | Garantie |
+|---|---|
+| 50 PTF | 10 PTF (plancher) |
+| 100 PTF | 10 PTF (plancher) |
+| 150 PTF | 15 PTF |
+| 1 000 PTF | 100 PTF |
+| 10 000 PTF | 1 000 PTF (plafond) |
+
+- Les PTF sont transférés dans le vault (custodial) au moment du claim
+- Retournés au dev à la validation ou à l'annulation dans les délais
+- Slashés (burn + redistribution trésorerie/projet) en cas de punition
 
 Pour les **projets free**, aucune garantie PTF n'est requise — le seul risque est la pénalité de réputation.
 

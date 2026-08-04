@@ -32,7 +32,9 @@ contract EscrowVault is ReentrancyGuard, Ownable, Pausable, EIP712 {
     uint256 public constant PUNISHMENT_PROJECT_BPS   = 2000; // 20%
     uint256 public constant BPS_DENOMINATOR          = 10000;
 
-    uint256 public constant SOFT_LOCK_AMOUNT = 10 * 1e6; // 10 PTF (6 decimals)
+    uint256 public constant SOFT_LOCK_RATE_BPS  = 1000;          // 10% of task reward
+    uint256 public constant SOFT_LOCK_MIN       = 10  * 1e6;     // 10 PTF floor
+    uint256 public constant SOFT_LOCK_MAX       = 1000 * 1e6;    // 1000 PTF ceiling
 
     // keccak256("TaskRelease(bytes32 projectId,bytes32 taskId,address dev,uint256 amount,uint256 nonce,uint256 deadline)")
     bytes32 public constant TASK_RELEASE_TYPEHASH = keccak256(
@@ -190,48 +192,52 @@ contract EscrowVault is ReentrancyGuard, Ownable, Pausable, EIP712 {
         emit ProjectFunded(projectId, amount);
     }
 
-    // ── Soft lock (10 PTF guarantee) ─────────────────────────────────────────
+    // ── Soft lock (proportional guarantee) ──────────────────────────────────
 
     /**
-     * Soft-lock 10 PTF from a developer when they claim a paid task.
+     * Compute the soft-lock amount for a given task reward.
+     * Formula: clamp(reward × 10%, SOFT_LOCK_MIN, SOFT_LOCK_MAX)
+     */
+    function computeSoftLock(uint256 taskReward) public pure returns (uint256) {
+        uint256 amount = (taskReward * SOFT_LOCK_RATE_BPS) / BPS_DENOMINATOR;
+        if (amount < SOFT_LOCK_MIN) return SOFT_LOCK_MIN;
+        if (amount > SOFT_LOCK_MAX) return SOFT_LOCK_MAX;
+        return amount;
+    }
+
+    /**
+     * Soft-lock PTF from a developer when they claim a paid task.
+     * Amount = clamp(taskReward × 10%, 10 PTF, 1000 PTF).
      * Tokens are transferred INTO the vault (custodial) so the developer cannot
      * move them away to avoid punishment. The dev must approve this contract first.
-     *
-     * H6 fix: replaced non-custodial counter with a real transferFrom so
-     * executePunishment always has tokens to slash regardless of post-lock transfers.
      */
-    function softLock(address dev) external onlyOperator nonReentrant whenNotPaused {
-        // Check: developer must hold ≥ 10 PTF and have approved this contract
+    function softLock(address dev, uint256 lockAmount) external onlyOperator nonReentrant whenNotPaused {
         uint256 balance = ptfToken.balanceOf(dev);
-        if (balance < SOFT_LOCK_AMOUNT) revert InsufficientSoftLock();
+        if (balance < lockAmount) revert InsufficientSoftLock();
 
-        // Effects
-        softLocked[dev] += SOFT_LOCK_AMOUNT;
+        softLocked[dev] += lockAmount;
 
-        // Interaction: pull tokens into vault custody (dev must have approved)
-        SafeERC20.safeTransferFrom(IERC20(address(ptfToken)), dev, address(this), SOFT_LOCK_AMOUNT);
+        SafeERC20.safeTransferFrom(IERC20(address(ptfToken)), dev, address(this), lockAmount);
 
-        emit SoftLocked(dev, SOFT_LOCK_AMOUNT);
+        emit SoftLocked(dev, lockAmount);
     }
 
     /**
      * Release the soft-lock on task cancel or completion — returns escrowed PTF to dev.
+     * lockAmount must match the value passed at softLock time (stored by operator off-chain).
      * Always succeeds even if the developer has been partially slashed (returns remainder).
      */
-    function softUnlock(address dev) external onlyOperator nonReentrant {
+    function softUnlock(address dev, uint256 lockAmount) external onlyOperator nonReentrant {
         uint256 locked = softLocked[dev];
         if (locked == 0) return;
 
-        uint256 toReturn = locked < SOFT_LOCK_AMOUNT ? locked : SOFT_LOCK_AMOUNT;
-        softLocked[dev] = locked < SOFT_LOCK_AMOUNT ? 0 : locked - SOFT_LOCK_AMOUNT;
+        uint256 toReturn = locked < lockAmount ? locked : lockAmount;
+        softLocked[dev] = locked < lockAmount ? 0 : locked - lockAmount;
 
-        // Return escrowed tokens to dev
         uint256 vaultBalance = ptfToken.balanceOf(address(this));
         if (vaultBalance >= toReturn) {
             SafeERC20.safeTransfer(IERC20(address(ptfToken)), dev, toReturn);
-        }
-        // If vault has been drained by punishment, return what's available
-        else if (vaultBalance > 0) {
+        } else if (vaultBalance > 0) {
             SafeERC20.safeTransfer(IERC20(address(ptfToken)), dev, vaultBalance);
         }
 
@@ -251,6 +257,7 @@ contract EscrowVault is ReentrancyGuard, Ownable, Pausable, EIP712 {
         bytes32 taskId,
         address dev,
         uint256 amount,
+        uint256 lockAmount,
         uint256 deadline,
         bytes calldata signature
     ) external nonReentrant onlyOperator whenNotPaused {
@@ -276,10 +283,10 @@ contract EscrowVault is ReentrancyGuard, Ownable, Pausable, EIP712 {
         escrowBalance[projectId] -= amount;
 
         // Also unlock soft-lock if still active — return PTF collateral to dev
-        if (softLocked[dev] >= SOFT_LOCK_AMOUNT) {
-            softLocked[dev] -= SOFT_LOCK_AMOUNT;
+        if (lockAmount > 0 && softLocked[dev] >= lockAmount) {
+            softLocked[dev] -= lockAmount;
             uint256 vaultBal = ptfToken.balanceOf(address(this));
-            uint256 toReturn = vaultBal >= SOFT_LOCK_AMOUNT ? SOFT_LOCK_AMOUNT : vaultBal;
+            uint256 toReturn = vaultBal >= lockAmount ? lockAmount : vaultBal;
             if (toReturn > 0) {
                 SafeERC20.safeTransfer(IERC20(address(ptfToken)), dev, toReturn);
             }

@@ -70,3 +70,7 @@ backend/prisma/migrations/
 # Coverage
 coverage/
 *.lcov
+
+# PTF secrets
+.ptf/secrets
+.ptf/*.key

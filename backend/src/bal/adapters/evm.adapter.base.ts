@@ -86,12 +86,12 @@ const PROJECT_REGISTRY_ABI = [
 ];
 
 const ESCROW_VAULT_ABI = [
-  "function softLock(address dev) external",
-  // F2 — Le contrat prend uniquement (address dev), montant fixe SOFT_LOCK_AMOUNT en interne.
-  "function softUnlock(address dev) external",
+  "function softLock(address dev, uint256 lockAmount) external",
+  "function softUnlock(address dev, uint256 lockAmount) external",
+  "function computeSoftLock(uint256 taskReward) view returns (uint256)",
   // F4 — La fonction s'appelle executePunishment, pas deductPenalty.
   "function executePunishment(bytes32 projectId, bytes32 taskId, address dev, uint256 amount, string punishmentType) external",
-  "function releaseTaskReward(bytes32 projectId, bytes32 taskId, address dev, uint256 amount, uint256 deadline, bytes signature) external",
+  "function releaseTaskReward(bytes32 projectId, bytes32 taskId, address dev, uint256 amount, uint256 lockAmount, uint256 deadline, bytes signature) external",
   "function mintUTXOReceipt(bytes32 utxoId, address dev, uint256 amount, bytes32 sourceId) external",
   // F5 — Lecture du nonce on-chain pour signer correctement.
   "function releaseNonces(address dev, bytes32 taskId) view returns (uint256)",
@@ -191,20 +191,21 @@ export abstract class EvmAdapterBase implements IChainAdapter {
     );
   }
 
-  async softLock(devAddress: string): Promise<string> {
+  async softLock(devAddress: string, lockAmount: number): Promise<string> {
     const [s, fb] = this.signers();
+    const amount = BigInt(Math.round(lockAmount * 10 ** 6));
     return this.rpc(
-      async () => { const tx = await new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, s).softLock(devAddress); return tx.hash as string; },
-      fb ? async () => { const tx = await new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, fb).softLock(devAddress); return tx.hash as string; } : undefined
+      async () => { const tx = await new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, s).softLock(devAddress, amount); return tx.hash as string; },
+      fb ? async () => { const tx = await new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, fb).softLock(devAddress, amount); return tx.hash as string; } : undefined
     );
   }
 
-  // F2 — Un seul argument : le contrat utilise SOFT_LOCK_AMOUNT constant en interne.
-  async softUnlock(devAddress: string): Promise<string> {
+  async softUnlock(devAddress: string, lockAmount: number): Promise<string> {
     const [s, fb] = this.signers();
+    const amount = BigInt(Math.round(lockAmount * 10 ** 6));
     return this.rpc(
-      async () => { const tx = await new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, s).softUnlock(devAddress); return tx.hash as string; },
-      fb ? async () => { const tx = await new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, fb).softUnlock(devAddress); return tx.hash as string; } : undefined
+      async () => { const tx = await new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, s).softUnlock(devAddress, amount); return tx.hash as string; },
+      fb ? async () => { const tx = await new ethers.Contract(this.contractAddresses.escrowVault, ESCROW_VAULT_ABI, fb).softUnlock(devAddress, amount); return tx.hash as string; } : undefined
     );
   }
 

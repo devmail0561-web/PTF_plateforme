@@ -77,6 +77,8 @@ model Task {
   rewardToken       String?
   commitHash        String?
   branchRef         String?
+  submittedAt       DateTime? // date de soumission du dev — règle deadline : punition si null à expiry
+  rejectionReason   String?   @db.Text // motif obligatoire lors d'un refus propriétaire
   // Content-addressed storage — hash of immutable task fields, anchored on-chain.
   // Computed at creation (bulkCreate/create), verified on read.
   // claim_pending is a valid transient status (set before on-chain call, rolled back on failure).

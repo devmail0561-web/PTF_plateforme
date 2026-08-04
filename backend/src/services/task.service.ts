@@ -4,6 +4,8 @@ import type { IReputationService } from "./reputation.service.js";
 import type { IWalletService } from "./wallet.service.js";
 import type { IMetadataService } from "./metadata.service.js";
 import { extractTaskHashableFields, hashMetadata } from "./metadata.service.js";
+import type { IValidationService } from "./validation.service.js";
+import type { ITimerService } from "./timer.service.js";
 import type { NodeCacheService } from "./node-cache.service.js";
 import type {
   TaskFilter,
@@ -109,6 +111,8 @@ export class TaskService implements ITaskService {
     redis: AnyRedis,
     private readonly metadataService?: IMetadataService,
     private readonly cache?: NodeCacheService,
+    private readonly validationService?: IValidationService,
+    private readonly timerService?: ITimerService,
   ) {
     this.redlock = new Redlock([redis], { retryCount: 3, retryDelay: 200 });
   }
@@ -249,13 +253,16 @@ export class TaskService implements ITaskService {
       where: { id: task.projectId },
     });
 
-    // Vérification solde PTF ≥ 10 (projets paid uniquement — première barrière)
+    // Vérification solde PTF ≥ lockAmount (projets paid uniquement — première barrière)
     if (project.rewardMode === "paid") {
-      const meetsBalance = await this.walletService.meetsMinBalance(devAddress, chain);
+      const { computeSoftLock } = await import("./wallet.service.js");
+      const taskRewardPTF = Number(task.rewardAmount ?? 0);
+      const lockAmount = computeSoftLock(taskRewardPTF);
+      const meetsBalance = await this.walletService.meetsMinBalance(devAddress, chain, lockAmount);
       if (!meetsBalance) {
         throw new PtfError(
           PtfErrorCode.INSUFFICIENT_PTF_BALANCE,
-          "Solde PTF insuffisant. Minimum 10 PTF requis pour les projets paid."
+          `Solde PTF insuffisant. Cette tâche requiert ${lockAmount.toFixed(2)} PTF de garantie (10% de la récompense, min 10, max 1000).`
         );
       }
     }
@@ -357,9 +364,11 @@ export class TaskService implements ITaskService {
 
       let signature: string;
       try {
-        // Soft-lock 10 PTF (projets paid) — on-chain uniquement
+        // Soft-lock proportionnel (projets paid) — on-chain uniquement
         if (project.rewardMode === "paid") {
-          await this.walletService.softLock(devAddress, chain, 10);
+          const { computeSoftLock } = await import("./wallet.service.js");
+          const lockAmount = computeSoftLock(Number(task.rewardAmount ?? 0));
+          await this.walletService.softLock(devAddress, chain, lockAmount);
         }
 
         // Enregistrement on-chain
@@ -428,7 +437,7 @@ export class TaskService implements ITaskService {
     const submittedAt = new Date();
     const validationJobId = `job_${taskId.slice(2, 10)}_${Date.now()}`;
 
-    await this.prisma.submission.create({
+    const submission = await this.prisma.submission.create({
       data: {
         taskId,
         devAddress: task.devAddress.toLowerCase(),
@@ -445,9 +454,23 @@ export class TaskService implements ITaskService {
         status: "submitted",
         commitHash,
         branchRef,
+        submittedAt,   // enregistre la date de soumission pour la règle deadline
       },
     });
     await this.cache?.invalidateTask(taskId);
+
+    // Déclencher la validation automatique (tests + analyse statique) immédiatement
+    // La validation est asynchrone — le statut passe à "pending_owner" si tout passe
+    if (this.validationService) {
+      this.validationService.validateSubmission(submission.id).then(async (report) => {
+        if (report.outcome === "passed" && this.timerService) {
+          // Démarrer le timer 72h : si le propriétaire ne répond pas → auto-validation
+          await this.timerService.scheduleValidationTimeout(taskId);
+        }
+      }).catch((err: unknown) => {
+        console.error(`[TaskService] Validation automatique échouée pour ${taskId}:`, err);
+      });
+    }
 
     return {
       taskId,
@@ -468,7 +491,7 @@ export class TaskService implements ITaskService {
       throw new PtfError(PtfErrorCode.UNAUTHORIZED, "Vous ne pouvez annuler que vos propres tâches");
     }
 
-    const UNCANCELLABLE: string[] = ["submitted", "under_review", "validated", "rejected", "disputed", "blocked"];
+    const UNCANCELLABLE: string[] = ["submitted", "pending_owner", "under_review", "owner_rejected", "validated", "rejected", "disputed", "blocked"];
     if (UNCANCELLABLE.includes(task.status)) {
       throw new PtfError(
         PtfErrorCode.TASK_IMMUTABLE,
@@ -490,13 +513,13 @@ export class TaskService implements ITaskService {
 
       if (project.rewardMode === "paid" && task.devAddress) {
         const forfeit = shouldForfeitGuarantee(task.claimedAt, task.deadline);
-        // F2 — softUnlock sans montant (contrat utilise SOFT_LOCK_AMOUNT constant).
-        await this.walletService.softUnlock(task.devAddress, project.chain).catch((err: unknown) => {
+        const { computeSoftLock } = await import("./wallet.service.js");
+        const lockAmount = computeSoftLock(Number(task.rewardAmount ?? 0));
+        await this.walletService.softUnlock(task.devAddress, project.chain, lockAmount).catch((err: unknown) => {
           console.error(`[TaskService] softUnlock failed on cancel for ${task.devAddress}:`, err);
         });
         if (forfeit) {
-          // The on-chain penalty is handled by the contract — the guarantee is forfeited
-          console.log(`[TaskService] Cancel after grace period: 10 PTF forfeited for task ${taskId}`);
+          console.log(`[TaskService] Cancel after grace period: ${lockAmount.toFixed(2)} PTF forfeited for task ${taskId}`);
         }
       }
 
@@ -525,12 +548,12 @@ export class TaskService implements ITaskService {
         where: { id: task.projectId },
       });
       if (project?.rewardMode === "paid") {
-        // F2 — softUnlock sans montant.
-        await this.walletService.softUnlock(task.devAddress, project.chain).catch((err: unknown) => {
+        const { computeSoftLock } = await import("./wallet.service.js");
+        const lockAmount = computeSoftLock(Number(task.rewardAmount ?? 0));
+        await this.walletService.softUnlock(task.devAddress, project.chain, lockAmount).catch((err: unknown) => {
           console.error(`[TaskService] softUnlock failed on expire for ${task.devAddress}:`, err);
         });
-        // The on-chain contract handles penalty — no UTXO/ledger needed
-        console.log(`[TaskService] Expired: guarantee forfeited on-chain for task ${taskId}`);
+        console.log(`[TaskService] Expired: ${lockAmount.toFixed(2)} PTF guarantee forfeited on-chain for task ${taskId}`);
       }
     }
 

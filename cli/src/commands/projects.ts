@@ -122,11 +122,28 @@ projectCommand
       return;
     }
 
+    // Fetch reputation scores for each unique dev address
+    const devAddresses = [...new Set(claimedTasks.map((t) => t.devAddress).filter(Boolean) as string[])];
+    const reputationMap = new Map<string, number>();
+    await Promise.all(
+      devAddresses.map(async (addr) => {
+        try {
+          const rep = await client.query<{ reputationScore: { total: number } }>(
+            `query Rep($address: String!) { reputationScore(address: $address) { total } }`,
+            { address: addr }
+          );
+          reputationMap.set(addr.toLowerCase(), rep.reputationScore.total);
+        } catch {
+          reputationMap.set(addr.toLowerCase(), 0);
+        }
+      })
+    );
+
     const rows = claimedTasks.map((t) => [
       t.id.slice(0, 10) + "...",
       t.title.slice(0, 30),
       t.devAddress ? t.devAddress.slice(0, 14) + "..." : "—",
-      "350 pts",
+      t.devAddress ? `${reputationMap.get(t.devAddress.toLowerCase()) ?? "—"} pts` : "—",
       t.status,
       t.deadline ? new Date(t.deadline).toLocaleDateString("fr-FR") : "—",
     ]);
@@ -166,20 +183,33 @@ contributorsCommand
     }
 
     try {
-      const data = await client.query<{ contributors: { address: string; github: string; taskCount: number; totalEarned: string; reputation: number; level: string }[] }>(
-        `query Contributors($projectId: String!) { contributors(projectId: $projectId) { address github taskCount totalEarned reputation level } }`,
+      const data = await client.query<{
+        projectContributors: {
+          devAddress: string;
+          githubHandle: string | null;
+          tasksCompleted: number;
+          totalEarned: number;
+          reputationScore: number;
+          joinedAt: string;
+        }[];
+      }>(
+        `query Contributors($projectId: ID!) {
+          projectContributors(projectId: $projectId) {
+            devAddress githubHandle tasksCompleted totalEarned reputationScore joinedAt
+          }
+        }`,
         { projectId }
       );
-      const rows = data.contributors.map((c) => [
-        c.address.slice(0, 6) + "..." + c.address.slice(-4),
-        c.github,
-        String(c.taskCount),
-        c.totalEarned,
-        `${c.reputation} pts`,
-        c.level,
+      const rows = data.projectContributors.map((c) => [
+        c.devAddress.slice(0, 6) + "..." + c.devAddress.slice(-4),
+        c.githubHandle ?? "—",
+        String(c.tasksCompleted),
+        c.totalEarned.toFixed(4) + " PTF",
+        `${c.reputationScore} pts`,
+        new Date(c.joinedAt).toLocaleDateString("fr-FR"),
       ]);
       printTable(
-        ["Wallet", "GitHub", "Tâches", "Total gagné", "Réputation", "Niveau"],
+        ["Wallet", "GitHub", "Tâches", "Total gagné", "Réputation", "Depuis"],
         rows
       );
     } catch (err) {

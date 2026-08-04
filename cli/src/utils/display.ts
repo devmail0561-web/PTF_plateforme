@@ -78,24 +78,83 @@ const LOGO = [
   "╚═╝        ╚═╝   ╚═╝     ",
 ];
 
-export function printBanner(version = "0.1.0"): void {
-  const logoW = Math.max(...LOGO.map((l) => l.trimEnd().length));
-  const termW = Math.max(process.stdout.columns ?? 80, 50);
-  const pad   = " ".repeat(Math.max(2, Math.floor((termW - logoW) / 2)));
+// Gradient violet → indigo → cyan — une teinte par ligne
+const LOGO_COLORS: ChalkInstance[] = [
+  chalk.magenta.bold,
+  chalk.magenta.bold,
+  chalk.blueBright.bold,
+  chalk.blueBright.bold,
+  chalk.cyan.bold,
+  chalk.cyan,
+];
+
+interface BannerStatus {
+  online:        boolean;
+  authenticated: boolean;
+  walletAddress: string | undefined;
+}
+
+export function printBanner(version = "0.1.0", status?: BannerStatus): void {
+  const LOGO_START = 2;
+  const LOGO_W     = 24;
+  const CENTER     = LOGO_START + Math.floor(LOGO_W / 2);
+  const logopad    = " ".repeat(LOGO_START);
+
+  const cline = (text: string, visLen: number): string => {
+    const indent = Math.max(LOGO_START + 1, CENTER - Math.floor(visLen / 2));
+    return " ".repeat(indent) + text;
+  };
 
   console.log();
-  for (const line of LOGO) {
-    console.log(chalk.cyan.bold(pad + line));
+  for (let i = 0; i < LOGO.length; i++) {
+    const color = LOGO_COLORS[i] ?? chalk.cyan.bold;
+    console.log(color(logopad + LOGO[i]));
   }
   console.log();
-  console.log(pad + chalk.white.bold("Pay-Task Framework") + "  " + chalk.dim(`v${version}`));
-  console.log(pad + chalk.dim("Réseau décentralisé de tâches rémunérées"));
-  console.log(pad + chalk.dim("─".repeat(42)));
-  console.log(
-    pad +
-    ["tasks", "wallet", "auth", "generate"].map((c) => chalk.cyan(c)).join(chalk.dim("  ·  ")) +
-    chalk.dim("  ·  --help")
-  );
+
+  // Titre
+  const titleStr   = "Pay-Task Framework";
+  const verStr     = `  v${version}`;
+  const titleColor = chalk.magenta.bold("Pay") + chalk.blueBright.bold("-Task") + chalk.cyan.bold(" Framework");
+  console.log(cline(titleColor + chalk.dim(verStr), titleStr.length + verStr.length));
+
+  // Sous-titre
+  const sub = "Réseau décentralisé de tâches rémunérées";
+  console.log(cline(chalk.dim(sub), sub.length));
+
+  // Badge de statut réseau — centré sous le logo
+  if (status) {
+    const { online, authenticated, walletAddress } = status;
+
+    // Badge connectivité
+    const netBadge  = online
+      ? chalk.bgGreen.black.bold(" ● ONLINE ")
+      : chalk.bgYellow.black.bold(" ○ OFFLINE ");
+    const netLen    = online ? 9 : 10;
+
+    // Badge session
+    const sessBadge = authenticated
+      ? chalk.green.bold("✓") + " " + chalk.dim(walletAddress ? walletAddress.slice(0, 10) + "…" + walletAddress.slice(-4) : "connecté")
+      : chalk.dim("○ non connecté");
+    const sessLen   = authenticated
+      ? 2 + (walletAddress ? 16 : 9)
+      : 14;
+
+    const row    = netBadge + "  " + sessBadge;
+    const rowLen = netLen + 2 + sessLen;
+    console.log(cline(row, rowLen));
+  }
+
+  // Séparateur
+  const sep = "─".repeat(22);
+  console.log(cline(chalk.dim(sep), sep.length));
+
+  // Commandes
+  const cmdStr   = "tasks  ·  wallet  ·  auth  ·  generate  ·  --help";
+  const cmdColor = ["tasks", "wallet", "auth", "generate"]
+    .map((c) => chalk.cyan(c)).join(chalk.dim("  ·  ")) + chalk.dim("  ·  --help");
+  console.log(cline(cmdColor, cmdStr.length));
+
   console.log();
 }
 

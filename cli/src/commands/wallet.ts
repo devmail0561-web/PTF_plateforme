@@ -345,27 +345,13 @@ walletCommand
         { type: "soft_unlocked",       direction: "credit", amount: 10.0,   taskId: "0xghi…", chain: "polygon", txHash: null,      note: "10 PTF guarantee released on task cancel", createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
       ].slice(0, limit);
     } else {
-      try {
-        const result = await client.query<{
-          creditHistory: typeof entries;
-        }>(
-          `query($address: String!, $limit: Int, $type: String) {
-            creditHistory(address: $address, limit: $limit, type: $type) {
-              type direction amount utxoId taskId chain txHash note createdAt
-            }
-          }`,
-          { address, limit, type: options.type ?? null }
-        );
-        entries = result.creditHistory;
-      } catch {
-        printOfflineBanner();
-        entries = [
-          { type: "reward_earned",       direction: "credit", amount: 150.0, taskId: "0xabc…", chain: "polygon", txHash: "0x001…", note: null,                                       createdAt: new Date(Date.now() - 86400000 * 2).toISOString() },
-          { type: "soft_locked",         direction: "debit",  amount: 10.0,  taskId: "0xdef…", chain: "polygon", txHash: null,      note: "10 PTF guarantee locked on task claim",   createdAt: new Date(Date.now() - 86400000 * 3).toISOString() },
-          { type: "punishment_deducted", direction: "debit",  amount: 20.0,  taskId: "0xghi…", chain: "polygon", txHash: "0x002…", note: "punishment:lateDelivery",                  createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
-          { type: "soft_unlocked",       direction: "credit", amount: 10.0,  taskId: "0xghi…", chain: "polygon", txHash: null,      note: "10 PTF guarantee released on task cancel", createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
-        ].slice(0, limit);
-      }
+      // creditHistory n'est pas encore exposé dans le schema framework —
+      // afficher un message explicite plutôt que des mocks silencieux.
+      printWarning(
+        "L'historique des crédits sera disponible dans une prochaine version.\n" +
+        chalk.dim("Consultez votre historique de transactions on-chain directement sur Polygonscan.")
+      );
+      entries = [];
     }
 
     // Totaux
@@ -435,26 +421,13 @@ walletCommand
         { delta: 180, reason: "task_validated",           taskId: "0xmno…", chain: "polygon", txHash: "0x005…", createdAt: new Date(Date.now() - 86400000 * 30).toISOString() },
       ].slice(0, limit);
     } else {
-      try {
-        const result = await client.query<{
-          reputationHistory: typeof entries;
-        }>(
-          `query($address: String!, $limit: Int) {
-            reputationHistory(address: $address, limit: $limit) {
-              delta reason taskId chain txHash createdAt
-            }
-          }`,
-          { address, limit }
-        );
-        entries = result.reputationHistory;
-      } catch {
-        printOfflineBanner();
-        entries = [
-          { delta: 100, reason: "task_validated",          taskId: "0xabc…", chain: "polygon", txHash: "0x001…", createdAt: new Date(Date.now() - 86400000 * 2).toISOString() },
-          { delta: -10, reason: "punishment:lateDelivery", taskId: "0xdef…", chain: "polygon", txHash: "0x002…", createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
-          { delta: 110, reason: "task_validated",          taskId: "0xghi…", chain: "polygon", txHash: "0x003…", createdAt: new Date(Date.now() - 86400000 * 15).toISOString() },
-        ].slice(0, limit);
-      }
+      // reputationHistory n'est pas encore exposé dans le schema framework —
+      // afficher un message explicite plutôt que des mocks silencieux.
+      printWarning(
+        "L'historique de réputation sera disponible dans une prochaine version.\n" +
+        chalk.dim("Consultez votre score actuel : ptf wallet status")
+      );
+      entries = [];
     }
 
     const totalGained = entries.filter(e => e.delta > 0).reduce((s, e) => s + e.delta, 0);
@@ -518,23 +491,12 @@ walletCommand
         { id: "0x" + "b2".repeat(32), amount: 60.0,  sourceType: "task_reward", sourceId: "0x" + "02".repeat(32), chain: "polygon", status: "unspent", createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
       ].filter(u => !options.status || u.status === options.status);
     } else {
-      try {
-        const result = await client.query<{ utxos: typeof utxos }>(
-          `query UTXOs($address: String!, $status: String, $chain: String) {
-            utxos(address: $address, status: $status, chain: $chain) {
-              id amount sourceType sourceId chain status createdAt
-            }
-          }`,
-          { address, status: options.status ?? null, chain: options.chain ?? null }
-        );
-        utxos = result.utxos;
-      } catch {
-        printOfflineBanner();
-        utxos = [
-          { id: "0x" + "a1".repeat(32), amount: 150.0, sourceType: "task_reward", sourceId: "0x" + "01".repeat(32), chain: "polygon", status: "unspent", createdAt: new Date(Date.now() - 86400000 * 2).toISOString() },
-          { id: "0x" + "b2".repeat(32), amount: 60.0,  sourceType: "task_reward", sourceId: "0x" + "02".repeat(32), chain: "polygon", status: "unspent", createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
-        ].filter(u => !options.status || u.status === options.status);
-      }
+      // La query utxos n'est pas encore exposée dans le schema framework.
+      printWarning(
+        "La vue UTXOs sera disponible dans une prochaine version.\n" +
+        chalk.dim("Consultez votre solde : ptf wallet status")
+      );
+      utxos = [];
     }
 
     const total = utxos.reduce((s, u) => s + u.amount, 0);

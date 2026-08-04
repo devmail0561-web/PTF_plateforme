@@ -3,15 +3,15 @@
 > _La plateforme décentralisée qui monétise vos compétences_
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Multi-Chain](https://img.shields.io/badge/Blockchain-Multi--Chain-8247E5.svg)](https://ptf.dev/docs/chains)
+[![Polygon](https://img.shields.io/badge/Blockchain-Polygon_PoS-8247E5.svg)](https://polygon.technology/)
 [![Node.js](https://img.shields.io/badge/Node.js-20+-339933.svg)](https://nodejs.org/)
 [![Solidity](https://img.shields.io/badge/Solidity-0.8+-363636.svg)](https://soliditylang.org/)
 
-**PTF** est un **écosystème cryptographique décentralisé** qui connecte des développeurs à des tâches rémunérées — issues de projets open source ou d'entreprises privées. Chaque tâche validée génère des **crédits PTF** (token à valeur flottante) et fait progresser votre réputation on-chain. Les paiements sont garantis par smart contract : aucun intermédiaire, aucun impayé. PTF récompense la qualité — et **punit automatiquement** les manquements.
+**PTF** est un **écosystème cryptographique open-core** qui connecte des développeurs à des tâches rémunérées — issues de projets open source ou d'entreprises privées. Chaque tâche validée génère des **crédits PTF** (1 PTF = 1 USDC, stable) et fait progresser votre réputation on-chain. Les paiements sont garantis par smart contract : aucun intermédiaire, aucun impayé. PTF récompense la qualité — et **punit automatiquement** les manquements.
 
-> **Deux dépôts distincts :**
-> - **Framework PTF** (ce dépôt, open-source) — CLI, contrats, backend réseau
-> - **[PTF Service Plateforme](https://github.com/devmail0561-web/ptf_service_plateforme)** (privé) — comptes, wallet, dépôts/retraits, interface web
+> **Architecture open-core — deux dépôts distincts :**
+> - **Framework PTF** (ce dépôt, **MIT**) — CLI, contrats EVM, backend réseau. Forkable, auditable, auto-hébergeable.
+> - **[PTF Service Plateforme](https://github.com/devmail0561-web/ptf_service_plateforme)** (privé) — comptes, wallet, dépôts/retraits, interface web, matching, KYC.
 
 ---
 
@@ -175,7 +175,7 @@ ptf auth status
 
 > **Sécurité :** votre clé privée ne quitte jamais votre machine. Le backend framework ne stocke aucun compte email ni mot de passe. L'identité est votre adresse PTF secp256k1 — prouvée par signature à chaque connexion.
 
-> **Garantie minimum :** pour les **tâches rémunérées** (projets public paid ou private), un développeur doit disposer d'**au moins 10 PTF**. Ces crédits sont *soft-locked* pendant la durée des tâches actives. Les projets **public free** n'exigent aucune garantie de solde.
+> **Garantie proportionnelle :** pour les **tâches rémunérées** (projets public paid ou private), une garantie PTF est soft-lockée au moment du claim : `clamp(reward × 10%, 10 PTF, 1000 PTF)`. Elle est retournée à la validation ou à l'annulation dans les délais. Les projets **public free** n'exigent aucune garantie.
 
 > **Statut wallet :** `ptf wallet status` vérifie en une commande les 6 conditions requises (format EIP-55, activité on-chain, solde gas natif, solde PTF, statut de ban, ownership).
 
@@ -310,8 +310,8 @@ ptf tasks list
 
 # Etape 2 — Voir le detail complet d'une tache
 # (punishments, deadline, verificationSteps, reward, contraintes)
-# [paid] → Verifie immediatement : solde PTF >= 10 credits
-#          → Si insuffisant → erreur "Solde insuffisant. Minimum 10 PTF requis."
+# [paid] → Vérifie immédiatement : solde PTF >= garantie requise (10% reward, min 10 PTF)
+#          → Si insuffisant → erreur "Solde insuffisant. Garantie requise : X PTF."
 # [free] → Pas de verification solde, affiche directement les conditions
 ptf task show 0xf3a9...c201
 
@@ -352,7 +352,7 @@ ptf sync pull --project <projectId>     # sync manuelle (créateur)
 ptf sync pending --project <projectId>  # soumissions en attente de sync
 ```
 
-> **Barriere solde (projets paid uniquement) :** pour les tâches rémunérées (public paid ou private), la verif `solde >= 10 PTF` est effectuee en premier, des `ptf task show`, avant meme d'afficher les conditions completes. Si insuffisant : `❌ Solde insuffisant (X PTF). Deposez des credits : ptf wallet deposit`. Pour les projets **public free**, cette vérification est ignorée.
+> **Barrière solde (projets paid uniquement) :** avant d'afficher les conditions d'une tâche rémunérée, PTF vérifie que le solde couvre la garantie requise (`reward × 10%`, min 10 PTF, max 1000 PTF). Si insuffisant : `❌ Solde insuffisant. Garantie requise : X PTF. Déposez des crédits : ptf wallet deposit`. Pour les projets **public free**, cette vérification est ignorée.
 
 > **Signature integree :** `ptf task claim` inclut la verification des conditions et la signature cryptographique EIP-712 de votre wallet dans une seule etape interactive. L'acceptation couvre : punishments, deadline, verificationSteps, reward et contraintes. Elle est enregistree on-chain et **ne peut pas etre contestee apres coup.**
 
@@ -364,8 +364,8 @@ PTF distingue trois modes de projet avec des règles différentes :
 
 | Règle | Public free | Public paid | Private |
 |---|---|---|---|
-| Reward USDC | Non | Oui | Oui |
-| Garantie 10 PTF | Non | Oui | Oui |
+| Reward PTF (1 PTF = 1 USDC) | Non | Oui | Oui |
+| Garantie proportionnelle (10% reward, min 10, max 1000 PTF) | Non | Oui | Oui |
 | Pénalité crédits | Non | Oui | Oui |
 | Pénalité réputation | Oui | Oui | Oui |
 | Escrow | Non | Oui | Oui |
@@ -564,7 +564,7 @@ ptf wallet reputation-history
 # → Votre solde est crédité automatiquement après détection on-chain
 ```
 
-> **Verifications automatiques :** avant tout claim, PTF vérifie les 6 conditions du wallet : format EIP-55, activité on-chain, solde gas natif, solde PTF ≥ 10 (projets paid), statut de ban, ownership prouvé. Pour les projets **public free**, la vérification de solde est ignorée.
+> **Vérifications automatiques :** avant tout claim, PTF vérifie les 6 conditions du wallet : format EIP-55, activité on-chain, solde gas natif, solde PTF ≥ garantie requise (projets paid), statut de ban, ownership prouvé. Pour les projets **public free**, la vérification de solde est ignorée.
 
 > **Séparation des responsabilités :** le framework PTF gère l'identité cryptographique (keypair secp256k1) et les interactions réseau (claim, submit). Les dépôts, retraits, et le compte utilisateur sont dans `ptf_service_plateforme`.
 
@@ -709,10 +709,10 @@ ptf project claimed-tasks --project <projectId>
 5. Dev reclame une tache via CLI PTF
    ptf tasks list                     → lister les taches disponibles
    ptf task show <taskId>             → voir le detail
-                                        [paid] verifie solde >= 10 PTF en premier
+                                        [paid] vérifie solde >= garantie requise (10% reward, min 10 PTF) en premier
                                         [free] pas de verification solde
    ptf task claim <taskId>            → verification wallet (6 criteres) + claimCriteria
-                                        [paid] garantie 10 PTF verifiee, escrow actif
+                                        [paid] garantie proportionnelle vérifiée (10% reward, min 10, max 1000 PTF), escrow actif
                                         [free] pas de garantie solde, pas d'escrow
                                         → affiche conditions + confirmation [o/N]
                                         → attribution + signature EIP-712 + on-chain
@@ -727,12 +727,18 @@ ptf project claimed-tasks --project <projectId>
 6. Dev travaille → soumet avant deadline
    (sinon : punishment lateDelivery applique automatiquement)
          ↓
-7. Validation : verificationSteps automatiques + peer review (3 reviewers Expert >= 2000 pts)
-               + validation client (auto-approbation apres 72h si silence)
-   (punishments criticalBug / nonCriticalBug si defauts detectes)
-   Tache consideree complete seulement si TOUS les verificationSteps passent
+7. Validation automatique (< 10 min)
+   → verificationSteps + analyse statique Semgrep/Snyk
+   → Tous passent : propriétaire notifié (statut pending_owner)
+   → Échec : rejeté, dev corrige et re-soumet
          ↓
-8. Credits PTF mintes au dev (ERC-20 sur la chaîne du projet, signes EIP-712)
+8. Décision propriétaire
+   → Approuve → paiement
+   → Refuse + motif → dev accepte (rechargée) ou conteste (arbitrage reviewers Expert)
+   → Silence 72h → auto-approbation → paiement
+   RÈGLE : si dev a soumis avant deadline → jamais de punition retard
+         ↓
+9. Credits PTF mintés au dev
          ↓
 9. Dev monetise ses credits (conversion USDC / fiat)
 ```
@@ -815,8 +821,8 @@ Cette vérification protège contre toute tentative d'usurpation d'adresse. Aucu
 
 | Couche | Technologie |
 |--------|-------------|
-| **Blockchain** | Multi-chaîne (EVM + non-EVM) via Blockchain Abstraction Layer |
-| **Smart contracts** | Solidity 0.8+ (EVM) + Rust/Anchor (Solana) — déployés sur chaque chaîne supportée |
+| **Blockchain** | Polygon PoS (défaut) — extensible via Blockchain Abstraction Layer |
+| **Smart contracts** | Solidity 0.8+ (EVM) — déployés sur Polygon PoS |
 | **Backend framework** | Node.js 20 + TypeScript + Apollo GraphQL + Prisma — données réseau uniquement |
 | **Backend service** | Node.js 20 + Apollo GraphQL + Prisma — comptes, dépôts, retraits ([ptf_service_plateforme](https://github.com/devmail0561-web/ptf_service_plateforme)) |
 | **Frontend service** | Next.js 14 + TailwindCSS + Apollo Client + Zustand ([ptf_service_plateforme](https://github.com/devmail0561-web/ptf_service_plateforme)) |
@@ -834,13 +840,10 @@ Cette vérification protège contre toute tentative d'usurpation d'adresse. Aucu
 
 | Chaîne | Type | Statut |
 |--------|------|--------|
-| Polygon | EVM (L2) | Défaut |
-| Ethereum | EVM (L1) | Supporté |
-| BSC | EVM | Supporté |
-| Avalanche | EVM | Supporté |
-| Arbitrum | EVM (L2) | Supporté |
-| Base | EVM (L2) | Supporté |
-| Solana | non-EVM | Supporté (Rust/Anchor) |
+| Polygon PoS | EVM (L2) | **Défaut — production** |
+| Ethereum | EVM (L1) | Bridge entrant/sortant |
+| Arbitrum | EVM (L2) | Roadmap phase 2 |
+| Base | EVM (L2) | Roadmap phase 2 |
 
 ### Blockchain Abstraction Layer (BAL)
 
@@ -848,13 +851,10 @@ Tous les appels blockchain passent par l'interface `ChainAdapter`. Les services 
 
 ```
 ChainAdapter (interface)
-  ├── PolygonAdapter
-  ├── EthereumAdapter
-  ├── BSCAdapter
-  ├── AvalancheAdapter
-  ├── ArbitrumAdapter
-  ├── BaseAdapter
-  └── SolanaAdapter (Rust/Anchor)
+  ├── PolygonAdapter     ← actif en production
+  ├── EthereumAdapter    ← bridge entrant/sortant
+  ├── ArbitrumAdapter    ← roadmap phase 2
+  └── BaseAdapter        ← roadmap phase 2
 
 ChainRegistry → sélectionne l'adapter selon la chaîne du projet
 ```
@@ -887,24 +887,24 @@ ReputationRegistry — Scores de reputation non transferables
 
 PTF prélève une **commission unique à la création du projet**, calculée sur le budget total bloqué en escrow selon une grille dégressive. Il n'y a pas d'abonnement, pas de frais cachés : la plateforme ne gagne que quand les projets sont financés.
 
+**Token PTF :** toutes les récompenses et commissions sont libellées en **PTF (1 PTF = 1 USDC, stable)**. Le créateur dépose des PTF en escrow ; les devs sont payés en PTF ; ils peuvent retirer en USDC à tout moment via le service PTF.
+
 **Grille de commission :**
 
-| Budget projet | Taux | Exemple |
-|---------------|------|---------|
-| < 5 000 USDC (petits projets) | **12%** | 3 000 USDC → commission 360 USDC |
-| 5 000 – 50 000 USDC (projets moyens) | **10%** | 10 000 USDC → commission 1 000 USDC |
-| > 50 000 USDC (grands projets) | **8%** | 80 000 USDC → commission 6 400 USDC |
+| Budget projet (en PTF) | Taux | Exemple |
+|------------------------|------|---------|
+| < 5 000 PTF (petits projets) | **12%** | 3 000 PTF → commission 360 PTF |
+| 5 000 – 50 000 PTF (projets moyens) | **10%** | 10 000 PTF → commission 1 000 PTF |
+| > 50 000 PTF (grands projets) | **8%** | 80 000 PTF → commission 6 400 PTF |
 
 ```
 Exemple — projet moyen :
-  Budget projet  : 10 000 USDC
-  Commission PTF : 1 000 USDC (10%) → tresorerie DAO
-  Fonds en escrow : 9 000 USDC → distribues aux devs
+  Budget projet   : 10 000 PTF
+  Commission PTF  : 1 000 PTF (10%) → trésorerie PTF (Gnosis Safe)
+  Fonds en escrow : 9 000 PTF → distribués aux devs à validation
 ```
 
-Les crédits PTF sont déployés sur chaque chaîne supportée. La valeur est stable partout : **1 PTF = 1 USDC sur toute chaîne supportée**. Un bridge cross-chaîne (LayerZero ou équivalent) permet de transférer des PTF Credits d'une chaîne à une autre (`ptf wallet bridge`).
-
-Chaque conversion de credits PTF vers fiat implique également des frais de conversion mineurs (< 1%) couvrant les frais de gas natifs de la chaîne et les passerelles de paiement.
+Le bridge cross-chaîne (LayerZero) permet de transférer des PTF depuis Ethereum ou d'autres chaînes EVM vers Polygon (`ptf wallet bridge`). Chaque retrait PTF → USDC implique des frais de conversion mineurs (< 1%) couvrant les frais de gas.
 
 ---
 
@@ -960,7 +960,7 @@ Les projets OSS existants apportent une communauté et des contributions réelle
 - **Stockage décentralisé :** Arweave (ARCHITECTURE.md, PLAN_ACTION.md — permanent) + IPFS
 - **Base de données :** PostgreSQL 16 + Redis 7
 - **CLI :** Node.js + TypeScript (pkg pour binaires statiques Linux/macOS/Windows)
-- **Blockchain :** Multi-chaîne EVM (Polygon, Ethereum, BSC, Avalanche, Arbitrum, Base) + Solana
+- **Blockchain :** Polygon PoS (production) — Ethereum bridge — Arbitrum/Base roadmap
 - **Bridge :** LayerZero (ou équivalent) pour PTF Credits cross-chaîne
 - **Sandbox :** Docker + gVisor (runsc) — isolation niveau kernel
 
@@ -982,4 +982,4 @@ MIT License — voir [LICENSE](LICENSE) pour les details.
 
 ---
 
-**PTF est un écosystème cryptographique — pas seulement une plateforme. Il récompense la qualité, punit les manquements, et garantit l'intégrité de chaque transaction.**
+**PTF est une marketplace de tâches avec garantie blockchain — chaque paiement est escrowé, chaque réputation est on-chain, chaque manquement a un coût.**

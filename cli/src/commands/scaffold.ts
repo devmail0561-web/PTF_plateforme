@@ -93,6 +93,6 @@ export const scaffoldCommand = new Command("scaffold")
         chalk.cyan(`ptf init --name "${vars["PROJECT_NAME"]}" --type public`) +
         "\n" +
         chalk.dim("  4. Générez les tâches : ") +
-        chalk.cyan("ptf generate --project <projectId>")
+        chalk.cyan("ptf generate")
     );
   });

@@ -181,12 +181,15 @@ export const initCommand = new Command("init")
       chalk.bold("Prochaines étapes :") +
         "\n" +
         chalk.dim("  1. ") +
-        chalk.cyan("ptf generate --project " + shortHash(projectId)) +
-        chalk.dim(" — générer les tâches\n") +
+        chalk.cyan("ptf scaffold") +
+        chalk.dim(" — créer ARCHITECTURE.md + PLAN_ACTION.md\n") +
         chalk.dim("  2. ") +
+        chalk.cyan("ptf generate") +
+        chalk.dim(" — générer les tâches (lit .ptf/config.json)\n") +
+        chalk.dim("  3. ") +
         chalk.cyan("ptf tasks preview") +
         chalk.dim(" — revoir les tâches générées\n") +
-        chalk.dim("  3. ") +
+        chalk.dim("  4. ") +
         chalk.cyan("ptf tasks publish") +
         chalk.dim(" — publier dans le réseau PTF")
     );

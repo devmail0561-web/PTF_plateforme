@@ -120,10 +120,20 @@ authCommand
       const result = await client.requestAuthChallenge(address);
       nonce = result.nonce;
     } catch {
-      printError(
-        "Impossible de contacter le service PTF.\n" +
-        chalk.dim("Vérifiez votre connexion ou utilisez --offline.")
-      );
+      if (!userConfig.ptfApiUrl) {
+        printError(
+          "Aucune URL de service PTF configurée.\n" +
+          chalk.dim("Configurez l'URL du backend local :") + "\n" +
+          chalk.cyan("  ptf config set ptfApiUrl http://localhost:4000") + "\n" +
+          chalk.dim("Ou connectez-vous en mode offline :") + "\n" +
+          chalk.cyan("  ptf auth login --offline")
+        );
+      } else {
+        printError(
+          `Impossible de contacter le service PTF (${userConfig.ptfApiUrl}).\n` +
+          chalk.dim("Vérifiez que le backend est lancé ou utilisez --offline.")
+        );
+      }
       privateKey = "";
       return;
     }

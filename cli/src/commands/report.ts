@@ -79,22 +79,19 @@ export const reportCommand = new Command("report")
         return;
       }
 
-      try {
-        await client.query(
-          `mutation Report($dev: String!, $reason: String!, $taskId: String!, $evidence: String!) {
-            reportDeveloper(devAddress: $dev, reason: $reason, taskId: $taskId, evidence: $evidence)
-          }`,
-          { dev: options.dev, reason: options.reason, taskId: options.task, evidence: options.evidence }
-        );
-        printSuccess(
-          "Signalement soumis. Il sera analysé par le ReportService PTF.\n" +
-            chalk.dim(
-              "L'historique du signalement sera enregistré on-chain de manière immuable."
-            )
-        );
-      } catch (err) {
-        printError(`Échec du signalement : ${(err as Error).message}`);
-        return;
-      }
+      // La mutation reportDeveloper sera disponible dans une prochaine version.
+      // En attendant, le signalement est enregistré localement et affiché pour
+      // que l'utilisateur puisse le soumettre manuellement.
+      printWarning(
+        "Le système de signalement automatique sera disponible dans une prochaine version.\n" +
+        chalk.dim("En attendant, copiez ce rapport et envoyez-le à : support@ptf.dev")
+      );
+      console.log(
+        "\n" +
+        chalk.dim("  Développeur : ") + options.dev + "\n" +
+        chalk.dim("  Raison      : ") + options.reason + "\n" +
+        chalk.dim("  Tâche       : ") + options.task + "\n" +
+        chalk.dim("  Preuve      : ") + options.evidence + "\n"
+      );
     }
   );

@@ -129,7 +129,7 @@ export function buildContainer(): {
   }
 
   // ── Services (ordre strict par dépendances) ─────────────────────────────────
-  const authService       = new AuthService();
+  const authService       = new AuthService(undefined, redisSentinel);
   const githubService     = new GithubService();
   const reputationService = new ReputationService(chainRegistry);
   const walletService     = new WalletService(chainRegistry);
@@ -157,9 +157,9 @@ export function buildContainer(): {
     metadataService,
     nodeCache,
   );
-  const timerService      = new TimerService(prisma, punishmentService, redisQueue);  // BullMQ on Cluster
-  const escrowService     = new EscrowService(prisma, chainRegistry, reputationService);
   const validationService = new ValidationService(prisma);
+  const timerService      = new TimerService(prisma, punishmentService, validationService, redisQueue);  // BullMQ on Cluster
+  const escrowService     = new EscrowService(prisma, chainRegistry, reputationService);
 
   const projectService    = new ProjectService(prisma, chainRegistry, githubService, nodeCache);
 

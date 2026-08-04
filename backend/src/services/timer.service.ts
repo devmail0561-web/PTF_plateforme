@@ -1,7 +1,9 @@
 import type { PrismaClient } from "@prisma/client";
 import type { IPunishmentService } from "./punishment.service.js";
+import type { IValidationService } from "./validation.service.js";
 import { Queue, Worker, type Job } from "bullmq";
 import type { Redis } from "ioredis";
+import { OWNER_VALIDATION_TIMEOUT_MS } from "./validation.service.js";
 
 const QUEUE_NAME   = "task-expiry";
 const ALERT_JOB_ID = "deadline-alerts-recurring";
@@ -9,6 +11,9 @@ const ALERT_JOB_ID = "deadline-alerts-recurring";
 export interface ITimerService {
   scheduleExpiry(taskId: string, deadline: Date, chain: string): Promise<void>;
   cancelExpiry(taskId: string): Promise<void>;
+  // Planifie l'auto-validation 72h après que les tests auto ont passé (silence propriétaire)
+  scheduleValidationTimeout(taskId: string): Promise<void>;
+  cancelValidationTimeout(taskId: string): Promise<void>;
   checkDeadlineAlerts(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -21,6 +26,7 @@ export class TimerService implements ITimerService {
   constructor(
     private readonly prisma: PrismaClient,
     private readonly punishmentService: IPunishmentService,
+    private readonly validationService: IValidationService,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private readonly redis: any
   ) {
@@ -50,6 +56,24 @@ export class TimerService implements ITimerService {
 
   async cancelExpiry(taskId: string): Promise<void> {
     const job = await this.queue.getJob(`expire:${taskId}`);
+    await job?.remove();
+  }
+
+  async scheduleValidationTimeout(taskId: string): Promise<void> {
+    await this.queue.add(
+      "validation-timeout",
+      { taskId },
+      {
+        jobId: `validation-timeout:${taskId}`,
+        delay: OWNER_VALIDATION_TIMEOUT_MS,
+        removeOnComplete: true,
+        removeOnFail: 100,
+      }
+    );
+  }
+
+  async cancelValidationTimeout(taskId: string): Promise<void> {
+    const job = await this.queue.getJob(`validation-timeout:${taskId}`);
     await job?.remove();
   }
 
@@ -85,30 +109,44 @@ export class TimerService implements ITimerService {
   async start(): Promise<void> {
     this.worker = new Worker(
       QUEUE_NAME,
-      async (job: Job<{ taskId: string; chain: string } | { type: "deadline-alerts" }>) => {
+      async (job: Job<{ taskId: string; chain?: string } | { type: "deadline-alerts" }>) => {
         if ("type" in job.data && job.data.type === "deadline-alerts") {
           await this.checkDeadlineAlerts();
           return;
         }
 
-        const { taskId, chain } = job.data as { taskId: string; chain: string };
+        const { taskId, chain } = job.data as { taskId: string; chain?: string };
+
+        // Job auto-validation : propriétaire silencieux depuis 72h
+        if (job.name === "validation-timeout") {
+          await this.validationService.autoApprove(taskId);
+          return;
+        }
+
+        // Job expiry : dev n'a pas soumis avant la deadline
         const task = await this.prisma.task.findUnique({
           where: { id: taskId },
           select: {
             status: true,
             devAddress: true,
+            submittedAt: true,
             project: { select: { rewardMode: true } },
           },
         });
 
-        if (!task || task.status !== "claimed") return;
-        if (!task.devAddress) return;
+        if (!task || !task.devAddress) return;
+
+        // Règle deadline : punition UNIQUEMENT si le dev n'avait pas soumis avant la deadline
+        // Si soumis avant deadline → jamais de punition retard, même si validation traîne
+        if (task.submittedAt) return;
+
+        if (task.status !== "claimed") return;
 
         await this.punishmentService.execute(
           "lateDelivery",
           task.devAddress,
           taskId,
-          chain,
+          chain ?? "polygon",
           task.project.rewardMode as "free" | "paid"
         );
 

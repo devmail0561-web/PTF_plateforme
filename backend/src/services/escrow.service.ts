@@ -89,10 +89,10 @@ export class EscrowService implements IEscrowService {
       txHash = "0x0000000000000000000000000000000000000000000000000000000000000000";
     }
 
-    // F2 — Soft-unlock : l'adapter n'accepte qu'un seul argument (address dev).
-    // Le contrat gère le montant fixe SOFT_LOCK_AMOUNT en interne.
     if (project.rewardMode === "paid" && task.devAddress) {
-      await adapter.softUnlock(task.devAddress).catch((err: unknown) => {
+      const { computeSoftLock } = await import("./wallet.service.js");
+      const lockAmount = computeSoftLock(Number(task.rewardAmount ?? 0));
+      await adapter.softUnlock(task.devAddress, lockAmount).catch((err: unknown) => {
         console.error(`[EscrowService] softUnlock failed for ${task.devAddress} (task ${taskId}):`, err);
       });
     }

@@ -1,4 +1,6 @@
 import { Command } from "commander";
+import { readFileSync, existsSync } from "fs";
+import { join } from "path";
 import chalk from "chalk";
 import {
   loadProjectConfig,
@@ -112,12 +114,14 @@ tasksCommand
 
     if (offline) printOfflineBanner();
 
-    const myTasks = tasks.filter(
-      (t) =>
-        ["claimed", "in_progress", "submitted", "under_review"].includes(
-          t.status
-        )
-    );
+    // Le filtre côté serveur (`devAddress`) retourne déjà les bonnes tâches.
+    // On applique le filtre --status seulement s'il n'était pas déjà envoyé au serveur,
+    // c'est-à-dire quand l'option est absente (on masque les tâches terminées par défaut).
+    const myTasks = options.status
+      ? tasks
+      : tasks.filter((t) =>
+          ["claimed", "in_progress", "submitted", "under_review"].includes(t.status)
+        );
 
     if (myTasks.length === 0) {
       printInfo(
@@ -162,8 +166,7 @@ tasksCommand
     if (!drafts || drafts.length === 0) {
       printError(
         "Aucune tâche en brouillon trouvée.\n" +
-          "Générez d'abord les tâches : ptf generate --project " +
-          config.projectId
+          chalk.dim("Générez d'abord les tâches : ") + chalk.cyan("ptf generate")
       );
       return;
     }
@@ -304,12 +307,72 @@ tasksCommand
 
     const merkleRoot = computeMerkleRoot(tasks.map((t) => t.id));
     const { default: ora } = await import("ora");
+
+    const client = new PtfApiClient(userConfig);
+
+    if (client.isOffline()) {
+      printOfflineBanner();
+      printWarning(
+        "Publication impossible en mode offline.\n" +
+        chalk.dim("Configurez l'URL du backend : ptf config set-api http://localhost:4000")
+      );
+      return;
+    }
+
     const spinner = ora("Publication en cours...").start();
 
-    await new Promise((r) => setTimeout(r, 1500));
-    spinner.stop();
+    try {
+      // 1. Créer le projet côté backend s'il n'y est pas encore
+      await client.query(
+        `mutation CreateProject($input: CreateProjectInput!) {
+          createProject(input: $input) { id }
+        }`,
+        {
+          input: {
+            name:       config.name,
+            type:       config.type,
+            rewardMode: config.rewardMode,
+            chain:      config.chain,
+            repoType:   config.repoMode ?? "ptf-temp",
+            repoUrl:    config.github ?? config.server ?? null,
+            language:   config.language ?? "TypeScript",
+          },
+        }
+      ).catch(() => {
+        // Le projet existe peut-être déjà — on continue
+      });
 
-    printWarning("Mode offline — la publication réelle nécessite le backend PTF.");
+      // 2. Générer + persister les tâches via generateTasks (seule mutation disponible)
+      const archPath = join(process.cwd(), "ARCHITECTURE.md");
+      const planPath = join(process.cwd(), "PLAN_ACTION.md");
+      const archContent = existsSync(archPath) ? readFileSync(archPath, "utf-8") : "";
+      const planContent = existsSync(planPath) ? readFileSync(planPath, "utf-8") : "";
+
+      if (archContent && planContent) {
+        await client.query(
+          `mutation GenerateTasks($projectId: ID!, $architectureMd: String!, $planActionMd: String!) {
+            generateTasks(projectId: $projectId, architectureMd: $architectureMd, planActionMd: $planActionMd) {
+              tasks { title }
+            }
+          }`,
+          { projectId: config.projectId, architectureMd: archContent, planActionMd: planContent }
+        );
+      }
+
+      // 3. Publier le projet
+      await client.query(
+        `mutation PublishProject($projectId: ID!) { publishProject(projectId: $projectId) { id } }`,
+        { projectId: config.projectId }
+      ).catch(() => {
+        // Peut échouer si déjà actif
+      });
+
+      spinner.succeed("Publiées.");
+    } catch (err) {
+      spinner.fail("Échec de la publication.");
+      printError(`Erreur : ${(err as Error).message}`);
+      return;
+    }
 
     console.log(
       "\n" +

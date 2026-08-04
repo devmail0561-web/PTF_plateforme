@@ -20,9 +20,9 @@ export interface IChainAdapter {
     conditionsHash: string
   ): Promise<string>; // txHash
 
-  // Credits soft-lock (caution 10 PTF, projets paid)
-  softLock(devAddress: string): Promise<string>;
-  softUnlock(devAddress: string): Promise<string>;
+  // Credits soft-lock (proportionnel : 10% reward, min 10 PTF, max 1000 PTF)
+  softLock(devAddress: string, lockAmount: number): Promise<string>;
+  softUnlock(devAddress: string, lockAmount: number): Promise<string>;
   getSoftLocked(devAddress: string): Promise<bigint>;
 
   // Credits lifecycle
